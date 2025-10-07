@@ -1,0 +1,15 @@
+export enum CategoriaGasto {
+  TRANSPORTE = 'transporte',
+  ALIMENTOS = 'alimentacion',
+  SERVICIOS = 'servicios',
+  GANANA = 'gasolina',
+  MEDICAMENTOS = 'medicamentos',
+  SECRETARIA = 'secretaria',
+  TARJETERO = 'tarjetero',
+  CASA = 'casa',
+  MOTOR = 'moto',
+  SUELDO_COBRADOR = 'sueldo cobrador',
+  SUELDO_REVENDOR = 'sueldo revendor',
+  RECARGA = 'recarga',
+  OTRO = 'otro',
+}

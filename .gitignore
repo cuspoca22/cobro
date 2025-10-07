@@ -1,0 +1,47 @@
+# compiled output
+/dist
+/node_modules
+/mongo
+
+# Logs
+logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+PENDIENTES.md
+credito_to_movimiento.js
+fecha_creditos.js
+gastos.js
+inversion.js
+purge.js
+retiro.js
+update.js
+.env
+comandos.json
+notas.txt
+
+# OS
+.DS_Store
+
+# Tests
+/coverage
+/.nyc_output
+
+# IDEs and editors
+/.idea
+.project
+.classpath
+.c9/
+*.launch
+.settings/
+*.sublime-workspace
+
+# IDE - VSCode
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
