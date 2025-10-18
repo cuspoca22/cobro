@@ -9,11 +9,9 @@ import { Caja, CajaSchema } from '../caja/schemas/caja.schema';
 import { Ruta, RutaSchema } from '../ruta/schema/ruta.schema';
 import { CreditoModule } from '../credito/credito.module';
 import { dateFnsAdapter } from '../common/wrappers/date-fns.adapter';
-import { AuthModule } from '../auth/auth.module';
 
 @Module({
   imports: [
-    AuthModule,
     ConfigModule,
     CreditoModule,
     MongooseModule.forFeature([

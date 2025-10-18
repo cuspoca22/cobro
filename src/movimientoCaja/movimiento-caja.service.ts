@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, InternalServerErrorException, Logger, NotFoundException } from "@nestjs/common";
 import { InjectModel, InjectConnection } from "@nestjs/mongoose";
-import { Model, Connection, ClientSession } from "mongoose";
+import { Model, Connection } from "mongoose";
 
 import { MovimientoCaja } from "./schemas/caja-movimiento.schemas";
 import { CreateMovimientoCajaDto, UpdateMovimientoCajaDto } from "./dto";
