@@ -1,8 +1,8 @@
 import { Schema, SchemaFactory, Prop } from '@nestjs/mongoose';
 import mongoose from 'mongoose';
-import { User } from '../../auth/entities/user.entity';
 import { Caja } from './caja.schema';
 import { Ruta } from '../../ruta/schema/ruta.schema';
+import { User } from 'src/auth/schemas/user.schema';
 
 @Schema()
 export class CierreCaja {
