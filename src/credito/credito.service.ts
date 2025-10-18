@@ -8,7 +8,6 @@ import { CreateCreditoDto, UpdateCreditoDto } from './dto/';
 import { Cliente } from '../cliente/schema/cliente.schema';
 // import { CajaService } from '../caja/caja.service';
 import { ClienteService } from '../cliente/cliente.service';
-import { User } from 'src/auth/entities/user.entity';
 import { EmpresaService } from '../empresa/empresa.service';
 import { dateFnsAdapter } from '../common/wrappers/date-fns.adapter';
 import { CreditCalculatorService } from './helpers/credit.calculator.service';
@@ -18,6 +17,7 @@ import { Ruta } from 'src/ruta/schema/ruta.schema';
 import { CreditoEntity } from './entities/credito.entity';
 import { MovimientoCajaService } from 'src/movimientoCaja/movimiento-caja.service';
 import { HistorialCredito } from './interfaces';
+import { UserEntity } from 'src/auth/entities/user.entity';
 
 @Injectable()
 export class CreditoService {
@@ -141,7 +141,7 @@ export class CreditoService {
       return createdCreditForDto;
     } catch (error) {
       throw error; // Propaga el error para que sea manejado por NestJS
-    } 
+    }
 
   }
 
@@ -158,8 +158,7 @@ export class CreditoService {
     const creditsWithDetails = await this.creditoModel.aggregate([
       {
         $match: {
-          ruta: new mongoose.Types.ObjectId(rutaId), // Filtrar por ruta
-          status: true, // Solo créditos activos
+          ruta: new mongoose.Types.ObjectId(rutaId),
         },
       },
       // Lookup para obtener todos los pagos de este crédito (para abonos/saldo/ultimo_pago)
@@ -231,6 +230,20 @@ export class CreditoService {
         },
       },
       {
+        $match: {
+          // Incluir créditos activos O créditos inactivos que pagaron hoy
+          $or: [
+            { status: true },
+            {
+              $and: [
+                { status: false },
+                { paidToday: true }
+              ]
+            }
+          ]
+        }
+      },
+      {
         $lookup: {
           from: 'clientes',
           localField: 'cliente',
@@ -256,7 +269,7 @@ export class CreditoService {
             ciudad: "$clienteDetail.ciudad",
             ubication: "$clienteDetail.ubication",
             dpi: "$clienteDetail.dpi",
-            turno: "$clienteDetail.turno", 
+            turno: "$clienteDetail.turno",
           },
           interes: 1,
           fecha_inicio: 1,
@@ -557,7 +570,7 @@ export class CreditoService {
     }
   }
 
-  async findRenovaciones(fecha: string, user: User) {
+  async findRenovaciones(fecha: string, user: UserEntity) {
 
     const empresa = await this.empresaSvc.findOne(`${user.empresa}`)
     const rutas = empresa.rutas.map(ruta => ruta._id);
@@ -632,14 +645,14 @@ export class CreditoService {
         cliente: clienteId,
         status: false
       })
-      .sort({fecha_inicio: -1})
+      .sort({ fecha_inicio: -1 })
       .limit(5)
       .select('valor_credito interes fecha_inicio frecuencia_cobro total_cuotas ultimo_pago')
       .lean()
       .exec();
 
     const historial: HistorialCredito[] = creditos.map((credito) => {
-      if(!credito.fecha_inicio || !credito.ultimo_pago) {
+      if (!credito.fecha_inicio || !credito.ultimo_pago) {
         return {
           valor_credito: credito.valor_credito,
           interes: credito.interes,
@@ -668,35 +681,10 @@ export class CreditoService {
 
   }
 
-  // async remove(id: string) {
+  async getCreditosVerificados(rutaId: string) {
 
-  //   try {
-  //     const credito = await this.findOne(id);
+  }
 
-  //     const cliente = await this.clienteService.findOne(credito.cliente._id);
-
-  //     cliente.creditos = cliente.creditos.filter(cr => cr._id !== credito._id);
-  //     cliente.status = false;
-  //     await cliente.save();
-
-  //     await this.creditoModel.findByIdAndRemove(id);
-
-  //     // if(credito.fecha_inicio !== this.moment.nowWithFormat('DD/MM/YYYY')){
-  //     //   let queryFecha = credito.fecha_inicio.split('/');
-  //     //   let newFecha = `${queryFecha[2]}-${queryFecha[1]}-${queryFecha[0]}`;
-
-  //     //   await this.cajaService.currentCaja(`${credito.ruta}`, newFecha)
-  //     // }
-
-  //     // await this.cajaService.currentCaja(`${credito.ruta}`, this.moment.nowWithFormat('YYYY-MM-DD'));
-
-  //     return true;
-  //   } catch (error) {
-  //     this.hanldeExceptions(error)
-  //   }
-
-
-  // }
 
   private hanldeExceptions(error: any) {
     this.logger.error(error);

@@ -106,5 +106,5 @@ export class Credito extends Document {
 export const CreditoSchema = SchemaFactory.createForClass(Credito);
 
 CreditoSchema.index({ cliente: 1, status: 1 });
-CreditoSchema.index({ ruta: 1, payment_status: 1 });
-CreditoSchema.index({ dueDate: 1, payment_status: 1 });
+CreditoSchema.index({ ruta: 1, dueDate: 1 });
+CreditoSchema.index({ ruta: 1, status: 1 });
