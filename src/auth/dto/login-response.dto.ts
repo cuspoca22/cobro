@@ -1,5 +1,5 @@
 import { Expose } from "class-transformer";
-import { GetUserDto } from './';
+import { UserEntity } from "../entities/user.entity";
 
 export class LoginResponseDto {
 
@@ -7,6 +7,6 @@ export class LoginResponseDto {
   token: string;
 
   @Expose()
-  user: GetUserDto
+  user: UserEntity
 
 }

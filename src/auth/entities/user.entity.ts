@@ -1,66 +1,46 @@
-import { Prop, Schema, SchemaFactory } from "@nestjs/mongoose";
-import mongoose, {Document} from "mongoose";
-
-import { Ruta } from "src/ruta/schema/ruta.schema";
-import { Empresa } from "src/empresa/entities/empresa.entity";
-
-@Schema({
-   versionKey: false,
-   collection: 'users'
-})
-export class User extends Document {
-   
-   @Prop({
-      type: String,
-      index: true,
-      required: true,
-      uppercase: true,
-      trim: true
-   })
-   nombre: string;
-
-   @Prop({
-      type: Boolean,
-      required: true,
-      default: true
-   })
-   estado: boolean;
-
-   @Prop({
-      type: String,
-      index: true,
-      required: true,
-      unique: true,
-      uppercase: true,
-      trim: true
-   })
-   username: string;
-
-   @Prop({
-      type: String,
-      required: true,
-   })
-   password: string;
-
-   @Prop({
-      type: String,
-      enum: ['ADMIN', 'SUPERADMIN', 'COBRADOR', 'SUPERVISOR', 'CLIENTE'],
-      default: 'COBRADOR'
-   })
-   rol: string;
-   
-   @Prop({
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Ruta"
-   })
-   ruta: Ruta;
-
-   @Prop({
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Empresa"
-   })
-   empresa: Empresa;
-
+enum Roles {
+   ADMIN = 'ADMIN',
+   SUPERADMIN = 'SUPERADMIN',
+   COBRADOR = 'COBRADOR',
+   SUPERVISOR = 'SUPERVISOR',
+   CLIENTE = 'CLIENTE'
 }
 
-export const UserSchema = SchemaFactory.createForClass(User);
+export class UserEntity {
+   id: string;
+   nombre: string;
+   username: string;
+   rol: Roles;
+   empresa: string;
+   estado: boolean;
+   ruta?: string;
+
+   constructor(data?: Partial<UserEntity>) {
+      if (data) {
+         Object.assign(this, data);
+      }
+   }
+
+   static fromObject(object: { [key: string]: any }): UserEntity {
+      const { _id, id } = object;
+      const userId = (id || _id)?.toString() || null;
+
+      if (object.rol === Roles.COBRADOR) {
+         if (object.ruta.status || !object.ruta.status) {
+            object.ruta = object.ruta._id;
+         }
+      }
+      
+      return new UserEntity({
+         id: userId,
+         nombre: object.nombre,
+         username: object.username,
+         rol: object.rol,
+         empresa: object.empresa,
+         estado: object.estado,
+         ruta: object.ruta
+      });
+
+   }
+
+}
