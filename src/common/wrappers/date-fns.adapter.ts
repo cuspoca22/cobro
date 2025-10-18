@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { startOfDay, addDays, parseISO, isPast, differenceInDays, addWeeks, addMonths, isBefore, isSunday, endOfDay } from 'date-fns';
+import { startOfDay, addDays, parseISO, isPast, differenceInDays, addWeeks, addMonths, isBefore, isSunday, endOfDay, isEqual } from 'date-fns';
 import { fromZonedTime, toZonedTime } from 'date-fns-tz';
 
 @Injectable()
@@ -123,5 +123,12 @@ export class dateFnsAdapter {
     // 3. Ahora, podemos usar isSunday de date-fns, que operará sobre los componentes
     // de fecha/hora LOCALES de 'zonedDate', los cuales ya reflejan la zona horaria deseada.
     return isSunday(zonedDate);
+  }
+
+  public isEqual(dateLeft: Date | string | number, dateRight: Date | string | number): boolean {
+    const dateLeftObject = new Date(dateLeft);
+    const dateRightObject = new Date(dateRight);
+
+    return isEqual(dateLeftObject, dateRightObject);
   }
 }
