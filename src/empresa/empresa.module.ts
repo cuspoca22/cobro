@@ -6,9 +6,9 @@ import { ConfigModule } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
 import { Empresa, EmpresaSchema } from './entities/empresa.entity';
 import { MomentService } from '../common/plugins/moment/moment.service';
-import { User, UserSchema } from '../auth/entities/user.entity';
 import { RutaModule } from '../ruta/ruta.module';
 import { ClienteModule } from '../cliente/cliente.module';
+import { User, UserSchema } from 'src/auth/schemas/user.schema';
 
 @Module({
   imports: [

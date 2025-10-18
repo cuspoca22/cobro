@@ -2,15 +2,15 @@ import { Injectable, Logger, BadRequestException, InternalServerErrorException, 
 import { CreateEmpresaDto } from './dto/create-empresa.dto';
 import { UpdateEmpresaDto } from './dto/update-empresa.dto';
 import { InjectModel } from '@nestjs/mongoose';
-import { Empresa } from './entities/empresa.entity';
 import { Model } from 'mongoose';
-import { User } from '../auth/entities/user.entity';
+
+import { Empresa } from './entities/empresa.entity';
 import { RutaService } from '../ruta/ruta.service';
 import { AuthService } from '../auth/auth.service';
 import { CreateUserDto } from '../auth/dto/create-user.dto';
 import { ClienteService } from '../cliente/cliente.service';
-import { CronJob } from 'cron';
 import { CreateRutaDto } from '../ruta/dto/create-ruta.dto';
+import { User } from 'src/auth/schemas/user.schema';
 
 @Injectable()
 export class EmpresaService {
@@ -27,21 +27,7 @@ export class EmpresaService {
 
     private authSvc: AuthService,
     private clienteSrc: ClienteService,
-  ) {
-    // const closeRutas = CronJob.from({
-    //   cronTime: '00 00 4 * * 1-7',
-    //   onTick: this.rutaSvc.checkRutas,
-    //   start: true,
-    //   timeZone: 'America/sao_paulo'
-    // });
-        
-    // const openRutas = CronJob.from({
-    //   cronTime: '00 00 9 * * 1-6',
-    //   onTick: this.rutaSvc.checkOpenRutas,
-    //   start: true,
-    //   timeZone: 'America/sao_paulo'
-    // });
-  }
+  ) { }
 
   async create(createEmpresaDto: CreateEmpresaDto) {
 

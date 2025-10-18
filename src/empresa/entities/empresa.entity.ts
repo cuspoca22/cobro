@@ -1,7 +1,6 @@
 import { Schema, Prop, SchemaFactory } from '@nestjs/mongoose';
 import mongoose, { Document, Types } from 'mongoose';
-import { User } from '../../auth/entities/user.entity';
-import { Ruta } from '../../ruta/schema/ruta.schema';
+import { User } from 'src/auth/schemas/user.schema';
 
 @Schema({
    versionKey: false,
