@@ -5,8 +5,8 @@ import { UpdateRutaDto } from './dto/update-ruta.dto';
 import { Auth, GetUser } from 'src/auth/decorators';
 import { ValidRoles } from 'src/auth/interfaces';
 import { ParseMongoIdPipe } from '../common/pipes/parse-mongo-id.pipe';
-import { User } from '../auth/entities/user.entity';
 import { GlobalParams } from '../common/dto/global-params.dto';
+import { UserEntity } from 'src/auth/entities/user.entity';
 
 // rutas 
 // post / crear una ruta  -- ya 
@@ -36,7 +36,7 @@ export class RutaController {
   @Auth(ValidRoles.admin, ValidRoles.superAdmin)
   @Get()
   async findAll(
-    @GetUser() user: User
+    @GetUser() user: UserEntity
   ) {
     return this.rutaService.findAll();
   }
