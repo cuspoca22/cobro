@@ -1,5 +1,7 @@
 import { Injectable, NotFoundException, Logger, BadRequestException, InternalServerErrorException, forwardRef, Inject } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
+import { Cron } from '@nestjs/schedule';
+
 import { CreateRutaDto } from './dto/create-ruta.dto';
 import { UpdateRutaDto } from './dto/update-ruta.dto';
 import { Connection, Model, Types } from 'mongoose';
@@ -207,6 +209,26 @@ export class RutaService {
     } finally {
       // Siempre finaliza la sesión
       session.endSession();
+    }
+  }
+
+  @Cron('00 00 4 * * 1-7', {
+    name: 'closeAllRutas',
+    timeZone: 'America/sao_paulo',
+  })
+  async closeAllRutas() {
+    const rutasToClose = await this.rutaModel.find({status: true}).exec();
+
+    for(const ruta of rutasToClose) {
+      const rutaId = ruta._id.toString();
+      try {
+        const closed = await this.closeRuta(rutaId);
+        if(closed){
+          this.logger.log(`La ruta ${rutaId} se ha cerrado exitosamente`);
+        }
+      } catch (error) {
+        this.handleExceptions(error)
+      }
     }
   }
 
