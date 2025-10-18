@@ -6,9 +6,11 @@ import { PassportModule } from '@nestjs/passport';
 
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
-import { User, UserSchema } from './entities/user.entity';
 import { JWTStrategy } from './strategies/jwt.strategy';
 import { LogAuth, LogAuthSchema } from '../log-auth/entities/log-auth.entity';
+import { User, UserSchema } from './schemas/user.schema';
+import { Caja, CajaSchema } from 'src/caja/schemas/caja.schema';
+import { dateFnsAdapter } from 'src/common/wrappers/date-fns.adapter';
 
 @Module({
   imports: [
@@ -21,6 +23,10 @@ import { LogAuth, LogAuthSchema } from '../log-auth/entities/log-auth.entity';
       {
         name: LogAuth.name,
         schema: LogAuthSchema
+      },
+      {
+        name: Caja.name,
+        schema: CajaSchema
       }
     ]),
     PassportModule.register({
@@ -40,7 +46,11 @@ import { LogAuth, LogAuthSchema } from '../log-auth/entities/log-auth.entity';
     })
   ],
   controllers: [AuthController],
-  providers: [AuthService, JWTStrategy],
+  providers: [
+    AuthService, 
+    JWTStrategy,
+    dateFnsAdapter,
+  ],
   exports: [MongooseModule, AuthService, JWTStrategy, PassportModule, JwtModule]
 })
 export class AuthModule {}

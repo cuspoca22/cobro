@@ -4,13 +4,16 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, isValidObjectId } from 'mongoose';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from "bcrypt";
-import { plainToClass } from 'class-transformer';
 
 import { CreateUserDto, GetUserDto, LoginDto, LoginResponseDto } from './dto';
-import { User } from './entities/user.entity';
 import { JwtPayload } from './interfaces';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { LogAuth } from 'src/log-auth/entities/log-auth.entity';
+import { User } from './schemas/user.schema';
+import { UserEntity } from './entities/user.entity';
+import { dateFnsAdapter } from 'src/common/wrappers/date-fns.adapter';
+import { Caja } from 'src/caja/schemas/caja.schema';
+import { startOfDay } from 'date-fns';
 
 @Injectable()
 export class AuthService {
@@ -25,6 +28,9 @@ export class AuthService {
       private readonly logAuth: Model<LogAuth>,
 
       private readonly jwtService: JwtService,
+      private readonly dateFnsAdapter: dateFnsAdapter,
+      @InjectModel(Caja.name)
+      private readonly cajaModel: Model<Caja>,
    ) { }
 
    async create(createUserDto: CreateUserDto): Promise<User> {
@@ -52,9 +58,10 @@ export class AuthService {
          username: username.toUpperCase()
       })
          .populate({
-            path: "ruta"
-         })
-      
+            path: "ruta",
+            select: 'status isLocked timeZone'
+         }).lean()
+
       if (!user) {
 
          await this.logAuth.create({
@@ -80,8 +87,8 @@ export class AuthService {
          throw new UnauthorizedException("Datos Incorrectos")
       }
 
-      if(user.ruta  && user.rol === 'COBRADOR') {
-         if (!user.ruta.status) {   
+      if (user.ruta && user.rol === 'COBRADOR') {
+         if (!user.ruta.status) {
 
             await this.logAuth.create({
                user: user._id,
@@ -94,7 +101,7 @@ export class AuthService {
             throw new UnauthorizedException("Ruta cerrada hable con su administrador")
          }
 
-         if(user.ruta.isLocked) {
+         if (user.ruta.isLocked) {
 
             await this.logAuth.create({
                user: user._id,
@@ -106,25 +113,31 @@ export class AuthService {
 
             throw new UnauthorizedException('Su ruta se encuentra bloqueada, por favor ponganse en contacto con su supervisor')
          }
+
+         const checktCaja = await this.checkCaja(user.ruta._id, user.ruta.timeZone);
+
+         if(!checktCaja) {
+            throw new BadRequestException('La caja no corresponde al dia actual, por favor hable con su administrador')
+         }
       }
+
       return {
-         user: plainToClass(GetUserDto, {...user.toObject(), ruta: user.ruta._id.toString()}),
+         user: UserEntity.fromObject(user),
          token: this.getJwtToken({ id: user._id.toString() })
       }
 
-
    }
 
-   async checkStatus(user: GetUserDto): Promise<LoginResponseDto> {
+   async checkStatus(user: GetUserDto) {
       return {
-         user: plainToClass(GetUserDto, user),
+         user: UserEntity.fromObject(user),
          token: this.getJwtToken({ id: user.id })
       }
 
    }
 
-   async findAll(user: User, have_empresa: boolean = true) {
-      if(!have_empresa){
+   async findAll(user: UserEntity, have_empresa: boolean = true) {
+      if (!have_empresa) {
          return this.userModel.find({
             empresa: { $in: [null, undefined] }
          })
@@ -139,7 +152,7 @@ export class AuthService {
       // }
 
       const users = await this.userModel.find();
-      return users.filter(userDb => userDb._id.toString() !== user._id.toString());
+      return users.filter(userDb => userDb._id.toString() !== user.id.toString());
 
    }
 
@@ -183,7 +196,7 @@ export class AuthService {
 
 
       if (!!updateUserDto.password) {
-         if(updateUserDto.password.length < 6) {
+         if (updateUserDto.password.length < 6) {
             throw new BadRequestException(`La contraseña tiene que tener minimo 6 caracteres`)
          }
          updateUserDto.password = bcrypt.hashSync(updateUserDto.password, 10);
@@ -220,6 +233,21 @@ export class AuthService {
    private getJwtToken(payload: JwtPayload): string {
       const token = this.jwtService.sign(payload);
       return token;
+   }
+
+   private async checkCaja(idRuta: string, timeZone: string) {
+      const caja = await this.cajaModel.findOne({
+         ruta: idRuta
+      }).sort({fecha: -1})
+
+      const startOfDayUtc = this.dateFnsAdapter.getStartOfTodayInTimeZone(timeZone);
+      
+      if(!this.dateFnsAdapter.isEqual(caja.fecha, startOfDayUtc)) {
+         return false
+      }
+
+      return true;
+      
    }
 
    private handleExceptions(error: any) {

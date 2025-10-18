@@ -3,8 +3,8 @@ import { AuthService } from './auth.service';
 import { LoginDto, UpdateUserDto, CreateUserDto, GetUserDto } from './dto';
 import { Auth, GetUser } from './decorators';
 import { ValidRoles } from './interfaces';
-import { User } from './entities/user.entity';
 import { Request } from 'express';
+import { UserEntity } from './entities/user.entity';
 
 @Controller('auth')
 export class AuthController {
@@ -29,7 +29,7 @@ export class AuthController {
   @Auth()
   @Get("users")
   async findAll(
-    @GetUser() user: User,
+    @GetUser() user: UserEntity,
     // @Query('have_empresa', ParseBoolPipe) have_empresa: boolean,
   ) {
     return this.authService.findAll(user)
