@@ -5,7 +5,6 @@ import { UpdateCajaDto } from './dto/update-caja.dto';
 import { Auth, GetUser } from 'src/auth/decorators';
 import { ParseMongoIdPipe } from 'src/common/pipes/parse-mongo-id.pipe';
 import { GlobalParams } from '../common/dto/global-params.dto';
-import { User } from '../auth/entities/user.entity';
 
 // @Auth()
 @Controller('caja')

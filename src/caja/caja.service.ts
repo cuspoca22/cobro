@@ -26,9 +26,6 @@ export class CajaService {
     @InjectModel(Credito.name)
     private readonly creditoModel: Model<Credito>,
 
-    @Inject(forwardRef(() => AuthService))
-    private readonly authService: AuthService,
-
     @InjectModel(CierreCaja.name)
     private CcModel: Model<CierreCaja>,
 
