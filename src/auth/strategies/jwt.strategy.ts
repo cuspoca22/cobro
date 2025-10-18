@@ -5,10 +5,9 @@ import { ExtractJwt, Strategy } from 'passport-jwt';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 
-import { User } from '../entities/user.entity';
 import { JwtPayload } from "../interfaces/jwt-payload.interface";
-import { GetUserDto } from '../dto';
-import { plainToClass } from 'class-transformer';
+import { User } from '../schemas/user.schema';
+import { UserEntity } from '../entities/user.entity';
 
 @Injectable()
 export class JWTStrategy extends PassportStrategy(Strategy){
@@ -25,7 +24,7 @@ export class JWTStrategy extends PassportStrategy(Strategy){
     });
   }
 
-  async validate(payload: JwtPayload): Promise<GetUserDto>{
+  async validate(payload: JwtPayload): Promise<UserEntity>{
     const {id} = payload;
     
     let user = await this.userModel.findById(id)
@@ -40,7 +39,7 @@ export class JWTStrategy extends PassportStrategy(Strategy){
       throw new UnauthorizedException('usuario no esta activo');
 
 
-    return plainToClass(GetUserDto, {...user.toObject(), ruta: user.ruta._id.toString()});
+    return UserEntity.fromObject(user.toObject());
   }
 
 }
