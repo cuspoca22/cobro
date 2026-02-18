@@ -4,7 +4,7 @@ import { EmpresaController } from './empresa.controller';
 import { AuthModule } from '../auth/auth.module';
 import { ConfigModule } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
-import { Empresa, EmpresaSchema } from './entities/empresa.entity';
+import { Empresa, EmpresaSchema } from './schemas/empresa.schema';
 import { RutaModule } from '../ruta/ruta.module';
 import { ClienteModule } from '../cliente/cliente.module';
 import { User, UserSchema } from 'src/auth/schemas/user.schema';

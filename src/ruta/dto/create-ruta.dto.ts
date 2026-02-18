@@ -1,44 +1,12 @@
-import { IsString, IsNumber, IsOptional, IsBoolean, IsMongoId } from "class-validator";
+import { IsString, IsOptional, IsBoolean, IsMongoId } from "class-validator";
 
 export class CreateRutaDto {
 
    @IsString()
    nombre: string;
-
-   @IsNumber()
-   @IsOptional()
-   clientes?: number;
-  
-   @IsNumber()
-   @IsOptional()
-   clientes_activos?: number; 
-  
-   @IsNumber()
-   @IsOptional()
-   gastos?: number;
-   
-   @IsNumber()
-   @IsOptional()
-   inversiones?: number;
-  
-   @IsNumber()
-   @IsOptional()
-   retiros?: number;
   
    @IsString()
    ciudad: string;
-  
-   @IsNumber()
-   @IsOptional()
-   cartera?: number;
-  
-   @IsNumber()
-   @IsOptional()
-   total_cobrado?: number;
-  
-   @IsNumber()
-   @IsOptional()
-   total_prestado?: number;
   
    @IsBoolean()
    @IsOptional()
@@ -66,5 +34,8 @@ export class CreateRutaDto {
    @IsBoolean()
    @IsOptional()
    autoOpen: boolean = true;
+
+   @IsString()
+   timeZone: string;
 
 }

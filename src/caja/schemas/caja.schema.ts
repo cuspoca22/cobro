@@ -6,7 +6,7 @@ import mongoose, { Types } from 'mongoose';
    collection: 'cajas'
 })
 export class Caja {
-   
+
    @Prop({
       type: Number,
       default: 0
@@ -41,8 +41,8 @@ export class Caja {
       type: Number,
       default: 0
    })
-   cobro: number; 
-   
+   cobro: number;
+
    @Prop({
       type: Number,
       default: 0
@@ -54,7 +54,7 @@ export class Caja {
       default: 0
    })
    total_clientes: number;
-   
+
    @Prop({
       type: Number,
       default: 0
@@ -72,7 +72,7 @@ export class Caja {
       default: 0
    })
    caja_final: number;
-   
+
    @Prop({
       type: Number,
       default: 0
@@ -90,7 +90,7 @@ export class Caja {
       ref: 'Ruta',
       required: true
    })
-   ruta: Types.ObjectId; 
+   ruta: Types.ObjectId;
 
    // Este estatus hace referencia a si la ruta esta abierta o cerrada
    // status: true -> abierta
@@ -100,10 +100,10 @@ export class Caja {
       default: true
    })
    status: boolean;
-   
+
 }
 
 
 export const CajaSchema = SchemaFactory.createForClass(Caja);
 
-CajaSchema.index({ruta: 1, fecha: 1}, {unique: true});
+CajaSchema.index({ ruta: 1, fecha: -1 }, { unique: true });

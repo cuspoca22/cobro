@@ -22,6 +22,14 @@ export class MovimientoCajaController {
     return this.movimientoCajaService.getHistorialPagos(rutaId, creditoId);
   }
 
+  @Get("resumen-por-ruta")
+  async getResumenDiarioPorRuta(
+    @Query('rutaId') rutaId: string,
+    @Query('fecha') fecha: string,
+  ){
+    return await this.movimientoCajaService.getResumenDiario(rutaId, fecha);
+  }
+
   @Post('add')
   async createPago(
     @Body() createMovimientoCajaDto: CreateMovimientoCajaDto

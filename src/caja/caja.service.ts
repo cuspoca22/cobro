@@ -44,7 +44,7 @@ export class CajaService {
   async getUltimaCaja(rutaId: string, session: ClientSession) {
 
     const ultimaCaja = await this.cajaModel
-      .findOne({ ruta: rutaId, status: true })
+      .findOne({ ruta: rutaId })
       .sort({ fecha: -1 })
       .session(session);
     if (!ultimaCaja) {
@@ -92,7 +92,7 @@ export class CajaService {
 
   async getClientesPendientesYRenovados(rutaId: string, startOfDayUtc: Date, session?: ClientSession) {
     const rutaObjectId = new mongoose.Types.ObjectId(rutaId);
-    
+
     // 1. Obtener la lista de clientes que se renovaron hoy
     const clientesRenovados = await this.cajaMovimientoModel.aggregate([
       {
@@ -208,7 +208,7 @@ export class CajaService {
 
     const startOfDayUtc = this.dateFnsAdapter.getStartOfTodayInTimeZone(ruta.timeZone);
 
-    const {clientesPendientes, renovaciones} = await this.getClientesPendientesYRenovados(rutaId, startOfDayUtc, session);
+    const { clientesPendientes, renovaciones } = await this.getClientesPendientesYRenovados(rutaId, startOfDayUtc, session);
     const result = await this.cajaMovimientoModel.aggregate(
       [
         // Etapa 1: Filtrar documentos por caja y ruta
@@ -316,7 +316,7 @@ export class CajaService {
     caja.clientes_pendientes = clientesPendientes;
     caja.renovaciones = renovaciones;
     caja.caja_final = caja.base + caja.cobro + caja.inversion - caja.prestamo - caja.gasto - caja.retiro;
-    
+
     await caja.save({ session });
 
     return CajaEntity.fromObject(caja);
@@ -329,18 +329,39 @@ export class CajaService {
 
   }
 
-  async findAll(ruta: string, fecha: string,) {
+  async findAll(rutaId: string, fecha: string,) {
+    const ruta = await this.rutaModel.findById(rutaId);
+    if (!ruta) throw new NotFoundException(`Ruta con el id ${rutaId} no existe`);
 
-    const caja = await this.cajaModel.findOne({
-      ruta,
-      fecha
-    })
+    // 1. Creamos la fecha base (medianoche UTC)
+    const baseDate = new Date(fecha);
+    baseDate.setUTCHours(0, 0, 0, 0);
 
-    if (!caja) {
+    // 2. Definimos el rango de búsqueda
+    // Para atrapar los registros "00:00 UTC" y los registros "Local (06:00 UTC)"
+    // buscamos desde el inicio del día UTC hasta el final del día en esa zona horaria.
+
+    const inicioBusqueda = new Date(baseDate);
+    // 00:00:00 UTC (Atrapa los registros viejos)
+
+    const finBusqueda = new Date(baseDate);
+    finBusqueda.setUTCHours(23, 59, 59, 999);
+    // 23:59:59 UTC (Atrapa los registros nuevos
+    const caja = await this.cajaModel.aggregate([
+      {
+        $match: {
+          ruta: new Types.ObjectId(rutaId),
+          fecha: { $gte: inicioBusqueda, $lte: finBusqueda }
+        }
+      }
+    ])
+
+
+    if (caja.length < 1) {
       throw new NotFoundException('No se encontraron registro de este dia')
     }
 
-    return caja;
+    return caja[0];
 
   }
 

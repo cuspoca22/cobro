@@ -105,7 +105,8 @@ export class CreditoService {
       );
 
       // Crear el nuevo documento de crédito dentro de la transacción
-      const [newCredito] = await this.creditoModel.create([{
+      // Crear el nuevo documento de crédito dentro de la transacción
+      const creditos = await this.creditoModel.create([{
         cliente: clienteId,
         ruta: rutaId,
         valor_credito,
@@ -117,9 +118,14 @@ export class CreditoService {
         fecha_inicio,
         observaciones,
         status: true,
-        saldo: calculatedTotalPagar,
         dueDate,
       }], { session });
+
+      const newCredito = creditos ? creditos[0] : null;
+
+      if (!newCredito) {
+        throw new InternalServerErrorException('No se pudo crear el crédito');
+      }
 
       // Actualizar el estado del cliente dentro de la transacción
       await this.clienteModel.findByIdAndUpdate(

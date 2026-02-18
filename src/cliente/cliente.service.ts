@@ -54,11 +54,6 @@ export class ClienteService {
   async findByAdmin( idRuta: string ): Promise<Cliente[]> {
     return await this.clienteModel.find({
       ruta: idRuta,
-    }).populate({
-      path: 'creditos',
-      populate: {
-        path: 'pagos'
-      }
     })
 
   }

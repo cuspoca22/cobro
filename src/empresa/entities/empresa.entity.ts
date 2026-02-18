@@ -1,71 +1,45 @@
-import { Schema, Prop, SchemaFactory } from '@nestjs/mongoose';
-import mongoose, { Document, Types } from 'mongoose';
-import { User } from 'src/auth/schemas/user.schema';
+import { UserEntity } from "src/auth/entities/user.entity";
+import { RutaEntity } from "src/ruta/entities/ruta.entity";
 
-@Schema({
-   versionKey: false,
-   collection: 'empresas'
-})
-export class Empresa extends Document {
+export class EmpresaEntity {
 
-   @Prop({
-      type: String,
-      index: true,
-      trim: true,
-      uppercase: true
-   })
+   id: string;
    name: string;
-
-   @Prop({
-      type: String,
-      trim: true
-   })
    email: string;
-
-   @Prop({ type: String })
    phone: string;
-
-   @Prop({
-      type: Number,
-      default: 19
-   })
-   dayOfPay: number;
-
-   @Prop({
-      type: String,
-      required: true,
-      index: true
-   })
+   dayOfPay: string;
    country: string;
-
-   @Prop({
-      type: Boolean,
-      default: true
-   })
    isSubscriptionPaid: boolean;
+   owner: UserEntity;
+   employes: UserEntity[];
+   rutas: RutaEntity[];
 
-   @Prop({
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User'
-   })
-   owner: User;
+   constructor(data?: Partial<EmpresaEntity>) {
+      if (data) {
+         Object.assign(this, data);
+      }
+   }
 
-   @Prop({
-      type: [{
-         type: mongoose.Schema.Types.ObjectId,
-         ref: 'User'
-      }]
-   })
-   employes: Types.ObjectId[];
+   static fromObject(object: { [key: string]: any }): EmpresaEntity {
 
-   @Prop({
-      type: [{
-         type: mongoose.Schema.Types.ObjectId,
-         ref: "Ruta"
-      }]
-   })
-   rutas: Types.ObjectId[];
+      const { _id, id } = object;
+      const empresaId = (id || _id)?.toString() || null;
+
+      const empresa = new EmpresaEntity({
+         id: empresaId,
+         name: object.name,
+         email: object.email,
+         phone: object.phone,
+         dayOfPay: object.dayOfPay,
+         country: object.country,
+         isSubscriptionPaid: object.isSubscriptionPaid,
+         owner: UserEntity.fromObject(object.owner),
+         employes: object.employes.map(employe => UserEntity.fromObject(employe)),
+         rutas: object.rutas.map(ruta => RutaEntity.fromObject(ruta))
+      });
+
+      return empresa;
+
+   }
 
 }
-
-export const EmpresaSchema = SchemaFactory.createForClass(Empresa);

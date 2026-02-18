@@ -4,13 +4,16 @@ import { UpdateEmpresaDto } from './dto/update-empresa.dto';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 
-import { Empresa } from './entities/empresa.entity';
+import { Empresa } from './schemas/empresa.schema';
 import { RutaService } from '../ruta/ruta.service';
 import { AuthService } from '../auth/auth.service';
 import { CreateUserDto } from '../auth/dto/create-user.dto';
 import { ClienteService } from '../cliente/cliente.service';
 import { CreateRutaDto } from '../ruta/dto/create-ruta.dto';
 import { User } from 'src/auth/schemas/user.schema';
+import { EmpresaEntity } from './entities/empresa.entity';
+import { Ruta } from '../ruta/schema/ruta.schema';
+import { Types } from 'mongoose';
 
 @Injectable()
 export class EmpresaService {
@@ -44,19 +47,20 @@ export class EmpresaService {
     }
 
   }
-  
+
   async getEmpresaById(id: string) {
 
     try {
 
       const empresa = await this.empresaModel.findById(id)
         .populate('employes')
-        .populate('rutas');
-    
-      return empresa;
+        .populate('rutas')
+        .populate('owner')
+
+      return EmpresaEntity.fromObject(empresa);
 
     } catch (error) {
-      
+      console.log(error)
       this.handleExceptions(error);
 
     }
@@ -108,7 +112,7 @@ export class EmpresaService {
 
   async findAll(empresa: string) {
 
-    let empresaDB = await this.empresaModel.findById(empresa)
+    const empresaDB = await this.empresaModel.findById(empresa)
       .populate([
         {
           path: 'employes',
@@ -119,10 +123,11 @@ export class EmpresaService {
         {
           path: 'rutas'
         }
-      ])
+      ]);
 
-    empresaDB = empresaDB.toObject();
-    return empresaDB.employes;
+    if (!empresaDB) return [];
+
+    return empresaDB.toObject().employes;
 
   }
 
@@ -133,12 +138,14 @@ export class EmpresaService {
   }
 
   async findRutasByEmpresa(idEmpresa: string) {
-    
-    const empresa = await this.empresaModel.findById(idEmpresa)
-      .populate('rutas');
 
-    return empresa.rutas;
-    
+    const empresa = await this.empresaModel.findById(idEmpresa)
+      .populate('rutas')
+      .populate('employes')
+      .populate('owner')
+
+    return EmpresaEntity.fromObject(empresa);
+
   }
 
   async findOne(id: string) {
@@ -189,11 +196,11 @@ export class EmpresaService {
       const empresa = await this.empresaModel.findById(userDto.empresa).populate('employes');
       const empleado = await this.authSvc.create(userDto);
 
-      const existeEmpleado = empresa.employes.some(e => e._id.equals(empleado._id));
+      const existeEmpleado = (empresa.employes as User[]).some(e => e._id.equals(empleado._id));
 
       if (!existeEmpleado) {
 
-        empresa.employes.push(empleado.id);
+        (empresa.employes as any).push(empleado._id);
         await empresa.save();
 
         empleado.empresa = empresa._id;
@@ -203,7 +210,7 @@ export class EmpresaService {
         throw new BadRequestException('El empleado ya esta en esta empresa')
       }
 
-    }catch (error) {
+    } catch (error) {
 
       this.handleExceptions(error)
 
@@ -220,7 +227,7 @@ export class EmpresaService {
     if (!empresa) throw new NotFoundException('No existe la empresa');
 
     try {
-      empresa.employes = empresa.employes.filter(empId => !empId.equals(user._id));
+      empresa.employes = (empresa.employes as Types.ObjectId[]).filter(empId => !empId.equals(user._id));
       await empresa.save();
       await this.userModel.findByIdAndDelete(empleado);
     } catch (error) {
@@ -236,18 +243,18 @@ export class EmpresaService {
 
     const empresa = await this.empresaModel.findById(idEmpresa).populate('rutas');
     // const ruta = await this.rutaSvc.findOne(idRuta);
-    
+
     if (!empresa) {
       throw new NotFoundException('La empresa no existe');
     }
 
     const ruta = await this.rutaSvc.create(rutaDto);
 
-    const existeRuta = empresa.rutas.some(r => r._id.equals(ruta._id));
+    const existeRuta = (empresa.rutas as Ruta[]).some(r => r._id.equals(ruta._id));
 
     if (!existeRuta) {
       try {
-        empresa.rutas.push(ruta.id);
+        (empresa.rutas as any).push(ruta._id);
         await empresa.save();
         ruta.empresa = empresa._id;
         await ruta.save()

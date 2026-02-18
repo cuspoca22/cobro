@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, InternalServerErrorException, Logger, NotFoundException } from "@nestjs/common";
 import { InjectModel, InjectConnection } from "@nestjs/mongoose";
-import { Model, Connection } from "mongoose";
+import { Model, Connection, Types } from "mongoose";
 
 import { MovimientoCaja } from "./schemas/caja-movimiento.schemas";
 import { CreateMovimientoCajaDto, UpdateMovimientoCajaDto } from "./dto";
@@ -289,6 +289,54 @@ export class MovimientoCajaService {
       await session.endSession();
 
     }
+
+  }
+
+  async getResumenDiario(rutaId: string, fecha: string) {
+    const ruta = await this.rutaModel.findById(rutaId);
+    if(!ruta) throw new NotFoundException('La Ruta no existe');
+    const baseDate = new Date(fecha);
+    baseDate.setUTCHours(0, 0, 0, 0);
+    const inicioBusqueda = new Date(baseDate); 
+    const finBusqueda = new Date(baseDate);
+    finBusqueda.setUTCHours(23, 59, 59, 999);
+    const pagos = await this.cajaMovimientoModel.aggregate([
+      {
+        $match: { 
+          ruta: new Types.ObjectId(rutaId),
+          fecha: { $gte: inicioBusqueda, $lte: finBusqueda },
+          subTipo: SubTipo.PAGOCREDITO  
+        }
+      },
+      {
+        $lookup: {
+          from: 'clientes',
+          localField: 'cliente',
+          foreignField: '_id',
+          as: 'clienteInfo'
+        }
+      },
+      {
+        $unwind: {
+          path: '$clienteInfo',
+          preserveNullAndEmptyArrays: true
+        }
+      },
+      {
+        $project: {
+          fecha: 1,
+          monto: 1,
+          subTipo: 1,
+          cliente: {
+            id: '$clienteInfo._id',
+            nombre: '$clienteInfo.nombre',
+            alias: '$clienteInfo.alias'
+          }
+        }
+      }
+    ])
+
+    return pagos;
 
   }
 

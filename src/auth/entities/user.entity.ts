@@ -25,10 +25,8 @@ export class UserEntity {
       const { _id, id } = object;
       const userId = (id || _id)?.toString() || null;
 
-      if (object.rol === Roles.COBRADOR) {
-         if (object.ruta.status || !object.ruta.status) {
-            object.ruta = object.ruta._id;
-         }
+      if (object.rol === Roles.COBRADOR && object.ruta) {
+         object.ruta = object.ruta._id;
       }
       
       return new UserEntity({

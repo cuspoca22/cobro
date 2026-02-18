@@ -38,7 +38,6 @@ export class EmpresaController {
   findOne(
     @GetUser() user: any,
   ) {
-    
     let { empresa } = user;
     empresa = empresa.toString();
 

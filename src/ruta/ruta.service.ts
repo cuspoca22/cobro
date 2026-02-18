@@ -114,13 +114,13 @@ export class RutaService {
     session.startTransaction();
 
     try {
-      
+
       const ruta = await this.rutaModel.findById(rutaId).session(session);
       if (!ruta) {
         throw new NotFoundException(`La ruta con el id ${rutaId} no existe`);
       }
 
-      if( !ruta.caja_actual ) {
+      if (!ruta.caja_actual) {
         throw new BadRequestException(`La ruta no tiene cajas creadas`);
       }
 
@@ -148,7 +148,7 @@ export class RutaService {
 
 
     } catch (error) {
-      
+
       // Si hay un error, aborta la transacción para revertir todos los cambios
       await session.abortTransaction();
 
@@ -171,14 +171,15 @@ export class RutaService {
         throw new NotFoundException(`La ruta con el id ${rutaId} no existe`);
       }
 
-      const ultimaCaja = await this.cajaSvc.getUltimaCaja(rutaId, session);
+      const { hayUltimaCaja, ultimaCaja } = await this.cajaSvc.getUltimaCaja(rutaId, session);
+
       const startOfDayUtc = this.dateFnsAdapter.getStartOfTodayInTimeZone(ruta.timeZone);
 
       let baseCaja = 0;
 
-      // Si la ruta ya tiene cajas, obtenemos la base de la última
-      if (ultimaCaja.hayUltimaCaja && ultimaCaja.ultimaCaja) {
-        baseCaja = ultimaCaja.ultimaCaja.base;
+      // Si la ruta ya tiene cajas, obtenemos la caja_final de la ultima caja
+      if (hayUltimaCaja && ultimaCaja) {
+        baseCaja = ultimaCaja.caja_final;
       }
 
       // Unifica la creación de la nueva caja
@@ -196,7 +197,7 @@ export class RutaService {
 
       // Confirma la transacción. Si esta línea no se ejecuta, NINGÚN cambio se guardará.
       await session.commitTransaction();
-      
+
       return {
         ok: true,
         caja: newCaja,
@@ -217,13 +218,13 @@ export class RutaService {
     timeZone: 'America/sao_paulo',
   })
   async closeAllRutas() {
-    const rutasToClose = await this.rutaModel.find({status: true}).exec();
+    const rutasToClose = await this.rutaModel.find({ status: true }).exec();
 
-    for(const ruta of rutasToClose) {
+    for (const ruta of rutasToClose) {
       const rutaId = ruta._id.toString();
       try {
         const closed = await this.closeRuta(rutaId);
-        if(closed){
+        if (closed) {
           this.logger.log(`La ruta ${rutaId} se ha cerrado exitosamente`);
         }
       } catch (error) {

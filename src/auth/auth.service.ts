@@ -114,9 +114,9 @@ export class AuthService {
             throw new UnauthorizedException('Su ruta se encuentra bloqueada, por favor ponganse en contacto con su supervisor')
          }
 
-         const checktCaja = await this.checkCaja(user.ruta._id, user.ruta.timeZone);
+         const checktCaja = await this.checkCaja(user.ruta._id.toString(), user.ruta.timeZone);
 
-         if(!checktCaja) {
+         if (!checktCaja) {
             throw new BadRequestException('La caja no corresponde al dia actual, por favor hable con su administrador')
          }
       }
@@ -238,16 +238,16 @@ export class AuthService {
    private async checkCaja(idRuta: string, timeZone: string) {
       const caja = await this.cajaModel.findOne({
          ruta: idRuta
-      }).sort({fecha: -1})
+      }).sort({ fecha: -1 })
 
       const startOfDayUtc = this.dateFnsAdapter.getStartOfTodayInTimeZone(timeZone);
-      
-      if(!this.dateFnsAdapter.isEqual(caja.fecha, startOfDayUtc)) {
+
+      if (!this.dateFnsAdapter.isEqual(caja.fecha, startOfDayUtc)) {
          return false
       }
 
       return true;
-      
+
    }
 
    private handleExceptions(error: any) {

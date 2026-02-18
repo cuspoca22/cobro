@@ -22,7 +22,7 @@ update.js
 .env
 comandos.json
 notas.txt
-
+update-cajas.js
 # OS
 .DS_Store
 
