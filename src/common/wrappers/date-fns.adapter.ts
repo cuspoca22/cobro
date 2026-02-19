@@ -1,10 +1,19 @@
-import { Injectable } from "@nestjs/common";
-import { startOfDay, addDays, parseISO, isPast, differenceInDays, addWeeks, addMonths, isBefore, isSunday, endOfDay, isEqual } from 'date-fns';
+import { Injectable } from '@nestjs/common';
+import {
+  startOfDay,
+  addDays,
+  differenceInDays,
+  addWeeks,
+  addMonths,
+  isBefore,
+  isSunday,
+  endOfDay,
+  isEqual,
+} from 'date-fns';
 import { fromZonedTime, toZonedTime } from 'date-fns-tz';
 
 @Injectable()
-export class dateFnsAdapter {
-
+export class DateFnsAdapter {
   /**
    * Convierte un Date objeto (que internamente es UTC) a su representación lógica
    * en la zona horaria especificada.
@@ -35,7 +44,7 @@ export class dateFnsAdapter {
    * @returns Un Date objeto que es el inicio del día local en UTC (ej. 2025-07-04T06:00:00.000Z para Guatemala)
    */
   public getStartOfTodayInTimeZone(timeZone: string): Date {
-    const now = new Date(); // Instante actual en UTC
+    const now = this.nowUtc(); // Usar nowUtc para consistencia
     const dateInZone = this.convertUtcToZonedTime(now, timeZone); // Convertir para operar en el contexto de la TZ
     const startOfLocalDay = startOfDay(dateInZone);
     return this.convertZonedTimeToUtc(startOfLocalDay, timeZone); // Convertir ese inicio de día local a UTC para la DB
@@ -47,29 +56,32 @@ export class dateFnsAdapter {
    * @returns Un Date objeto que es el fin del día local en UTC (ej. 2025-07-05T05:59:59.999Z para Guatemala)
    */
   public getEndOfTodayInTimeZone(timeZone: string): Date {
-    const now = new Date();
+    const now = this.nowUtc();
     const dateInZone = this.convertUtcToZonedTime(now, timeZone);
     const endOfLocalDay = endOfDay(dateInZone); // Obtener fin del día en esa TZ
     return this.convertZonedTimeToUtc(endOfLocalDay, timeZone); // Convertir ese fin de día local a UTC para la DB
   }
-  
+
   public nowUtc(): Date {
     return new Date();
   }
 
   public startOfDayUtc(date: Date): Date {
-    return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+    return new Date(
+      Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
+    );
   }
 
   public isPast(date: Date | string | number): boolean {
     const dateObject = new Date(date);
-
-    // isPast de date-fns compara el instante UTC del dateObject con el instante UTC actual.
-    return isPast(dateObject);
+    // Usamos this.nowUtc() para comparar contra "ahora", permitiendo mockear "ahora" en tests si extendemos la clase
+    return isBefore(dateObject, this.nowUtc());
   }
 
-  public differenceInDays(dateLeft: Date | string | number, dateRight: Date | string | number): number {
-
+  public differenceInDays(
+    dateLeft: Date | string | number,
+    dateRight: Date | string | number,
+  ): number {
     // Convierte ambas entradas a objetos Date.
     // Esto asegura que, independientemente de si la entrada fue string/number/Date,
     // se maneje como un instante UTC para la comparación.
@@ -97,9 +109,11 @@ export class dateFnsAdapter {
     return addMonths(dateObject, months);
   }
 
-  public isBefore(dateLeft: Date | string | number, dateRight: Date | string | number): boolean {
-
-  // Convierte ambas entradas a objetos Date.
+  public isBefore(
+    dateLeft: Date | string | number,
+    dateRight: Date | string | number,
+  ): boolean {
+    // Convierte ambas entradas a objetos Date.
     // Esto asegura que, independientemente de si la entrada fue string/number/Date,
     // se maneje como un instante UTC para la comparación.
     const dateLeftObject = new Date(dateLeft);
@@ -107,7 +121,6 @@ export class dateFnsAdapter {
 
     // isBefore de date-fns compara directamente los instantes UTC de los objetos Date.
     return isBefore(dateLeftObject, dateRightObject);
-
   }
 
   public isSunday(date: Date | string | number, timeZone: string): boolean {
@@ -125,7 +138,10 @@ export class dateFnsAdapter {
     return isSunday(zonedDate);
   }
 
-  public isEqual(dateLeft: Date | string | number, dateRight: Date | string | number): boolean {
+  public isEqual(
+    dateLeft: Date | string | number,
+    dateRight: Date | string | number,
+  ): boolean {
     const dateLeftObject = new Date(dateLeft);
     const dateRightObject = new Date(dateRight);
 

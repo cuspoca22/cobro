@@ -6,7 +6,7 @@ import { MovimientoCaja } from "./schemas/caja-movimiento.schemas";
 import { CreateMovimientoCajaDto, UpdateMovimientoCajaDto } from "./dto";
 import { Caja } from "src/caja/schemas/caja.schema";
 import { Ruta } from "src/ruta/schema/ruta.schema";
-import { dateFnsAdapter } from '../common/wrappers/date-fns.adapter';
+import { DateFnsAdapter } from '../common/wrappers/date-fns.adapter';
 import { CreditoService } from "src/credito/credito.service";
 import { SubTipo, TipoMovimiento } from "./interfaces";
 import { CreateCreditoDto } from "src/credito/dto";
@@ -27,7 +27,7 @@ export class MovimientoCajaService {
     @InjectModel(Ruta.name)
     private readonly rutaModel: Model<Ruta>,
 
-    private readonly dateFnsAdapter: dateFnsAdapter,
+    private readonly dateFnsAdapter: DateFnsAdapter,
     private readonly creditoService: CreditoService,
     @InjectConnection() private readonly connection: Connection
   ) { }
@@ -38,7 +38,7 @@ export class MovimientoCajaService {
     session.startTransaction();
 
     try {
-      const { rutaId, monto, creditoId, clienteId,...rest } = createPagoDto;
+      const { rutaId, monto, creditoId, clienteId, ...rest } = createPagoDto;
 
       const ruta = await this.rutaModel.findById(rutaId).session(session);
       if (!ruta) throw new NotFoundException(`La ruta con el id ${rutaId} no existe`);
@@ -231,7 +231,7 @@ export class MovimientoCajaService {
       const movimiento = new this.cajaMovimientoModel({
         monto: credito.valor_credito,
         subTipo: SubTipo.PRESTAMO,
-        tipoMovimiento: TipoMovimiento.EGRESO, 
+        tipoMovimiento: TipoMovimiento.EGRESO,
         cliente: credito.cliente,
         credito: credito._id,
         ruta: rutaId,
@@ -294,18 +294,18 @@ export class MovimientoCajaService {
 
   async getResumenDiario(rutaId: string, fecha: string) {
     const ruta = await this.rutaModel.findById(rutaId);
-    if(!ruta) throw new NotFoundException('La Ruta no existe');
+    if (!ruta) throw new NotFoundException('La Ruta no existe');
     const baseDate = new Date(fecha);
     baseDate.setUTCHours(0, 0, 0, 0);
-    const inicioBusqueda = new Date(baseDate); 
+    const inicioBusqueda = new Date(baseDate);
     const finBusqueda = new Date(baseDate);
     finBusqueda.setUTCHours(23, 59, 59, 999);
     const pagos = await this.cajaMovimientoModel.aggregate([
       {
-        $match: { 
+        $match: {
           ruta: new Types.ObjectId(rutaId),
           fecha: { $gte: inicioBusqueda, $lte: finBusqueda },
-          subTipo: SubTipo.PAGOCREDITO  
+          subTipo: SubTipo.PAGOCREDITO
         }
       },
       {

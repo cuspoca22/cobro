@@ -1,13 +1,13 @@
 // credit-calculator.service.ts
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { dateFnsAdapter } from 'src/common/wrappers/date-fns.adapter';
+import { DateFnsAdapter } from 'src/common/wrappers/date-fns.adapter';
 import { FrecuenciaCobro } from '../interfaces/frecuencia-cobro.enum';
 import { ClasificacionCliente } from '../interfaces';
 
 @Injectable()
 export class CreditCalculatorService {
 
-  constructor(private dateFnsAdapter: dateFnsAdapter) { }
+  constructor(private dateFnsAdapter: DateFnsAdapter) { }
 
   // --- Funciones de Cálculo Financiero (las que ya habíamos definido) ---
 
@@ -55,7 +55,7 @@ export class CreditCalculatorService {
 
     const cuotasPagadasFloat = abonos / valorCuota;
     const cuotasPagadasEnteras = Math.floor(cuotasPagadasFloat);
-  
+
     // `nextDueDate` será la fecha de inicio del período que está pendiente.
     let nextDueDate = this.dateFnsAdapter.startOfDayUtc(new Date(fechaInicio)); // Usar startOfDayUtc
     for (let i = 0; i < cuotasPagadasEnteras; i++) {

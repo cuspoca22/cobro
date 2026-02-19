@@ -6,7 +6,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { Credito, CreditoSchema } from 'src/credito/schemas/credito.schema';
 import { RutaModule } from '../ruta/ruta.module';
 import { CreditCalculatorService } from 'src/credito/helpers/credit.calculator.service';
-import { dateFnsAdapter } from '../common/wrappers/date-fns.adapter';
+import { DateFnsAdapter } from '../common/wrappers/date-fns.adapter';
 import { MovimientoCaja, MovimientoCajaSchema } from 'src/movimientoCaja/schemas/caja-movimiento.schemas';
 import { Caja, CajaSchema } from 'src/caja/schemas/caja.schema';
 import { Cliente, ClienteSchema } from 'src/cliente/schema/cliente.schema';
@@ -35,6 +35,6 @@ import { Cliente, ClienteSchema } from 'src/cliente/schema/cliente.schema';
     ])
   ],
   controllers: [PruebasController],
-  providers: [PruebasService, CreditCalculatorService, dateFnsAdapter]
+  providers: [PruebasService, CreditCalculatorService, DateFnsAdapter]
 })
-export class PruebasModule {}
+export class PruebasModule { }

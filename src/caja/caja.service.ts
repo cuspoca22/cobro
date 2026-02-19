@@ -6,7 +6,7 @@ import { Caja } from './schemas/caja.schema';
 import { Credito } from '../credito/schemas/credito.schema';
 import { AuthService } from '../auth/auth.service';
 import { CierreCaja } from './schemas/cierre_caja.schema';
-import { dateFnsAdapter } from '../common/wrappers/date-fns.adapter';
+import { DateFnsAdapter } from '../common/wrappers/date-fns.adapter';
 import { OpenRutaOptions } from 'src/interfaces/open-ruta-options.interface';
 import { SubTipo, TipoMovimiento } from 'src/movimientoCaja/interfaces';
 import { MovimientoCaja } from 'src/movimientoCaja/schemas/caja-movimiento.schemas';
@@ -34,7 +34,7 @@ export class CajaService {
 
     // @Inject(forwardRef(() => RutaService))
     // private rutaSvc: RutaService,
-    private dateFnsAdapter: dateFnsAdapter,
+    private dateFnsAdapter: DateFnsAdapter,
 
     @InjectModel(MovimientoCaja.name)
     private readonly cajaMovimientoModel: Model<MovimientoCaja>,

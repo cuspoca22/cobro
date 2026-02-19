@@ -12,7 +12,7 @@ import { GlobalParams } from '../common/dto/global-params.dto';
 import { Caja } from '../caja/schemas/caja.schema';
 import { MessageGateway } from 'src/message/message.gateway';
 import { CajaService } from '../caja/caja.service';
-import { dateFnsAdapter } from '../common/wrappers/date-fns.adapter';
+import { DateFnsAdapter } from '../common/wrappers/date-fns.adapter';
 import { Ruta } from './schema/ruta.schema';
 
 @Injectable()
@@ -41,7 +41,7 @@ export class RutaService {
     private cajaSvc: CajaService,
     @InjectConnection() private readonly connection: Connection,
 
-    private dateFnsAdapter: dateFnsAdapter,
+    private dateFnsAdapter: DateFnsAdapter,
   ) { }
 
   async create(createRutaDto: CreateRutaDto) {

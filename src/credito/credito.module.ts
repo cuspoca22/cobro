@@ -10,7 +10,7 @@ import { AuthModule } from '../auth/auth.module';
 import { ClienteModule } from '../cliente/cliente.module';
 import { RutaSchema, Ruta } from 'src/ruta/schema/ruta.schema';
 import { EmpresaModule } from '../empresa/empresa.module';
-import { dateFnsAdapter } from '../common/wrappers/date-fns.adapter';
+import { DateFnsAdapter } from '../common/wrappers/date-fns.adapter';
 import { CreditCalculatorService } from './helpers/credit.calculator.service';
 import { MovimientoCajaModule } from 'src/movimientoCaja/movimiento-caja.module';
 
@@ -19,8 +19,6 @@ import { MovimientoCajaModule } from 'src/movimientoCaja/movimiento-caja.module'
     AuthModule,
     ConfigModule,
     CajaModule,
-    ClienteModule,
-    EmpresaModule,
     MongooseModule.forFeature([
       {
         name: Credito.name,
@@ -38,13 +36,13 @@ import { MovimientoCajaModule } from 'src/movimientoCaja/movimiento-caja.module'
   ],
   controllers: [CreditoController],
   providers: [
-    CreditoService, 
-    dateFnsAdapter, 
+    CreditoService,
+    DateFnsAdapter,
     CreditCalculatorService
   ],
   exports: [
-    CreditoService, 
+    CreditoService,
     MongooseModule,
   ]
 })
-export class CreditoModule {}
+export class CreditoModule { }

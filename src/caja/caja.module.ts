@@ -8,7 +8,7 @@ import { Caja, CajaSchema } from './schemas/caja.schema';
 import { Credito, CreditoSchema } from '../credito/schemas/credito.schema';
 import { Cliente, ClienteSchema } from '../cliente/schema/cliente.schema';
 import { CierreCaja, CierreCajaSchema } from './schemas/cierre_caja.schema';
-import { dateFnsAdapter } from '../common/wrappers/date-fns.adapter';
+import { DateFnsAdapter } from '../common/wrappers/date-fns.adapter';
 import { MovimientoCaja, MovimientoCajaSchema } from 'src/movimientoCaja/schemas/caja-movimiento.schemas';
 import { Ruta, RutaSchema } from '../ruta/schema/ruta.schema';
 
@@ -45,7 +45,7 @@ import { Ruta, RutaSchema } from '../ruta/schema/ruta.schema';
   controllers: [CajaController],
   providers: [
     CajaService,
-    dateFnsAdapter,
+    DateFnsAdapter,
   ],
   exports: [CajaService, MongooseModule]
 })

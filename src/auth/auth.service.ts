@@ -11,7 +11,7 @@ import { UpdateUserDto } from './dto/update-user.dto';
 import { LogAuth } from 'src/log-auth/entities/log-auth.entity';
 import { User } from './schemas/user.schema';
 import { UserEntity } from './entities/user.entity';
-import { dateFnsAdapter } from 'src/common/wrappers/date-fns.adapter';
+import { DateFnsAdapter } from 'src/common/wrappers/date-fns.adapter';
 import { Caja } from 'src/caja/schemas/caja.schema';
 import { startOfDay } from 'date-fns';
 
@@ -28,7 +28,7 @@ export class AuthService {
       private readonly logAuth: Model<LogAuth>,
 
       private readonly jwtService: JwtService,
-      private readonly dateFnsAdapter: dateFnsAdapter,
+      private readonly dateFnsAdapter: DateFnsAdapter,
       @InjectModel(Caja.name)
       private readonly cajaModel: Model<Caja>,
    ) { }

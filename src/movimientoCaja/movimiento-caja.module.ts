@@ -8,7 +8,7 @@ import { MovimientoCaja, MovimientoCajaSchema } from "./schemas/caja-movimiento.
 import { Caja, CajaSchema } from '../caja/schemas/caja.schema';
 import { Ruta, RutaSchema } from '../ruta/schema/ruta.schema';
 import { CreditoModule } from '../credito/credito.module';
-import { dateFnsAdapter } from '../common/wrappers/date-fns.adapter';
+import { DateFnsAdapter } from '../common/wrappers/date-fns.adapter';
 import { AuthModule } from '../auth/auth.module';
 
 @Module({
@@ -31,8 +31,8 @@ import { AuthModule } from '../auth/auth.module';
       }
     ]),
   ],
-  controllers: [MovimientoCajaController],  
-  providers: [MovimientoCajaService, dateFnsAdapter],
+  controllers: [MovimientoCajaController],
+  providers: [MovimientoCajaService, DateFnsAdapter],
   exports: [MovimientoCajaService],
 })
-export class MovimientoCajaModule {}
+export class MovimientoCajaModule { }

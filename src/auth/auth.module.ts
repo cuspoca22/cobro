@@ -10,7 +10,7 @@ import { JWTStrategy } from './strategies/jwt.strategy';
 import { LogAuth, LogAuthSchema } from '../log-auth/entities/log-auth.entity';
 import { User, UserSchema } from './schemas/user.schema';
 import { Caja, CajaSchema } from 'src/caja/schemas/caja.schema';
-import { dateFnsAdapter } from 'src/common/wrappers/date-fns.adapter';
+import { DateFnsAdapter } from '../common/wrappers/date-fns.adapter';
 
 @Module({
   imports: [
@@ -47,10 +47,10 @@ import { dateFnsAdapter } from 'src/common/wrappers/date-fns.adapter';
   ],
   controllers: [AuthController],
   providers: [
-    AuthService, 
+    AuthService,
     JWTStrategy,
-    dateFnsAdapter,
+    DateFnsAdapter,
   ],
   exports: [MongooseModule, AuthService, JWTStrategy, PassportModule, JwtModule]
 })
-export class AuthModule {}
+export class AuthModule { }

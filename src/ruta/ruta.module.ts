@@ -11,7 +11,7 @@ import { Cliente, ClienteSchema } from '../cliente/schema/cliente.schema';
 import { Caja, CajaSchema } from '../caja/schemas/caja.schema';
 import { MessageModule } from 'src/message/message.module';
 import { CajaModule } from '../caja/caja.module';
-import { dateFnsAdapter } from 'src/common/wrappers/date-fns.adapter';
+import { DateFnsAdapter } from '../common/wrappers/date-fns.adapter';
 
 @Module({
   imports: [
@@ -39,7 +39,7 @@ import { dateFnsAdapter } from 'src/common/wrappers/date-fns.adapter';
     MessageModule,
   ],
   controllers: [RutaController],
-  providers: [RutaService, dateFnsAdapter],
+  providers: [RutaService, DateFnsAdapter],
   exports: [RutaService, MongooseModule]
 })
-export class RutaModule {}
+export class RutaModule { }

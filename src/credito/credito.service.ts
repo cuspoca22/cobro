@@ -1,23 +1,17 @@
 import { BadRequestException, Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Credito } from './schemas/credito.schema';
-import { ClientSession, Connection, Model } from 'mongoose';
+import { ClientSession, Connection, Model, PipelineStage } from 'mongoose';
 import mongoose from 'mongoose';
 
 import { CreateCreditoDto, UpdateCreditoDto } from './dto/';
 import { Cliente } from '../cliente/schema/cliente.schema';
-// import { CajaService } from '../caja/caja.service';
-import { ClienteService } from '../cliente/cliente.service';
-import { EmpresaService } from '../empresa/empresa.service';
-import { dateFnsAdapter } from '../common/wrappers/date-fns.adapter';
+import { DateFnsAdapter } from '../common/wrappers/date-fns.adapter';
 import { CreditCalculatorService } from './helpers/credit.calculator.service';
 import { SubTipo, TipoMovimiento } from 'src/movimientoCaja/interfaces';
-import { fromZonedTime } from 'date-fns-tz';
 import { Ruta } from 'src/ruta/schema/ruta.schema';
 import { CreditoEntity } from './entities/credito.entity';
-import { MovimientoCajaService } from 'src/movimientoCaja/movimiento-caja.service';
 import { HistorialCredito } from './interfaces';
-import { UserEntity } from 'src/auth/entities/user.entity';
 
 @Injectable()
 export class CreditoService {
@@ -34,10 +28,7 @@ export class CreditoService {
     @InjectModel(Ruta.name)
     private readonly rutaModel: Model<Ruta>,
 
-    // private readonly cajaService: CajaService,
-    private readonly clienteService: ClienteService,
-    private empresaSvc: EmpresaService,
-    private dateFnsAdapter: dateFnsAdapter,
+    private dateFnsAdapter: DateFnsAdapter,
     private creditCalculatorSvc: CreditCalculatorService,
     @InjectConnection() private readonly connection: Connection,
   ) { }
@@ -72,7 +63,7 @@ export class CreditoService {
       }
 
       // Determinar el modo y realizar cálculos (no necesitan estar en la transacción)
-      if (interes !== undefined || interes !== null) {
+      if (interes !== undefined && interes !== null) {
         const { totalPagar, valorCuota } = this.creditCalculatorSvc.calculateFromInterest(
           valor_credito,
           interes,
@@ -81,7 +72,7 @@ export class CreditoService {
         calculatedTotalPagar = totalPagar;
         calculatedInteres = interes;
         calculatedValorCuota = valorCuota;
-      } else if (valor_cuota !== undefined || valor_cuota !== null) {
+      } else if (valor_cuota !== undefined && valor_cuota !== null) {
         const { totalPagar, interes } = this.creditCalculatorSvc.calculateFromCuota(
           valor_credito,
           valor_cuota,
@@ -104,7 +95,6 @@ export class CreditoService {
         ruta.timeZone
       );
 
-      // Crear el nuevo documento de crédito dentro de la transacción
       // Crear el nuevo documento de crédito dentro de la transacción
       const creditos = await this.creditoModel.create([{
         cliente: clienteId,
@@ -146,7 +136,7 @@ export class CreditoService {
 
       return createdCreditForDto;
     } catch (error) {
-      throw error; // Propaga el error para que sea manejado por NestJS
+      throw error;
     }
 
   }
@@ -160,185 +150,42 @@ export class CreditoService {
     const startOfTodayUtc = this.dateFnsAdapter.getStartOfTodayInTimeZone(ruta.timeZone);
     const endOfTodayUtc = this.dateFnsAdapter.getEndOfTodayInTimeZone(ruta.timeZone);
 
-    // --- Pipeline de agregación de MongoDB ---
-    const creditsWithDetails = await this.creditoModel.aggregate([
-      {
-        $match: {
-          ruta: new mongoose.Types.ObjectId(rutaId),
-        },
-      },
-      // Lookup para obtener todos los pagos de este crédito (para abonos/saldo/ultimo_pago)
-      {
-        $lookup: {
-          from: 'movimientoCaja', // Nombre de la colección de pagos
-          localField: '_id',
-          foreignField: 'credito',
-          as: 'allPayments',
-          pipeline: [
-            {
-              $match: {
-                tipoMovimiento: TipoMovimiento.INGRESO,
-                subTipo: SubTipo.PAGOCREDITO,
-              }
-            }
-          ]
-        },
-      },
-      // Calcular abonos y saldo
-      {
-        $addFields: {
-          abonos: {
-            $reduce: {
-              input: "$allPayments",
-              initialValue: 0,
-              in: { $add: ["$$value", "$$this.monto"] }
-            }
-          },
-          // Asegúrate que `createdAt` exista en tus documentos `movimientoCaja`
-          // y que sea de tipo Date en MongoDB.
-          ultimo_pago: { $max: "$allPayments.createdAt" }, // Usar 'fecha' en lugar de 'createdAt' si esa es la columna de fecha
-        },
-      },
-      {
-        $addFields: {
-          saldo: { $subtract: ["$total_pagar", "$abonos"] }
-        }
-      },
-      // --- ¡NUEVO! Lookup para verificar si hay un pago hecho HOY (en la TZ de la ruta) ---
-      {
-        $lookup: {
-          from: 'movimientoCaja',
-          let: { creditoId: '$_id' }, // Definir una variable local para el _id del crédito
-          pipeline: [
-            {
-              $match: {
-                $expr: {
-                  $and: [
-                    { $eq: ['$credito', '$$creditoId'] }, // Coincidir con el crédito actual
-                    { $eq: ['$tipoMovimiento', TipoMovimiento.INGRESO] }, // Solo ingresos
-                    { $eq: ['$subTipo', SubTipo.PAGOCREDITO] }, // Solo pagos de crédito
-                    // ¡Aquí usamos las fechas UTC calculadas para esta ruta!
-                    { $gte: ['$createdAt', startOfTodayUtc] }, // Pago después o igual al inicio de hoy (UTC)
-                    { $lte: ['$createdAt', endOfTodayUtc] }     // Pago antes o igual al fin de hoy (UTC)
-                  ]
-                }
-              }
-            },
-            { $limit: 1 } // Solo necesitamos saber si existe al menos uno
-          ],
-          as: 'paymentsToday', // Este array contendrá un pago si se hizo hoy, o estará vacío
-        },
-      },
-      // Añadir el campo 'paidToday'
-      {
-        $addFields: {
-          paidToday: { $gt: [{ $size: '$paymentsToday' }, 0] }, // true si paymentsToday no está vacío
-        },
-      },
-      {
-        $match: {
-          // Incluir créditos activos O créditos inactivos que pagaron hoy
-          $or: [
-            { status: true },
-            {
-              $and: [
-                { status: false },
-                { paidToday: true }
-              ]
-            }
-          ]
-        }
-      },
-      {
-        $lookup: {
-          from: 'clientes',
-          localField: 'cliente',
-          foreignField: '_id',
-          as: 'clienteDetail'
-        }
-      },
-      {
-        $unwind: {
-          path: '$clienteDetail',
-          preserveNullAndEmptyArrays: true // Si un crédito no tiene cliente (raro, pero es buena práctica)
-        },
-      },
-      {
-        $project: {
-          _id: 1,
-          cliente: {
-            _id: "$clienteDetail._id",
-            nombre: "$clienteDetail.nombre",
-            alias: "$clienteDetail.alias",
-            direccion: "$clienteDetail.direccion",
-            telefono: "$clienteDetail.telefono",
-            ciudad: "$clienteDetail.ciudad",
-            ubication: "$clienteDetail.ubication",
-            dpi: "$clienteDetail.dpi",
-            turno: "$clienteDetail.turno",
-          },
-          interes: 1,
-          fecha_inicio: 1,
-          valor_credito: 1,
-          frecuencia_cobro: 1,
-          valor_cuota: 1,
-          ruta: 1,
-          daysOverdue: 1,
-          saldo: 1,
-          total_pagar: 1,
-          status: 1,
-          state: 1,
-          ultimo_pago: 1,
-          abonos: 1,
-          paidToday: 1,
-          total_cuotas: 1,
-          dueDate: 1,
-          observaciones: 1,
-          paymentsToday: 1
-        },
-      },
-      { $sort: { "cliente.turno": 1 } },
-    ]).exec();
+    const pipeline = this.getCommonAggregationPipeline(
+      { ruta: new mongoose.Types.ObjectId(rutaId) },
+      startOfTodayUtc,
+      endOfTodayUtc
+    );
 
-    const transformedCredits: CreditoEntity[] = creditsWithDetails.map(
-      creditPlainObject => CreditoEntity.fromObject(creditPlainObject));
-
-    // Ahora, para cada crédito, calculamos daysOverdue y el 'state' del cliente
-    const finalCredits: CreditoEntity[] = [];
-    const currentToday = this.dateFnsAdapter.nowUtc(); // Usar una instancia de fecha consistente
-
-    for (const credit of transformedCredits) {
-      let daysOverdue = 0;
-      if (credit.status === true) {
-        const paidUntilDate = this.creditCalculatorSvc.calculatePaidUntilDate(
-          credit.fecha_inicio,
-          credit.frecuencia_cobro,
-          credit.valor_cuota,
-          credit.abonos
-        );
-        if (this.dateFnsAdapter.isBefore(paidUntilDate, currentToday)) {
-          daysOverdue = this.dateFnsAdapter.differenceInDays(currentToday, paidUntilDate);
-          if (daysOverdue < 0) daysOverdue = 0;
-        }
+    // Filtro adicional especifico para rutas (créditos activos o inactivos pagados hoy)
+    pipeline.push({
+      $match: {
+        $or: [
+          { status: true },
+          {
+            $and: [
+              { status: false },
+              { paidToday: true }
+            ]
+          }
+        ]
       }
+    });
 
-      const clientState = this.creditCalculatorSvc.classifyClient(daysOverdue);
+    // Proyeccion y ordenamiento final
+    pipeline.push(
+      this.getLookupClienteStage(),
+      { $unwind: { path: '$clienteDetail', preserveNullAndEmptyArrays: true } },
+      this.getFinalProjectStage(),
+      { $sort: { "cliente.turno": 1 } }
+    );
 
-      const creditForDto = {
-        ...credit,
-        daysOverdue: daysOverdue,
-        state: clientState,
-      };
+    const creditsWithDetails = await this.creditoModel.aggregate(pipeline).exec();
 
-      finalCredits.push(creditForDto);
-    }
-
-    return finalCredits;
+    return this.mapToCreditoEntity(creditsWithDetails);
   }
 
   /**
  * Obtiene los detalles de un crédito, incluyendo campos calculados como abonos y saldo.
- * Utiliza agregación para una mayor eficiencia al obtener datos derivados.
  */
   async getCreditoById(
     creditId: string,
@@ -355,167 +202,33 @@ export class CreditoService {
     const startOfToday = this.dateFnsAdapter.getStartOfTodayInTimeZone(ruta.timeZone)
     const endOfToday = this.dateFnsAdapter.getEndOfTodayInTimeZone(ruta.timeZone);
 
-    const creditsWithDetails = await this.creditoModel.aggregate([
-      {
-        $match: {
-          _id: new mongoose.Types.ObjectId(creditId), // Filtrar por ruta
-          status: true, // Solo créditos activos
-        },
-      },
-      // Lookup para obtener todos los pagos de este crédito (para abonos/saldo/ultimo_pago)
-      {
-        $lookup: {
-          from: 'movimientoCaja', // Nombre de la colección de pagos
-          localField: '_id',
-          foreignField: 'credito',
-          as: 'allPayments',
-          pipeline: [
-            {
-              $match: {
-                tipoMovimiento: TipoMovimiento.INGRESO,
-                subTipo: SubTipo.PAGOCREDITO,
-              }
-            }
-          ]
-        },
-      },
-      // Calcular abonos y saldo
-      {
-        $addFields: {
-          abonos: {
-            $reduce: {
-              input: "$allPayments",
-              initialValue: 0,
-              in: { $add: ["$$value", "$$this.monto"] }
-            }
-          },
-          // Asegúrate que `createdAt` exista en tus documentos `movimientoCaja`
-          // y que sea de tipo Date en MongoDB.
-          ultimo_pago: { $max: "$allPayments.createdAt" } // Usar 'fecha' en lugar de 'createdAt' si esa es la columna de fecha
-        },
-      },
-      {
-        $addFields: {
-          saldo: { $subtract: ["$total_pagar", "$abonos"] }
-        }
-      },
-      // --- ¡NUEVO! Lookup para verificar si hay un pago hecho HOY (en la TZ de la ruta) ---
-      {
-        $lookup: {
-          from: 'movimientoCaja',
-          let: { creditoId: '$_id' }, // Definir una variable local para el _id del crédito
-          pipeline: [
-            {
-              $match: {
-                $expr: {
-                  $and: [
-                    { $eq: ['$credito', '$$creditoId'] }, // Coincidir con el crédito actual
-                    { $eq: ['$tipoMovimiento', TipoMovimiento.INGRESO] }, // Solo ingresos
-                    { $eq: ['$subTipo', SubTipo.PAGOCREDITO] }, // Solo pagos de crédito
-                    // ¡Aquí usamos las fechas UTC calculadas para esta ruta!
-                    { $gte: ['$createdAt', startOfToday] }, // Pago después o igual al inicio de hoy (UTC)
-                    { $lte: ['$createdAt', endOfToday] }     // Pago antes o igual al fin de hoy (UTC)
-                  ]
-                }
-              }
-            },
-            { $limit: 1 } // Solo necesitamos saber si existe al menos uno
-          ],
-          as: 'paymentsToday', // Este array contendrá un pago si se hizo hoy, o estará vacío
-        },
-      },
-      // Añadir el campo 'paidToday'
-      {
-        $addFields: {
-          paidToday: { $gt: [{ $size: '$paymentsToday' }, 0] }, // true si paymentsToday no está vacío
-        },
-      },
-      {
-        $lookup: {
-          from: 'clientes',
-          localField: 'cliente',
-          foreignField: '_id',
-          as: 'clienteDetail'
-        }
-      },
-      {
-        $unwind: {
-          path: '$clienteDetail',
-          preserveNullAndEmptyArrays: true // Si un crédito no tiene cliente (raro, pero es buena práctica)
-        },
-      },
-      {
-        $project: {
-          // Mantén los campos que necesitas para GetCreditoResponseDto y los cálculos posteriores
-          // Asegúrate de incluir todos los campos necesarios para tu DTO
-          // allPayments: 0, // Excluir el array completo de pagos para reducir el tamaño de la respuesta
-          // paymentsToday: 0, // Excluir el array temporal de pagos de hoy
-          _id: 1,
-          cliente: {
-            _id: "$clienteDetail._id",
-            nombre: "$clienteDetail.nombre",
-            alias: "$clienteDetail.alias"
-          },
-          fecha_inicio: 1,
-          interes: 1,
-          valor_credito: 1,
-          frecuencia_cobro: 1,
-          valor_cuota: 1,
-          ruta: 1,
-          daysOverdue: 1,
-          saldo: 1,
-          total_pagar: 1,
-          status: 1,
-          state: 1,
-          ultimo_pago: 1,
-          abonos: 1,
-          paidToday: 1,
-          total_cuotas: 1,
-          paymentsToday: 1
-        },
-      },
-      { $sort: { turno: 1 } }, // Ordenar por turno
-    ])
-      .session(session || null)
-      .exec();
+    const pipeline = this.getCommonAggregationPipeline(
+      { _id: new mongoose.Types.ObjectId(creditId), status: true },
+      startOfToday,
+      endOfToday
+    );
+
+    pipeline.push(
+      this.getLookupClienteStage(),
+      { $unwind: { path: '$clienteDetail', preserveNullAndEmptyArrays: true } },
+      this.getFinalProjectStage(),
+      { $sort: { turno: 1 } }
+    );
+
+    const creditsWithDetails = await this.creditoModel.aggregate(pipeline).session(session || null).exec();
 
     if (creditsWithDetails.length === 0) {
       throw new NotFoundException('Credit not found');
     }
 
-    const credit: CreditoEntity = creditsWithDetails[0]
+    const creditPlain = creditsWithDetails[0];
+    const creditEntity = CreditoEntity.fromObject(creditPlain);
 
-    // --- Cálculo de días de atraso y determinación del 'state' del cliente ---
-    let daysOverdue = 0;
-    const today = this.dateFnsAdapter.nowUtc();
-
-    // Solo calculamos morosidad si el crédito está ACTIVO (status: true)
-    if (credit.status === true) {
-      const paidUntilDate = this.creditCalculatorSvc.calculatePaidUntilDate(
-        credit.fecha_inicio,
-        credit.frecuencia_cobro,
-        credit.valor_cuota,
-        credit.abonos // El campo 'abonos' es calculado por la agregación
-      );
-
-      if (this.dateFnsAdapter.isBefore(paidUntilDate, today)) {
-        daysOverdue = this.dateFnsAdapter.differenceInDays(today, paidUntilDate);
-        if (daysOverdue < 0) daysOverdue = 0;
-      }
-    }
-
-    // Clasificación del cliente basada en los días de atraso actuales
-    const clientState = this.creditCalculatorSvc.classifyClient(daysOverdue);
-
-    credit.daysOverdue = daysOverdue > 0 ? daysOverdue : 0;
-    credit.state = clientState;
-    return CreditoEntity.fromObject(credit);
+    return this.calculateOverdueAndState(creditEntity);
   }
 
   // Este método es invocado después de un pago para actualizar el estado persistente del crédito.
   async handlePaymentMade(creditoId: string, rutaId: string, clienteId: string, session?: ClientSession) {
-    // Obtenemos los detalles con los cálculos más recientes.
-    // Esto incluye el saldo, días de atraso y el 'state' del cliente calculado.
     const creditDetails = await this.getCreditoById(creditoId, rutaId, session);
     const cliente = await this.clienteModel.findById(clienteId).session(session)
     if (!cliente) {
@@ -523,12 +236,12 @@ export class CreditoService {
     }
 
     const saldoActualizado = creditDetails.saldo;
-    let updatedCreditStatus = creditDetails.status; // Tu campo `status` (boolean)
-    let updatedClientState = creditDetails.state; // El 'state' (BUENO/REGULAR/MALO) calculado
+    let updatedCreditStatus = creditDetails.status;
+    let updatedClientState = creditDetails.state;
     let updatedCliente = cliente.status;
 
     // Lógica para actualizar `status` (boolean)
-    if (saldoActualizado <= 0 && updatedCreditStatus === true) { // Si el saldo es 0 o negativo y el crédito aún está activo
+    if (saldoActualizado <= 0 && updatedCreditStatus === true) {
       updatedCreditStatus = false;
       updatedCliente = false; // Marcar como inactivo (pagado)
       updatedClientState = 'BUENO'; // Si se salda, el cliente vuelve a ser 'BUENO'
@@ -536,17 +249,14 @@ export class CreditoService {
       updatedCliente = true;
       updatedCreditStatus = true;
     }
-    // } else if (creditDetails.daysOverdue >= 8 && updatedCreditStatus === true) { // Si el cliente es 'MALO' y el crédito está activo
-    //     updatedCreditStatus = false; // Podrías querer desactivar el crédito si entra en default severo
-    // }
 
     await this.creditoModel.updateOne(
       { _id: creditoId },
       {
         $set: {
-          status: updatedCreditStatus, // Actualiza el campo `status` del documento
-          state: updatedClientState, // Actualiza el campo `state` del documento
-          ultimo_pago: creditDetails.ultimo_pago // Actualiza la fecha del último pago si es la más reciente
+          status: updatedCreditStatus,
+          state: updatedClientState,
+          ultimo_pago: creditDetails.ultimo_pago
         }
       },
       { session }
@@ -554,17 +264,12 @@ export class CreditoService {
 
     await this.clienteModel.updateOne(
       { _id: clienteId },
-      {
-        $set: {
-          status: updatedCliente
-        }
-      },
+      { $set: { status: updatedCliente } },
       { session }
     );
 
-    // Cliente: ${creditDetails.cliente.alias.toLocaleUpperCase()} 
     let txtMessage: string = `
-      Fecha: ${creditDetails.fecha_inicio.toLocaleDateString()}
+      Fecha: ${new Date(creditDetails.fecha_inicio).toLocaleDateString()}
       Abonos: $${creditDetails.abonos}.00 
       Saldo: $${creditDetails.saldo}.00 
       Atrasos: ${creditDetails.daysOverdue} 
@@ -576,62 +281,6 @@ export class CreditoService {
     }
   }
 
-  async findRenovaciones(fecha: string, user: UserEntity) {
-
-    const empresa = await this.empresaSvc.findOne(`${user.empresa}`)
-    const rutas = empresa.rutas.map(ruta => ruta._id);
-    return await this.creditoModel.find({
-      fecha_inicio: fecha,
-      ruta: { $in: rutas }
-    })
-      .populate([
-        { path: 'pagos' },
-        {
-          path: 'cliente',
-          populate: {
-            path: 'creditos'
-          }
-        },
-        { path: 'ruta' },
-      ])
-
-  }
-
-  async findOne(id: string) {
-    const credito = await this.creditoModel.findById(id)
-      .populate("cliente")
-      .populate("pagos")
-
-    if (!credito) {
-      throw new NotFoundException(`Credito con el id ${id} no existe`);
-    }
-
-    return {
-      ...credito.toJSON()
-    };
-  }
-
-  async update(id: string, updateCreditoDto: UpdateCreditoDto, fecha: string) {
-    try {
-      const creditoUpdate = await this.creditoModel.findByIdAndUpdate(id, updateCreditoDto, { new: true });
-
-      // if(creditoUpdate.fecha_inicio === this.moment.fecha(fecha, 'DD/MM/YYYY')){
-      //   await this.cajaService.currentCaja(`${creditoUpdate.ruta}`, fecha)
-      //   return creditoUpdate;
-      // }
-
-      // let fechaSplit = creditoUpdate.fecha_inicio.split('/');
-      // let newFecha = `${fechaSplit[2]}-${fechaSplit[1]}-${fechaSplit[0]}`;
-      // await this.cajaService.currentCaja(`${creditoUpdate.ruta}`, newFecha);
-      // await this.cajaService.currentCaja(`${creditoUpdate.ruta}`, fecha);
-
-      return creditoUpdate;
-
-    } catch (error) {
-      this.hanldeExceptions(error);
-    }
-  }
-
   async updateTurno(id: string, updateCreditoDto: UpdateCreditoDto) {
     try {
 
@@ -640,7 +289,7 @@ export class CreditoService {
       return true;
 
     } catch (error) {
-      this.hanldeExceptions(error);
+      this.handleExceptions(error);
     }
   }
 
@@ -687,13 +336,159 @@ export class CreditoService {
 
   }
 
-  async getCreditosVerificados(rutaId: string) {
-
-  }
-
-
-  private hanldeExceptions(error: any) {
+  private handleExceptions(error: any) {
     this.logger.error(error);
     throw new InternalServerErrorException("Por favor revisa los logs")
+  }
+
+  // Helpers privados para agregacion
+  private getCommonAggregationPipeline(matchStage: any, startOfToday: Date, endOfToday: Date): PipelineStage[] {
+    return [
+      { $match: matchStage },
+      // Lookup para obtener todos los pagos
+      {
+        $lookup: {
+          from: 'movimientoCaja',
+          localField: '_id',
+          foreignField: 'credito',
+          as: 'allPayments',
+          pipeline: [
+            {
+              $match: {
+                tipoMovimiento: TipoMovimiento.INGRESO,
+                subTipo: SubTipo.PAGOCREDITO,
+              }
+            }
+          ]
+        },
+      },
+      {
+        $addFields: {
+          abonos: {
+            $reduce: {
+              input: "$allPayments",
+              initialValue: 0,
+              in: { $add: ["$$value", "$$this.monto"] }
+            }
+          },
+          ultimo_pago: { $max: "$allPayments.createdAt" }
+        },
+      },
+      {
+        $addFields: {
+          saldo: { $subtract: ["$total_pagar", "$abonos"] }
+        }
+      },
+      // Lookup para verificar pago de hoy
+      {
+        $lookup: {
+          from: 'movimientoCaja',
+          let: { creditoId: '$_id' },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $and: [
+                    { $eq: ['$credito', '$$creditoId'] },
+                    { $eq: ['$tipoMovimiento', TipoMovimiento.INGRESO] },
+                    { $eq: ['$subTipo', SubTipo.PAGOCREDITO] },
+                    { $gte: ['$createdAt', startOfToday] },
+                    { $lte: ['$createdAt', endOfToday] }
+                  ]
+                }
+              }
+            },
+            { $limit: 1 }
+          ],
+          as: 'paymentsToday',
+        },
+      },
+      {
+        $addFields: {
+          paidToday: { $gt: [{ $size: '$paymentsToday' }, 0] },
+        },
+      },
+    ];
+  }
+
+  private getLookupClienteStage(): PipelineStage {
+    return {
+      $lookup: {
+        from: 'clientes',
+        localField: 'cliente',
+        foreignField: '_id',
+        as: 'clienteDetail'
+      }
+    };
+  }
+
+  private getFinalProjectStage(): PipelineStage {
+    return {
+      $project: {
+        _id: 1,
+        cliente: {
+          _id: "$clienteDetail._id",
+          nombre: "$clienteDetail.nombre",
+          alias: "$clienteDetail.alias",
+          direccion: "$clienteDetail.direccion",
+          telefono: "$clienteDetail.telefono",
+          ciudad: "$clienteDetail.ciudad",
+          ubication: "$clienteDetail.ubication",
+          dpi: "$clienteDetail.dpi",
+          turno: "$clienteDetail.turno",
+        },
+        interes: 1,
+        fecha_inicio: 1,
+        valor_credito: 1,
+        frecuencia_cobro: 1,
+        valor_cuota: 1,
+        ruta: 1,
+        daysOverdue: 1,
+        saldo: 1,
+        total_pagar: 1,
+        status: 1,
+        state: 1,
+        ultimo_pago: 1,
+        abonos: 1,
+        paidToday: 1,
+        total_cuotas: 1,
+        dueDate: 1,
+        observaciones: 1,
+        paymentsToday: 1
+      },
+    };
+  }
+
+  private calculateOverdueAndState(credit: CreditoEntity): CreditoEntity {
+    let daysOverdue = 0;
+    const today = this.dateFnsAdapter.nowUtc();
+
+    if (credit.status === true) {
+      const paidUntilDate = this.creditCalculatorSvc.calculatePaidUntilDate(
+        credit.fecha_inicio,
+        credit.frecuencia_cobro,
+        credit.valor_cuota,
+        credit.abonos
+      );
+
+      if (this.dateFnsAdapter.isBefore(paidUntilDate, today)) {
+        daysOverdue = this.dateFnsAdapter.differenceInDays(today, paidUntilDate);
+        if (daysOverdue < 0) daysOverdue = 0;
+      }
+    }
+
+    const clientState = this.creditCalculatorSvc.classifyClient(daysOverdue);
+
+    credit.daysOverdue = daysOverdue > 0 ? daysOverdue : 0;
+    credit.state = clientState;
+
+    return credit;
+  }
+
+  private mapToCreditoEntity(credits: any[]): CreditoEntity[] {
+    return credits.map(creditPlainObject => {
+      const creditEntity = CreditoEntity.fromObject(creditPlainObject);
+      return this.calculateOverdueAndState(creditEntity);
+    });
   }
 }
