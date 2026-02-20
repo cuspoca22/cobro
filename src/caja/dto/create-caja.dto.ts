@@ -1,60 +1,60 @@
 import { IsDate, IsMongoId, IsNumber, IsOptional } from "class-validator";
 
+/**
+ * DTO para la creación de una nueva Caja.
+ * Valida los datos necesarios para registrar un corte de caja.
+ * @class CreateCajaDto
+ */
 export class CreateCajaDto {
 
-   @IsOptional()
-   @IsDate()
-   fecha?: Date;
+   @IsDate({
+      message: 'La fecha debe ser una fecha válida'
+   })
+   fecha: Date;
 
-   @IsOptional()
    @IsNumber()
    base: number;
 
    @IsOptional()
    @IsNumber()
-   inversion: number;
+   inversion?: number;
 
    @IsOptional()
    @IsNumber()
-   retiro: number;
+   retiro?: number;
 
    @IsOptional()
    @IsNumber()
-   prestamo: number;
+   prestamo?: number;
 
    @IsOptional()
    @IsNumber()
-   total_clientes: number;
+   total_clientes?: number;
 
    @IsOptional()
    @IsNumber()
-   renovaciones: number;
+   renovaciones?: number;
 
    @IsOptional()
    @IsNumber()
-   gasto: number;
+   gasto?: number;
 
    @IsOptional()
    @IsNumber()
-   caja_final: number;
+   caja_final?: number;
 
    @IsOptional()
    @IsNumber()
-   cobro: number;
+   cobro?: number;
 
    @IsOptional()
    @IsNumber()
-   extra: number;
+   clientes_pendientes?: number;
 
    @IsOptional()
    @IsNumber()
-   clientes_pendientes: number;
-
-   @IsOptional()
-   @IsNumber()
-   pretendido: number;  
+   pretendido?: number;
 
    @IsMongoId()
-   ruta: string; 
-   
+   rutaId: string;
 }

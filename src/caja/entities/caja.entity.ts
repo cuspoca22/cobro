@@ -1,6 +1,13 @@
+
+/**
+ * Entidad que representa una Caja.
+ * Mapea la estructura de datos para la gestión de cajas, incluyendo ingresos, egresos y métricas.
+ */
 export class CajaEntity {
 
-  ruta: string;
+  _id?: string;
+  id?: string;
+  ruta: string | any;
   fecha: Date;
   base: number;
   inversion: number;
@@ -13,36 +20,47 @@ export class CajaEntity {
   cobro: number;
   clientes_pendientes: number;
   pretendido: number;
-  _id?: string;
-  id?: string;
+  status: boolean;
 
-  constructor(data?: Partial<CajaEntity>) { 
+  /**
+   * Crea una nueva instancia de CajaEntity.
+   * @param data Datos parciales para inicializar la entidad.
+   */
+  constructor(data?: Partial<CajaEntity>) {
     if (data) {
       Object.assign(this, data);
     }
   }
 
-  static fromObject( object: {[key: string]: any} ): CajaEntity {
+  /**
+   * Crea una instancia de CajaEntity a partir de un objeto genérico (ej. documento de Mongoose).
+   * Realiza la conversión de tipos necesaria para asegurar la integridad de la entidad.
+   * @param object Objeto con los datos de origen.
+   * @returns Nueva instancia de CajaEntity.
+   */
+  static fromObject(object: { [key: string]: any }): CajaEntity {
 
-    const { _id, id } = object;
+    const { _id, id, ...rest } = object;
 
     const cajaId = (id || _id)?.toString() || null;
 
     const caja = new CajaEntity({
       id: cajaId,
+      _id: _id?.toString(), // Aseguramos que _id también esté disponible si se requiere
       ruta: object.ruta,
-      fecha: object.fecha,
-      base: object.base,
-      inversion: object.inversion,
-      retiro: object.retiro,
-      prestamo: object.prestamo,
-      total_clientes: object.total_clientes,
-      renovaciones: object.renovaciones,
-      gasto: object.gasto,
-      caja_final: object.caja_final,
-      cobro: object.cobro,
-      clientes_pendientes: object.clientes_pendientes,
-      pretendido: object.pretendido,
+      fecha: object.fecha ? new Date(object.fecha) : undefined, // Aseguramos que sea fecha válida
+      base: Number(object.base) || 0,
+      inversion: Number(object.inversion) || 0,
+      retiro: Number(object.retiro) || 0,
+      prestamo: Number(object.prestamo) || 0,
+      total_clientes: Number(object.total_clientes) || 0,
+      renovaciones: Number(object.renovaciones) || 0,
+      gasto: Number(object.gasto) || 0,
+      caja_final: Number(object.caja_final) || 0,
+      cobro: Number(object.cobro) || 0,
+      clientes_pendientes: Number(object.clientes_pendientes) || 0,
+      pretendido: Number(object.pretendido) || 0,
+      status: object.status !== undefined ? object.status : true, // Por defecto true si no viene definido
     });
 
     return caja;

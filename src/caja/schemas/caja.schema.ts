@@ -1,15 +1,19 @@
 import { Schema, SchemaFactory, Prop } from '@nestjs/mongoose';
-import mongoose, { Types } from 'mongoose';
+import mongoose, { HydratedDocument, Types } from 'mongoose';
+
+export type CajaDocument = HydratedDocument<Caja>;
 
 @Schema({
    versionKey: false,
-   collection: 'cajas'
+   collection: 'cajas',
+   timestamps: true
 })
 export class Caja {
 
    @Prop({
       type: Number,
-      default: 0
+      default: 0,
+      min: 0
    })
    base: number;
 
@@ -21,69 +25,73 @@ export class Caja {
 
    @Prop({
       type: Number,
-      default: 0
+      default: 0,
+      min: 0
    })
    inversion: number;
 
    @Prop({
       type: Number,
-      default: 0
+      default: 0,
+      min: 0
    })
    retiro: number;
 
    @Prop({
       type: Number,
-      default: 0
+      default: 0,
+      min: 0
    })
    gasto: number;
 
    @Prop({
       type: Number,
-      default: 0
+      default: 0,
+      min: 0
    })
    cobro: number;
 
    @Prop({
       type: Number,
-      default: 0
+      default: 0,
+      min: 0
    })
    prestamo: number;
 
    @Prop({
       type: Number,
-      default: 0
+      default: 0,
+      min: 0
    })
    total_clientes: number;
 
    @Prop({
       type: Number,
-      default: 0
+      default: 0,
+      min: 0
    })
    clientes_pendientes: number;
 
    @Prop({
       type: Number,
-      default: 0
+      default: 0,
+      min: 0
    })
    renovaciones: number;
 
    @Prop({
       type: Number,
-      default: 0
+      default: 0,
+      min: 0
    })
    caja_final: number;
 
    @Prop({
       type: Number,
-      default: 0
+      default: 0,
+      min: 0
    })
    pretendido: number;
-
-   @Prop({
-      type: Number,
-      default: 0
-   })
-   extra: number;
 
    @Prop({
       type: mongoose.Schema.Types.ObjectId,
@@ -107,3 +115,6 @@ export class Caja {
 export const CajaSchema = SchemaFactory.createForClass(Caja);
 
 CajaSchema.index({ ruta: 1, fecha: -1 }, { unique: true });
+CajaSchema.index({ status: 1 });
+CajaSchema.index({ fecha: 1 });
+

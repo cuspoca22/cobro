@@ -6,5 +6,4 @@ export enum CampoActualizarDeCaja {
    prestamo = "prestamo",
    clientes_pendientes = "clientes_pendientes",
    renovaciones = "renovaciones",
-   extra = "extra",
 }
