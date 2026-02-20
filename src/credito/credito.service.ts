@@ -392,8 +392,8 @@ export class CreditoService {
                     { $eq: ['$credito', '$$creditoId'] },
                     { $eq: ['$tipoMovimiento', TipoMovimiento.INGRESO] },
                     { $eq: ['$subTipo', SubTipo.PAGOCREDITO] },
-                    { $gte: ['$createdAt', startOfToday] },
-                    { $lte: ['$createdAt', endOfToday] }
+                    { $gte: ['$fecha', startOfToday] },
+                    { $lte: ['$fecha', endOfToday] }
                   ]
                 }
               }
