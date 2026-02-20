@@ -1,23 +1,21 @@
-import { Injectable, Logger, InternalServerErrorException, NotFoundException, forwardRef, Inject } from '@nestjs/common';
+import { Injectable, Logger, InternalServerErrorException, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import mongoose, { ClientSession, Model, Types } from 'mongoose';
+import mongoose, { ClientSession, Model, PipelineStage, Types } from 'mongoose';
 
 import { Caja } from './schemas/caja.schema';
 import { Credito } from '../credito/schemas/credito.schema';
-import { AuthService } from '../auth/auth.service';
-import { CierreCaja } from './schemas/cierre_caja.schema';
 import { DateFnsAdapter } from '../common/wrappers/date-fns.adapter';
-import { OpenRutaOptions } from 'src/interfaces/open-ruta-options.interface';
 import { SubTipo, TipoMovimiento } from 'src/movimientoCaja/interfaces';
 import { MovimientoCaja } from 'src/movimientoCaja/schemas/caja-movimiento.schemas';
 import { CajaEntity } from './entities/caja.entity';
 import { Ruta } from '../ruta/schema/ruta.schema';
+import { CreateCajaDto } from './dto';
 
 
 @Injectable()
 export class CajaService {
 
-  private logger = new Logger("CajaService");
+  private readonly logger = new Logger(CajaService.name);
 
   constructor(
     @InjectModel(Caja.name)
@@ -26,15 +24,10 @@ export class CajaService {
     @InjectModel(Credito.name)
     private readonly creditoModel: Model<Credito>,
 
-    @InjectModel(CierreCaja.name)
-    private CcModel: Model<CierreCaja>,
-
     @InjectModel(Ruta.name)
-    private rutaModel: Model<Ruta>,
+    private readonly rutaModel: Model<Ruta>,
 
-    // @Inject(forwardRef(() => RutaService))
-    // private rutaSvc: RutaService,
-    private dateFnsAdapter: DateFnsAdapter,
+    private readonly dateFnsAdapter: DateFnsAdapter,
 
     @InjectModel(MovimientoCaja.name)
     private readonly cajaMovimientoModel: Model<MovimientoCaja>,
@@ -47,53 +40,49 @@ export class CajaService {
       .findOne({ ruta: rutaId })
       .sort({ fecha: -1 })
       .session(session);
-    if (!ultimaCaja) {
-      return {
-        hayUltimaCaja: false,
-        ultimaCaja: null
-      }
-    }
 
     return {
-      hayUltimaCaja: true,
-      ultimaCaja: CajaEntity.fromObject(ultimaCaja)
-    }
+      hayUltimaCaja: !!ultimaCaja,
+      ultimaCaja: ultimaCaja ? CajaEntity.fromObject(ultimaCaja) : null
+    };
   }
 
-  async create(openRutaOptions: OpenRutaOptions): Promise<CajaEntity> {
+  /**
+   * Crea una nueva caja a partir de un DTO y calcula métricas iniciales.
+   * @param createCajaDto Datos de transferencia para crear la caja.
+   * @param session Sesión de Mongoose opcional para transacciones.
+   * @returns Entidad de la caja creada.
+   */
+  async create(createCajaDto: CreateCajaDto, session?: ClientSession): Promise<CajaEntity> {
 
-    const { rutaId, fecha, session, base = 0 } = openRutaOptions;
+    const { rutaId, fecha, base = 0 } = createCajaDto;
+
+    // Obtener resumen de créditos activos para calcular el monto pretendido y total de clientes
     const { pretendido, totalClientes } = await this.getCreditSummary(rutaId);
 
     try {
 
-      const newCaja = new this.cajaModel({
-        ruta: rutaId,
-        fecha,
+      const newCaja = await this.cajaModel.create({
+        ruta: new Types.ObjectId(rutaId),
+        fecha: fecha,
         base,
         pretendido,
         total_clientes: totalClientes,
         clientes_pendientes: totalClientes,
-        caja_final: base
-      }, session);
-
-      await newCaja.save({ session });
+        caja_final: base,
+      } as any, { session });
 
       return CajaEntity.fromObject(newCaja);
 
     } catch (error) {
-
-      this.handleExceptions(error)
-
+      this.handleExceptions(error);
     }
-
-
   }
 
   async getClientesPendientesYRenovados(rutaId: string, startOfDayUtc: Date, session?: ClientSession) {
     const rutaObjectId = new mongoose.Types.ObjectId(rutaId);
 
-    // 1. Obtener la lista de clientes que se renovaron hoy
+    // 1. Clientes renovados hoy
     const clientesRenovados = await this.cajaMovimientoModel.aggregate([
       {
         $match: {
@@ -106,16 +95,16 @@ export class CajaService {
     ]);
 
     const clientesRenovadosIds = clientesRenovados.map(c => c._id.toString());
-    const renovaciones = clientesRenovadosIds.length; // El número de renovaciones es el tamaño de este array.
+    const renovaciones = clientesRenovadosIds.length;
 
-    // 2. Obtener la lista de todos los clientes con créditos activos
+    // 2. Clientes con créditos activos
     const clientesActivos = await this.creditoModel.aggregate([
       { $match: { ruta: rutaObjectId, status: true } },
       { $group: { _id: '$cliente' } }
     ]);
     const clientesActivosIds = clientesActivos.map(c => c._id.toString());
 
-    // 3. Obtener la lista de clientes que han pagado hoy
+    // 3. Clientes que han pagado hoy
     const clientesQuePagaronHoy = await this.cajaMovimientoModel.aggregate([
       {
         $match: {
@@ -127,32 +116,24 @@ export class CajaService {
       },
       { $group: { _id: '$cliente' } },
     ]);
-    console.log(clientesQuePagaronHoy)
+
     const clientesQuePagaronHoyIds = clientesQuePagaronHoy
-      .filter(c => c._id != null) // Filtra documentos con _id nulo o indefinido
+      .filter(c => c._id != null)
       .map(c => c._id.toString());
-    // 4. Calcular los clientes pendientes:
-    //    - Clientes activos...
-    //    - ... que NO hayan pagado hoy...
-    //    - ... Y que NO hayan sido renovados hoy.
+
+    // 4. Calcular pendientes
     const pendientes = clientesActivosIds.filter(id =>
       !clientesQuePagaronHoyIds.includes(id) && !clientesRenovadosIds.includes(id)
     );
 
-    const clientesPendientes = pendientes.length;
-
     return {
-      clientesPendientes,
+      clientesPendientes: pendientes.length,
       renovaciones,
     };
   }
 
   /**
-   * Obtiene un resumen de créditos activos, incluyendo la suma total de las cuotas y el recuento de créditos,
-   * para una ruta específica.
-   *
-   * @param rutaId El ObjectId de la ruta a la que pertenecen los créditos.
-   * @returns Un objeto con la suma total de las cuotas y el número de créditos.
+   * Obtiene un resumen de créditos activos.
    */
   async getCreditSummary(rutaId: string) {
 
@@ -172,7 +153,7 @@ export class CajaService {
           }
         }
       ]
-    )
+    );
 
     if (result.length > 0) {
       return {
@@ -191,12 +172,7 @@ export class CajaService {
   }
 
   /**
-   * Obtiene un resumen de los movimientos de caja para una ruta y caja específicas.
-   *
-   * @param cajaId El ObjectId de la caja a la que pertenecen los movimientos.
-   * @param rutaId El ObjectId de la ruta a la que pertenecen los movimientos.
-   * @param session (Opcional) La sesión de Mongoose para operaciones transaccionales.
-   * @returns Un objeto que resume los montos de cobros, préstamos, inversiones, gastos y retiros.
+   * Obtiene un resumen de los movimientos de caja para una ruta.
    */
   async getMovimientosResumen(rutaId: string, session?: ClientSession) {
 
@@ -209,96 +185,9 @@ export class CajaService {
     const startOfDayUtc = this.dateFnsAdapter.getStartOfTodayInTimeZone(ruta.timeZone);
 
     const { clientesPendientes, renovaciones } = await this.getClientesPendientesYRenovados(rutaId, startOfDayUtc, session);
-    const result = await this.cajaMovimientoModel.aggregate(
-      [
-        // Etapa 1: Filtrar documentos por caja y ruta
-        {
-          $match: {
-            caja: new Types.ObjectId(caja._id),
-            ruta: new Types.ObjectId(rutaId),
-            fecha: { $gte: startOfDayUtc }
-          },
-        },
-        // Etapa 2: Agrupar y sumar condicionalmente
-        {
-          $group: {
-            _id: null,
-            cobro: {
-              $sum: {
-                $cond: [
-                  {
-                    $and: [
-                      { $eq: ['$tipoMovimiento', TipoMovimiento.INGRESO] },
-                      { $eq: ['$subTipo', SubTipo.PAGOCREDITO] },
-                    ],
-                  },
-                  '$monto',
-                  0,
-                ],
-              },
-            },
-            prestamos: {
-              $sum: {
-                $cond: [
-                  {
-                    $and: [
-                      { $eq: ['$tipoMovimiento', TipoMovimiento.EGRESO] },
-                      { $eq: ['$subTipo', SubTipo.PRESTAMO] },
-                    ],
-                  },
-                  '$monto',
-                  0,
-                ],
-              },
-            },
-            inversiones: {
-              $sum: {
-                $cond: [
-                  {
-                    $and: [
-                      { $eq: ['$tipoMovimiento', TipoMovimiento.INGRESO] },
-                      { $eq: ['$subTipo', SubTipo.INVERSION] },
-                    ],
-                  },
-                  '$monto',
-                  0,
-                ],
-              },
-            },
-            gastos: {
-              $sum: {
-                $cond: [
-                  {
-                    $and: [
-                      { $eq: ['$tipoMovimiento', TipoMovimiento.EGRESO] },
-                      { $eq: ['$subTipo', SubTipo.GASTO] },
-                    ],
-                  },
-                  '$monto',
-                  0,
-                ],
-              },
-            },
-            retiros: {
-              $sum: {
-                $cond: [
-                  {
-                    $and: [
-                      { $eq: ['$tipoMovimiento', TipoMovimiento.EGRESO] },
-                      { $eq: ['$subTipo', SubTipo.RETIRO] },
-                    ],
-                  },
-                  '$monto',
-                  0,
-                ],
-              },
-            },
-          },
-        },
-      ],
-      { session },
-    );
 
+    const pipeline = this.getResumenPipeline(rutaId, startOfDayUtc);
+    const result = await this.cajaMovimientoModel.aggregate(pipeline).session(session || null);
 
     const {
       cobro = 0,
@@ -320,33 +209,23 @@ export class CajaService {
     await caja.save({ session });
 
     return CajaEntity.fromObject(caja);
-
   }
 
   async currentCaja(rutaId: string) {
-
     return await this.getMovimientosResumen(rutaId);
-
   }
 
-  async findAll(rutaId: string, fecha: string,) {
+  async findAll(rutaId: string, fecha: string) {
     const ruta = await this.rutaModel.findById(rutaId);
     if (!ruta) throw new NotFoundException(`Ruta con el id ${rutaId} no existe`);
 
-    // 1. Creamos la fecha base (medianoche UTC)
     const baseDate = new Date(fecha);
-    baseDate.setUTCHours(0, 0, 0, 0);
-
-    // 2. Definimos el rango de búsqueda
-    // Para atrapar los registros "00:00 UTC" y los registros "Local (06:00 UTC)"
-    // buscamos desde el inicio del día UTC hasta el final del día en esa zona horaria.
-
-    const inicioBusqueda = new Date(baseDate);
-    // 00:00:00 UTC (Atrapa los registros viejos)
-
+    const inicioBusqueda = this.dateFnsAdapter.startOfDayUtc(baseDate);
+    // Para el fin del día, necesitamos asumir que 'fecha' es una fecha local o UTC sin hora.
+    // Si asumimos UTC 00:00, el final es 23:59:59.
     const finBusqueda = new Date(baseDate);
     finBusqueda.setUTCHours(23, 59, 59, 999);
-    // 23:59:59 UTC (Atrapa los registros nuevos
+
     const caja = await this.cajaModel.aggregate([
       {
         $match: {
@@ -354,23 +233,111 @@ export class CajaService {
           fecha: { $gte: inicioBusqueda, $lte: finBusqueda }
         }
       }
-    ])
-
+    ]);
 
     if (caja.length < 1) {
-      throw new NotFoundException('No se encontraron registro de este dia')
+      throw new NotFoundException('No se encontraron registro de este dia');
     }
 
     return caja[0];
-
   }
 
   private handleExceptions(error: any) {
     if (error.code === 11000) {
-      throw ({ code: 11000, message: "Ya existe esta Caja" });
+      throw new BadRequestException({ code: 11000, message: "Ya existe esta Caja" });
+    }
+
+    if (error instanceof NotFoundException || error instanceof BadRequestException) {
+      throw error;
     }
 
     this.logger.error(error);
-    throw new InternalServerErrorException("Por favor revisa los logs")
+    throw new InternalServerErrorException("Por favor revisa los logs");
+  }
+
+  private getResumenPipeline(rutaId: string, startOfDayUtc: Date): PipelineStage[] {
+    return [
+      {
+        $match: {
+          ruta: new Types.ObjectId(rutaId),
+          fecha: { $gte: startOfDayUtc }
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          cobro: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    { $eq: ['$tipoMovimiento', TipoMovimiento.INGRESO] },
+                    { $eq: ['$subTipo', SubTipo.PAGOCREDITO] },
+                  ],
+                },
+                '$monto',
+                0,
+              ],
+            },
+          },
+          prestamos: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    { $eq: ['$tipoMovimiento', TipoMovimiento.EGRESO] },
+                    { $eq: ['$subTipo', SubTipo.PRESTAMO] },
+                  ],
+                },
+                '$monto',
+                0,
+              ],
+            },
+          },
+          inversiones: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    { $eq: ['$tipoMovimiento', TipoMovimiento.INGRESO] },
+                    { $eq: ['$subTipo', SubTipo.INVERSION] },
+                  ],
+                },
+                '$monto',
+                0,
+              ],
+            },
+          },
+          gastos: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    { $eq: ['$tipoMovimiento', TipoMovimiento.EGRESO] },
+                    { $eq: ['$subTipo', SubTipo.GASTO] },
+                  ],
+                },
+                '$monto',
+                0,
+              ],
+            },
+          },
+          retiros: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    { $eq: ['$tipoMovimiento', TipoMovimiento.EGRESO] },
+                    { $eq: ['$subTipo', SubTipo.RETIRO] },
+                  ],
+                },
+                '$monto',
+                0,
+              ],
+            },
+          },
+        },
+      },
+    ];
   }
 }
