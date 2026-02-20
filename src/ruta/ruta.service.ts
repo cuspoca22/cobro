@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, Logger, BadRequestException, InternalServerErrorException, forwardRef, Inject } from '@nestjs/common';
+import { Injectable, NotFoundException, Logger, BadRequestException, InternalServerErrorException, forwardRef, Inject, HttpException } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Cron } from '@nestjs/schedule';
 
@@ -14,6 +14,7 @@ import { MessageGateway } from 'src/message/message.gateway';
 import { CajaService } from '../caja/caja.service';
 import { DateFnsAdapter } from '../common/wrappers/date-fns.adapter';
 import { Ruta } from './schema/ruta.schema';
+import { CajaEntity } from '../caja/entities/caja.entity';
 
 @Injectable()
 export class RutaService {
@@ -109,12 +110,10 @@ export class RutaService {
   }
 
   async closeRuta(rutaId: string): Promise<boolean> {
-
     const session = await this.connection.startSession();
     session.startTransaction();
 
     try {
-
       const ruta = await this.rutaModel.findById(rutaId).session(session);
       if (!ruta) {
         throw new NotFoundException(`La ruta con el id ${rutaId} no existe`);
@@ -138,30 +137,26 @@ export class RutaService {
       ruta.ultima_caja = caja._id;
       caja.status = false;
 
-      await ruta.save({ session });
-      await caja.save({ session });
+      await Promise.all([
+        ruta.save({ session }),
+        caja.save({ session })
+      ]);
 
       // Confirma la transacción. Si esta línea no se ejecuta, NINGÚN cambio se guardará.
       await session.commitTransaction();
 
       return true;
 
-
     } catch (error) {
-
       // Si hay un error, aborta la transacción para revertir todos los cambios
       await session.abortTransaction();
-
       this.handleExceptions(error);
-
-
     } finally {
       session.endSession();
     }
-
   }
 
-  async openRuta(rutaId: string) {
+  async openRuta(rutaId: string): Promise<{ ok: boolean; caja: CajaEntity }> {
     const session = await this.connection.startSession();
     session.startTransaction();
 
@@ -171,24 +166,31 @@ export class RutaService {
         throw new NotFoundException(`La ruta con el id ${rutaId} no existe`);
       }
 
+      if (ruta.status) {
+        throw new BadRequestException(`La ruta ya se encuentra abierta.`);
+      }
+
       const { hayUltimaCaja, ultimaCaja } = await this.cajaSvc.getUltimaCaja(rutaId, session);
 
-      const startOfDayUtc = this.dateFnsAdapter.getStartOfTodayInTimeZone(ruta.timeZone);
+      // Asegurar timezone valido
+      const timeZone = ruta.timeZone || 'America/Mexico_City';
+      let startOfDayUtc = this.dateFnsAdapter.getStartOfTodayInTimeZone(timeZone);
 
-      let baseCaja = 0;
-
-      // Si la ruta ya tiene cajas, obtenemos la caja_final de la ultima caja
-      if (hayUltimaCaja && ultimaCaja) {
-        baseCaja = ultimaCaja.caja_final;
+      // Fallback si la fecha generada es inválida
+      if (!startOfDayUtc || isNaN(startOfDayUtc.getTime())) {
+        this.logger.warn(`Fecha inválida generada para timezone ${timeZone}. Usando UTC actual como fallback.`);
+        startOfDayUtc = new Date();
+        startOfDayUtc.setUTCHours(0, 0, 0, 0);
       }
+
+      const baseCaja = (hayUltimaCaja && ultimaCaja) ? ultimaCaja.caja_final : 0;
 
       // Unifica la creación de la nueva caja
       const newCaja = await this.cajaSvc.create({
         rutaId: rutaId,
         fecha: startOfDayUtc,
         base: baseCaja,
-        session,
-      });
+      }, session);
 
       // Actualiza la ruta dentro de la transacción
       ruta.caja_actual = new Types.ObjectId(newCaja.id);
@@ -234,6 +236,10 @@ export class RutaService {
   }
 
   private handleExceptions(error: any) {
+    if (error instanceof HttpException) {
+      throw error;
+    }
+
     if (error.code === 11000) {
       throw new BadRequestException(error.message);
     }

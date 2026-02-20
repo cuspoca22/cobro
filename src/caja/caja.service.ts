@@ -62,7 +62,16 @@ export class CajaService {
 
     try {
 
-      const newCaja = await this.cajaModel.create({
+      const existingCaja = await this.cajaModel.findOne({
+        ruta: new Types.ObjectId(rutaId),
+        fecha: fecha
+      }).session(session);
+
+      if (existingCaja) {
+        throw new BadRequestException({ code: 11000, message: "Ya existe esta Caja" });
+      }
+
+      const newCaja = new this.cajaModel({
         ruta: new Types.ObjectId(rutaId),
         fecha: fecha,
         base,
@@ -70,7 +79,9 @@ export class CajaService {
         total_clientes: totalClientes,
         clientes_pendientes: totalClientes,
         caja_final: base,
-      } as any, { session });
+      });
+
+      await newCaja.save({ session });
 
       return CajaEntity.fromObject(newCaja);
 
