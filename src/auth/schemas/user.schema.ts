@@ -1,13 +1,14 @@
 import { Prop, Schema, SchemaFactory } from "@nestjs/mongoose";
-import mongoose, {Document, Types} from "mongoose";
+import mongoose, { Document, Types } from "mongoose";
 import { Ruta } from "src/ruta/schema/ruta.schema";
+import { ValidRoles } from "../interfaces";
 
 @Schema({
    versionKey: false,
    collection: 'users'
 })
 export class User extends Document {
-   
+
    @Prop({
       type: String,
       index: true,
@@ -42,11 +43,11 @@ export class User extends Document {
 
    @Prop({
       type: String,
-      enum: ['ADMIN', 'SUPERADMIN', 'COBRADOR', 'SUPERVISOR', 'CLIENTE'],
-      default: 'COBRADOR'
+      enum: ValidRoles,
+      default: ValidRoles.cobrador
    })
    rol: string;
-   
+
    @Prop({
       type: mongoose.Schema.Types.ObjectId,
       ref: "Ruta"
@@ -62,3 +63,7 @@ export class User extends Document {
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);
+
+// crea los indices para un funcionamiento mas optimizado
+UserSchema.index({ ruta: 1 });
+UserSchema.index({ empresa: 1 });

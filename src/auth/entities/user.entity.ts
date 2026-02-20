@@ -1,16 +1,10 @@
-enum Roles {
-   ADMIN = 'ADMIN',
-   SUPERADMIN = 'SUPERADMIN',
-   COBRADOR = 'COBRADOR',
-   SUPERVISOR = 'SUPERVISOR',
-   CLIENTE = 'CLIENTE'
-}
+import { ValidRoles } from "../interfaces";
 
 export class UserEntity {
    id: string;
    nombre: string;
    username: string;
-   rol: Roles;
+   rol: ValidRoles;
    empresa: string;
    estado: boolean;
    ruta?: string;
@@ -25,10 +19,10 @@ export class UserEntity {
       const { _id, id } = object;
       const userId = (id || _id)?.toString() || null;
 
-      if (object.rol === Roles.COBRADOR && object.ruta) {
+      if (object.rol === ValidRoles.cobrador && object.ruta) {
          object.ruta = object.ruta._id;
       }
-      
+
       return new UserEntity({
          id: userId,
          nombre: object.nombre,
