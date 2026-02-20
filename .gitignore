@@ -25,6 +25,7 @@ notas.txt
 update-cajas.js
 # OS
 .DS_Store
+.windsurfrules
 
 # Tests
 /coverage
