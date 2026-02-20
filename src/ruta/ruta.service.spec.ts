@@ -10,14 +10,19 @@ import { CajaService } from '../caja/caja.service';
 import { MessageGateway } from '../message/message.gateway';
 import { DateFnsAdapter } from '../common/wrappers/date-fns.adapter';
 import { getConnectionToken } from '@nestjs/mongoose';
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException, InternalServerErrorException } from '@nestjs/common';
 import { Types } from 'mongoose';
+import { CreateRutaDto } from './dto/create-ruta.dto';
+import { UpdateRutaDto } from './dto/update-ruta.dto';
 
 describe('RutaService', () => {
   let service: RutaService;
   let mockRutaModel: any;
   let mockCajaModel: any;
   let mockCajaService: any;
+  let mockCreditoModel: any;
+  let mockClienteModel: any;
+  let mockAuthService: any;
   let mockConnection: any;
   let mockSession: any;
 
@@ -51,6 +56,18 @@ describe('RutaService', () => {
       create: jest.fn(),
     };
 
+    mockCreditoModel = {
+      find: jest.fn(),
+    };
+
+    mockClienteModel = {
+      countDocuments: jest.fn(),
+    };
+
+    mockAuthService = {
+      findOne: jest.fn(),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         RutaService,
@@ -60,11 +77,11 @@ describe('RutaService', () => {
         },
         {
           provide: getModelToken(Credito.name),
-          useValue: {},
+          useValue: mockCreditoModel,
         },
         {
           provide: getModelToken(Cliente.name),
-          useValue: {},
+          useValue: mockClienteModel,
         },
         {
           provide: getModelToken(Caja.name),
@@ -72,7 +89,7 @@ describe('RutaService', () => {
         },
         {
           provide: AuthService,
-          useValue: {},
+          useValue: mockAuthService,
         },
         {
           provide: CajaService,
@@ -141,7 +158,7 @@ describe('RutaService', () => {
 
       expect(result).toEqual({ ok: true, caja: mockNewCaja });
       expect(mockRuta.status).toBe(true);
-      expect(mockRuta.save).toHaveBeenCalled();
+      expect(mockRuta.save).toHaveBeenCalledWith({ session: expect.anything() });
       expect(mockSession.commitTransaction).toHaveBeenCalled();
       expect(mockSession.endSession).toHaveBeenCalled();
     });
@@ -172,7 +189,7 @@ describe('RutaService', () => {
 
       expect(mockCajaService.create).toHaveBeenCalledWith(expect.objectContaining({
         base: 1000
-      }));
+      }), expect.anything());
     });
   });
 
@@ -259,6 +276,109 @@ describe('RutaService', () => {
       expect(mockCaja.save).toHaveBeenCalled();
       expect(mockSession.commitTransaction).toHaveBeenCalled();
       expect(mockSession.endSession).toHaveBeenCalled();
+    });
+
+  });
+
+  describe('create', () => {
+    it('should create a ruta successfully', async () => {
+      const createRutaDto: CreateRutaDto = { nombre: 'Ruta 1', ciudad: 'City', pais: 'Country', timeZone: 'UTC', autoOpen: true };
+      const mockCreatedRuta = { ...createRutaDto, _id: 'someId' };
+      mockRutaModel.create.mockResolvedValue(mockCreatedRuta);
+
+      const result = await service.create(createRutaDto);
+
+      expect(result).toEqual(mockCreatedRuta);
+      expect(mockRutaModel.create).toHaveBeenCalledWith(createRutaDto);
+    });
+
+    it('should handle exceptions during creation', async () => {
+      const createRutaDto: CreateRutaDto = { nombre: 'Ruta 1', ciudad: 'City', pais: 'Country', timeZone: 'UTC', autoOpen: true };
+      mockRutaModel.create.mockRejectedValue(new Error('Some error'));
+
+      await expect(service.create(createRutaDto)).rejects.toThrow(InternalServerErrorException);
+    });
+  });
+
+  describe('findOne', () => {
+    it('should return a ruta if found', async () => {
+      const rutaId = 'someId';
+      const mockRuta = { _id: rutaId, nombre: 'Ruta 1' };
+      mockRutaModel.findById.mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          populate: jest.fn().mockResolvedValue(mockRuta),
+        }),
+      });
+
+      const result = await service.findOne(rutaId);
+      expect(result).toEqual(mockRuta);
+    });
+
+    it('should throw NotFoundException if ruta not found', async () => {
+      const rutaId = 'someId';
+      mockRutaModel.findById.mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          populate: jest.fn().mockResolvedValue(null),
+        }),
+      });
+
+      await expect(service.findOne(rutaId)).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('update', () => {
+    it('should update a ruta successfully', async () => {
+      const rutaId = 'someId';
+      const updateRutaDto: UpdateRutaDto = { nombre: 'Ruta Updated' };
+      const mockUpdatedRuta = { _id: rutaId, ...updateRutaDto };
+      mockRutaModel.findByIdAndUpdate.mockResolvedValue(mockUpdatedRuta);
+
+      const result = await service.update(rutaId, updateRutaDto);
+      expect(result).toEqual(mockUpdatedRuta);
+      expect(mockRutaModel.findByIdAndUpdate).toHaveBeenCalledWith(rutaId, updateRutaDto, { new: true });
+    });
+  });
+
+  describe('actualizarRuta', () => {
+    it('should update ruta stats successfully', async () => {
+      const rutaId = 'someId';
+      const mockRuta = {
+        _id: rutaId,
+        updateOne: jest.fn().mockResolvedValue(true),
+      };
+
+      mockRutaModel.findById.mockResolvedValue(mockRuta);
+      mockClienteModel.countDocuments.mockImplementation((filter) => {
+        if (filter.status === true) return Promise.resolve(5); // clientes activos
+        return Promise.resolve(10); // total clientes
+      });
+      mockCreditoModel.find.mockImplementation((filter) => {
+        if (filter.status === true) return Promise.resolve([]); // creditos activos
+        return Promise.resolve([
+          { valor_credito: 1000 },
+          { valor_credito: 2000 }
+        ]); // todos los creditos for totalPrestado calculation
+      });
+
+      await service.actualizarRuta(rutaId);
+
+      expect(mockRutaModel.findById).toHaveBeenCalledWith(rutaId);
+      expect(mockClienteModel.countDocuments).toHaveBeenCalledTimes(2);
+      expect(mockCreditoModel.find).toHaveBeenCalledTimes(2);
+
+      // Total prestado = 1000 + 2000 = 3000
+      expect(mockRuta.updateOne).toHaveBeenCalledWith({
+        total_prestado: 3000,
+        clientes: 10,
+        clientes_activos: 5,
+      }, { new: true });
+    });
+
+    it('should throw NotFoundException if ruta not found', async () => {
+      const rutaId = 'someId';
+      mockRutaModel.findById.mockResolvedValue(null);
+
+      await expect(service.actualizarRuta(rutaId)).rejects.toThrow(NotFoundException);
     });
   });
 });
