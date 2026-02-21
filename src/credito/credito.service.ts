@@ -57,7 +57,7 @@ export class CreditoService {
       let calculatedValorCuota: number;
 
       // Obtener la ruta dentro de la transacción
-      const ruta = await this.rutaModel.findById(rutaId).session(session);
+      const ruta = await this.rutaModel.findById(rutaId).session(session).lean();
       if (!ruta) {
         throw new NotFoundException(`Ruta con el id ${rutaId} no existe`);
       }
