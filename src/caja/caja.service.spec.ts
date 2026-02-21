@@ -27,22 +27,30 @@ describe('CajaService', () => {
 
   beforeEach(async () => {
     // Definir los mocks para los modelos y dependencias
-    const mockCajaModel = {
+    const mockCajaModel = jest.fn().mockImplementation((data) => ({
+      ...data,
+      save: jest.fn().mockResolvedValue({
+        toObject: jest.fn().mockReturnValue({ ...data, _id: mockCajaId }),
+      }),
+    }));
+    Object.assign(mockCajaModel, {
       findOne: jest.fn().mockReturnValue({
         session: jest.fn().mockReturnThis(),
         lean: jest.fn().mockResolvedValue(null),
+        exec: jest.fn().mockResolvedValue(null),
       }),
       create: jest.fn(),
       findById: jest.fn().mockReturnValue({
         session: jest.fn().mockReturnThis(),
         lean: jest.fn().mockResolvedValue(null),
+        exec: jest.fn().mockResolvedValue(null),
       }),
       aggregate: jest.fn().mockReturnValue({
         session: jest.fn().mockResolvedValue([]),
       }),
       sort: jest.fn().mockReturnThis(),
       session: jest.fn().mockReturnThis(),
-    };
+    });
 
     const mockCreditoModel = {
       aggregate: jest.fn().mockReturnValue({
@@ -147,26 +155,40 @@ describe('CajaService', () => {
       // Mock para que no exista caja duplicada
       cajaModel.findOne.mockReturnValue({
         session: jest.fn().mockReturnThis(),
-        lean: jest.fn(() => null),
+        then: (resolve) => resolve(null)
       });
 
-      const mockCreatedCaja = {
+      // Mock de la instancia de caja que se creará
+      const mockSave = jest.fn().mockResolvedValue({
         toObject: jest.fn().mockReturnValue({
           _id: mockCajaId,
-          ...createCajaDto,
+          ruta: new Types.ObjectId(createCajaDto.rutaId),
+          fecha: createCajaDto.fecha,
+          base: createCajaDto.base,
           pretendido: mockCreditSummary.pretendido,
           total_clientes: mockCreditSummary.totalClientes,
           clientes_pendientes: mockCreditSummary.totalClientes,
           caja_final: createCajaDto.base,
-        }),
-      };
-
-      cajaModel.create.mockResolvedValue(mockCreatedCaja);
+        })
+      });
+      cajaModel.mockImplementationOnce((data) => ({
+        ...data,
+        save: mockSave
+      }));
 
       const result = await service.create(createCajaDto);
 
       expect(service.getCreditSummary).toHaveBeenCalledWith(mockRutaId);
-      expect(cajaModel.create).toHaveBeenCalled();
+      expect(cajaModel).toHaveBeenCalledWith({
+        ruta: new Types.ObjectId(createCajaDto.rutaId),
+        fecha: createCajaDto.fecha,
+        base: createCajaDto.base,
+        pretendido: mockCreditSummary.pretendido,
+        total_clientes: mockCreditSummary.totalClientes,
+        clientes_pendientes: mockCreditSummary.totalClientes,
+        caja_final: createCajaDto.base,
+      });
+      expect(mockSave).toHaveBeenCalled();
       expect(result).toBeDefined();
     });
 
