@@ -1,5 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import mongoose, {Document, Types} from "mongoose";
+import mongoose, { Document, Types } from "mongoose";
+import { Currency } from 'src/currency/interfaces/currency.enum';
 
 @Schema({
    versionKey: false,
@@ -15,7 +16,7 @@ export class Ruta extends Document {
       uppercase: true
    })
    nombre: string
-  
+
    @Prop({
       type: String,
       required: true,
@@ -38,9 +39,9 @@ export class Ruta extends Document {
       type: String
    })
    pais: string;
-      
-   @Prop({ 
-      type: mongoose.Schema.Types.ObjectId, 
+
+   @Prop({
+      type: mongoose.Schema.Types.ObjectId,
       ref: 'Empresa'
    })
    empresa: Types.ObjectId;
@@ -64,6 +65,13 @@ export class Ruta extends Document {
       ref: 'cajas'
    })
    caja_actual: Types.ObjectId;
+
+   @Prop({
+      type: String,
+      required: true,
+      enum: Currency
+   })
+   currency: string;
 }
 
 export const RutaSchema = SchemaFactory.createForClass(Ruta);

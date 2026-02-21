@@ -10,6 +10,7 @@ export class RutaEntity {
    timeZone: string;
    ultima_caja: string;
    caja_actual: string;
+   currency: string;
    _id?: string;
 
    constructor(data?: Partial<RutaEntity>) {
@@ -36,6 +37,7 @@ export class RutaEntity {
          timeZone: object.timeZone,
          ultima_caja: object.ultima_caja,
          caja_actual: object.caja_actual,
+         currency: object.currency,
       });
 
       return ruta;

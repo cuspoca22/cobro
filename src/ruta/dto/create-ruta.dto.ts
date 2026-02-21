@@ -4,10 +4,10 @@ export class CreateRutaDto {
 
    @IsString()
    nombre: string;
-  
+
    @IsString()
    ciudad: string;
-  
+
    @IsBoolean()
    @IsOptional()
    status?: boolean;
@@ -15,15 +15,15 @@ export class CreateRutaDto {
    @IsBoolean()
    @IsOptional()
    isLocked?: boolean;
-  
+
    @IsMongoId()
    @IsOptional()
    caja_actual?: string;
-  
+
    @IsMongoId()
    @IsOptional()
    ultima_caja?: string;
-  
+
    @IsMongoId()
    @IsOptional()
    empresa?: string;
@@ -37,5 +37,8 @@ export class CreateRutaDto {
 
    @IsString()
    timeZone: string;
+
+   @IsString()
+   currency: string;
 
 }

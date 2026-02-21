@@ -133,6 +133,9 @@ export class RutaService {
         throw new NotFoundException(`La caja con el id ${ruta.caja_actual} no existe`);
       }
 
+      // cuando la ruta se cierra, actualiza la caja, para que se guarde lo que se trabajo hasta ese preciso momento
+      await this.cajaSvc.getMovimientosResumen(ruta._id.toString(), session)
+
       ruta.status = false;
       ruta.ultima_caja = caja._id;
       caja.status = false;
