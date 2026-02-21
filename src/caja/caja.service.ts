@@ -187,7 +187,7 @@ export class CajaService {
    */
   async getMovimientosResumen(rutaId: string, session?: ClientSession) {
 
-    const ruta = await this.rutaModel.findById(rutaId).session(session);
+    const ruta = await this.rutaModel.findById(rutaId).session(session).lean();
     if (!ruta) throw new NotFoundException(`Ruta con el id ${rutaId} no existe`);
 
     const caja = await this.cajaModel.findById(ruta.caja_actual).session(session);
@@ -226,6 +226,7 @@ export class CajaService {
     return await this.getMovimientosResumen(rutaId);
   }
 
+  // Esta busqueda es para el historial de cajas del lado del admin
   async findAll(rutaId: string, fecha: string) {
     const ruta = await this.rutaModel.findById(rutaId);
     if (!ruta) throw new NotFoundException(`Ruta con el id ${rutaId} no existe`);
