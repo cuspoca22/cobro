@@ -93,8 +93,12 @@ export class CajaService {
     }
   }
 
-  async getClientesPendientesYRenovados(rutaId: string, startOfDayUtc: Date, session?: ClientSession) {
+  async getClientesPendientesYRenovados(rutaId: string, startOfDayUtc: Date, session?: ClientSession, endOfDayUtc?: Date) {
     const rutaObjectId = new mongoose.Types.ObjectId(rutaId);
+
+    if (!endOfDayUtc) {
+      endOfDayUtc = this.dateFnsAdapter.addDays(startOfDayUtc, 1);
+    }
 
     // 1. Clientes renovados hoy
     const clientesRenovados = await this.cajaMovimientoModel.aggregate([
@@ -102,21 +106,27 @@ export class CajaService {
         $match: {
           ruta: rutaObjectId,
           subTipo: SubTipo.PRESTAMO,
-          fecha: { $gte: startOfDayUtc }
+          fecha: { $gte: startOfDayUtc, $lt: endOfDayUtc }
         }
       },
       { $group: { _id: '$cliente' } }
-    ]);
+    ]).session(session || null);
 
     const clientesRenovadosIds = clientesRenovados.map(c => c._id.toString());
     const renovaciones = clientesRenovadosIds.length;
 
-    // 2. Clientes con créditos activos
-    const clientesActivos = await this.creditoModel.aggregate([
-      { $match: { ruta: rutaObjectId, status: true } },
+    // 2. Clientes con créditos activos al inicio del día (clientes iniciales)
+    const clientesIniciales = await this.creditoModel.aggregate([
+      {
+        $match: {
+          ruta: rutaObjectId,
+          status: true,
+          fecha_inicio: { $lt: startOfDayUtc }
+        }
+      },
       { $group: { _id: '$cliente' } }
-    ]);
-    const clientesActivosIds = clientesActivos.map(c => c._id.toString());
+    ]).session(session || null);
+    const clientesInicialesIds = clientesIniciales.map(c => c._id.toString());
 
     // 3. Clientes que han pagado hoy
     const clientesQuePagaronHoy = await this.cajaMovimientoModel.aggregate([
@@ -125,19 +135,23 @@ export class CajaService {
           ruta: rutaObjectId,
           tipoMovimiento: TipoMovimiento.INGRESO,
           subTipo: SubTipo.PAGOCREDITO,
-          fecha: { $gte: startOfDayUtc }
+          fecha: { $gte: startOfDayUtc, $lt: endOfDayUtc }
         }
       },
       { $group: { _id: '$cliente' } },
-    ]);
+    ]).session(session || null);
 
     const clientesQuePagaronHoyIds = clientesQuePagaronHoy
       .filter(c => c._id != null)
       .map(c => c._id.toString());
 
-    // 4. Calcular pendientes
-    const pendientes = clientesActivosIds.filter(id =>
-      !clientesQuePagaronHoyIds.includes(id) && !clientesRenovadosIds.includes(id)
+    // 4. Filtrar renovaciones y pagos que corresponden a clientes iniciales
+    const renovacionesIniciales = clientesRenovadosIds.filter(id => clientesInicialesIds.includes(id));
+    const pagosIniciales = clientesQuePagaronHoyIds.filter(id => clientesInicialesIds.includes(id));
+
+    // 5. Calcular pendientes: clientes iniciales que no hayan pagado ni renovado hoy
+    const pendientes = clientesInicialesIds.filter(id =>
+      !pagosIniciales.includes(id) && !renovacionesIniciales.includes(id)
     );
 
     return {
@@ -196,12 +210,19 @@ export class CajaService {
     const caja = await this.cajaModel.findById(ruta.caja_actual).session(session);
     if (!caja) throw new NotFoundException(`Caja con el id ${ruta.caja_actual} no existe`);
 
-    const startOfDayUtc = this.dateFnsAdapter.getStartOfTodayInTimeZone(ruta.timeZone);
+    const startOfDayUtc = caja.fecha;
+    const endOfDayUtc = this.dateFnsAdapter.addDays(startOfDayUtc, 1);
 
-    const { clientesPendientes, renovaciones } = await this.getClientesPendientesYRenovados(rutaId, startOfDayUtc, session);
+    const { clientesPendientes, renovaciones } = await this.getClientesPendientesYRenovados(rutaId, startOfDayUtc, session, endOfDayUtc);
 
-    const pipeline = this.getResumenPipeline(rutaId, startOfDayUtc);
+    const pipeline = this.getResumenPipeline(rutaId, startOfDayUtc, endOfDayUtc);
     const result = await this.cajaMovimientoModel.aggregate(pipeline).session(session || null);
+
+    if (result.length === 0) {
+      this.logger.log(`No se encontraron movimientos para la ruta ${rutaId} desde ${startOfDayUtc.toISOString()}`);
+    } else {
+      this.logger.log(`Movimientos encontrados: ${JSON.stringify(result[0])}`);
+    }
 
     const {
       cobro = 0,
@@ -273,12 +294,12 @@ export class CajaService {
     throw new InternalServerErrorException("Por favor revisa los logs");
   }
 
-  private getResumenPipeline(rutaId: string, startOfDayUtc: Date): PipelineStage[] {
+  private getResumenPipeline(rutaId: string, startOfDayUtc: Date, endOfDayUtc: Date): PipelineStage[] {
     return [
       {
         $match: {
           ruta: new Types.ObjectId(rutaId),
-          fecha: { $gte: startOfDayUtc }
+          fecha: { $gte: startOfDayUtc, $lt: endOfDayUtc }
         },
       },
       {

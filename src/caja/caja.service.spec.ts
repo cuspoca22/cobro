@@ -6,6 +6,7 @@ import { Credito } from '../credito/schemas/credito.schema';
 import { Ruta } from '../ruta/schema/ruta.schema';
 import { MovimientoCaja } from '../movimientoCaja/schemas/caja-movimiento.schemas';
 import { DateFnsAdapter } from '../common/wrappers/date-fns.adapter';
+import { CurrencyService } from '../currency/currency.service';
 import { Types } from 'mongoose';
 import { NotFoundException, BadRequestException } from '@nestjs/common';
 import { CreateCajaDto } from './dto';
@@ -27,29 +28,49 @@ describe('CajaService', () => {
   beforeEach(async () => {
     // Definir los mocks para los modelos y dependencias
     const mockCajaModel = {
-      findOne: jest.fn(),
+      findOne: jest.fn().mockReturnValue({
+        session: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue(null),
+      }),
       create: jest.fn(),
-      findById: jest.fn(),
-      aggregate: jest.fn(),
+      findById: jest.fn().mockReturnValue({
+        session: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue(null),
+      }),
+      aggregate: jest.fn().mockReturnValue({
+        session: jest.fn().mockResolvedValue([]),
+      }),
       sort: jest.fn().mockReturnThis(),
       session: jest.fn().mockReturnThis(),
     };
 
     const mockCreditoModel = {
-      aggregate: jest.fn(),
+      aggregate: jest.fn().mockReturnValue({
+        session: jest.fn().mockResolvedValue([]),
+      }),
     };
 
     const mockRutaModel = {
-      findById: jest.fn(),
+      findById: jest.fn().mockReturnValue({
+        session: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue(null),
+      }),
     };
 
     const mockCajaMovimientoModel = {
-      aggregate: jest.fn(),
+      aggregate: jest.fn().mockReturnValue({
+        session: jest.fn().mockResolvedValue([]),
+      }),
     };
 
     const mockDateFnsAdapter = {
       getStartOfTodayInTimeZone: jest.fn().mockReturnValue(mockDate),
       startOfDayUtc: jest.fn().mockReturnValue(mockDate),
+      addDays: jest.fn().mockReturnValue(mockDate),
+    };
+
+    const mockCurrencyService = {
+      round: jest.fn().mockImplementation((value, currency) => value),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -60,6 +81,7 @@ describe('CajaService', () => {
         { provide: getModelToken(Ruta.name), useValue: mockRutaModel },
         { provide: getModelToken(MovimientoCaja.name), useValue: mockCajaMovimientoModel },
         { provide: DateFnsAdapter, useValue: mockDateFnsAdapter },
+        { provide: CurrencyService, useValue: mockCurrencyService },
       ],
     }).compile();
 
@@ -122,6 +144,12 @@ describe('CajaService', () => {
       const mockCreditSummary = { pretendido: 500, totalClientes: 10 };
       jest.spyOn(service, 'getCreditSummary').mockResolvedValue(mockCreditSummary as any);
 
+      // Mock para que no exista caja duplicada
+      cajaModel.findOne.mockReturnValue({
+        session: jest.fn().mockReturnThis(),
+        lean: jest.fn(() => null),
+      });
+
       const mockCreatedCaja = {
         toObject: jest.fn().mockReturnValue({
           _id: mockCajaId,
@@ -156,20 +184,26 @@ describe('CajaService', () => {
   describe('getClientesPendientesYRenovados', () => {
     it('debe calcular correctamente los clientes pendientes y renovados', async () => {
       // Mock para clientes renovados
-      cajaMovimientoModel.aggregate.mockResolvedValueOnce([{ _id: 'cliente1' }]); // Renovados
+      cajaMovimientoModel.aggregate.mockReturnValueOnce({
+        session: jest.fn().mockResolvedValue([{ _id: 'cliente1' }])
+      });
 
-      // Mock para clientes activos
-      creditoModel.aggregate.mockResolvedValue([{ _id: 'cliente1' }, { _id: 'cliente2' }, { _id: 'cliente3' }]);
+      // Mock para clientes iniciales (créditos activos antes de startOfDayUtc)
+      creditoModel.aggregate.mockReturnValueOnce({
+        session: jest.fn().mockResolvedValue([{ _id: 'cliente1' }, { _id: 'cliente2' }, { _id: 'cliente3' }])
+      });
 
       // Mock para clientes que pagaron hoy
-      cajaMovimientoModel.aggregate.mockResolvedValueOnce([{ _id: 'cliente2' }]); // Pagaron
+      cajaMovimientoModel.aggregate.mockReturnValueOnce({
+        session: jest.fn().mockResolvedValue([{ _id: 'cliente2' }])
+      });
 
       const result = await service.getClientesPendientesYRenovados(mockRutaId, mockDate);
 
-      // Total activos: 3
+      // Total iniciales: 3
       // Renovados: 1 (cliente1)
       // Pagaron: 1 (cliente2)
-      // Pendientes: cliente3 (activos - renovados - pagaron) = 1
+      // Pendientes: cliente3 (iniciales - renovados - pagaron) = 1
 
       expect(result.renovaciones).toBe(1);
       expect(result.clientesPendientes).toBe(1);
@@ -204,14 +238,22 @@ describe('CajaService', () => {
 
   describe('getMovimientosResumen', () => {
     it('debe lanzar NotFoundException si la ruta no existe', async () => {
-      rutaModel.findById.mockReturnValue({ session: jest.fn().mockResolvedValue(null) });
+      rutaModel.findById.mockReturnValue({
+        session: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue(null),
+      });
       await expect(service.getMovimientosResumen(mockRutaId)).rejects.toThrow(NotFoundException);
     });
 
     it('debe lanzar NotFoundException si la caja no existe', async () => {
       const mockRuta = { caja_actual: mockCajaId, timeZone: 'UTC' };
-      rutaModel.findById.mockReturnValue({ session: jest.fn().mockResolvedValue(mockRuta) });
-      cajaModel.findById.mockReturnValue({ session: jest.fn().mockResolvedValue(null) });
+      rutaModel.findById.mockReturnValue({
+        session: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue(mockRuta),
+      });
+      cajaModel.findById.mockReturnValue({
+        session: jest.fn().mockResolvedValue(null),
+      });
 
       await expect(service.getMovimientosResumen(mockRutaId)).rejects.toThrow(NotFoundException);
     });
@@ -231,26 +273,31 @@ describe('CajaService', () => {
         retiros: 5
       }];
 
-      rutaModel.findById.mockReturnValue({ session: jest.fn().mockResolvedValue(mockRuta) });
-      cajaModel.findById.mockReturnValue({ session: jest.fn().mockResolvedValue(mockCaja) });
+      rutaModel.findById.mockReturnValue({
+        session: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue(mockRuta),
+      });
+      cajaModel.findById.mockReturnValue({
+        session: jest.fn().mockResolvedValue(mockCaja),
+      });
 
-      // Mock getClientesPendientesYRenovados logic inside or mock the private method call if possible, 
+      // Mock getClientesPendientesYRenovados logic inside or mock the private method call if possible,
       // but since it's private/internal logic we mocked the dependencies.
       // The service calls this.getClientesPendientesYRenovados internally.
       // We can spyOn it if we want to isolate, but let's trust the mocks of the models it uses.
-      // We already mocked the models for getClientesPendientesYRenovados in previous test, 
+      // We already mocked the models for getClientesPendientesYRenovados in previous test,
       // we need to set them up for this flow too.
 
       // Mocking responses for getClientesPendientesYRenovados internal calls
       cajaMovimientoModel.aggregate
-        .mockResolvedValueOnce([]) // Renovados
-        .mockResolvedValueOnce([]) // Pagaron
+        .mockReturnValueOnce({ session: jest.fn().mockResolvedValue([]) }) // Renovados
+        .mockReturnValueOnce({ session: jest.fn().mockResolvedValue([]) }) // Pagaron
         .mockReturnValueOnce({ // Resumen pipeline result
           session: jest.fn().mockReturnThis(),
           then: (resolve: any) => resolve(mockResumenMovimientos)
         });
 
-      creditoModel.aggregate.mockResolvedValue([]); // Activos
+      creditoModel.aggregate.mockReturnValueOnce({ session: jest.fn().mockResolvedValue([]) }); // Activos
 
       const result = await service.getMovimientosResumen(mockRutaId);
 
