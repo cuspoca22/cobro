@@ -1,140 +1,177 @@
-// credit-calculator.service.ts
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { DateFnsAdapter } from 'src/common/wrappers/date-fns.adapter';
 import { FrecuenciaCobro } from '../interfaces/frecuencia-cobro.enum';
 import { ClasificacionCliente } from '../interfaces';
 
+/** Resultado del cálculo financiero cuando se parte del interés */
+export interface ResultadoCalculoInteres {
+  totalPagar: number;
+  valorCuota: number;
+}
+
+/** Resultado del cálculo financiero cuando se parte del valor de cuota */
+export interface ResultadoCalculoCuota {
+  totalPagar: number;
+  interes: number;
+}
+
 @Injectable()
 export class CreditCalculatorService {
 
-  constructor(private dateFnsAdapter: DateFnsAdapter) { }
+  constructor(private readonly dateFnsAdapter: DateFnsAdapter) { }
 
-  // --- Funciones de Cálculo Financiero (las que ya habíamos definido) ---
+  // ──────────────────────────────────────────────
+  //  Cálculos Financieros
+  // ──────────────────────────────────────────────
 
   /**
-   * Calcula el total a pagar y el valor de la cuota dado el capital, interés y número de cuotas.
+   * Calcula el total a pagar y el valor de la cuota
+   * dado el capital, porcentaje de interés y número de cuotas.
    */
-  calculateFromInterest(valorCredito: number, interes: number, totalCuotas: number) {
+  calculateFromInterest(
+    valorCredito: number,
+    interes: number,
+    totalCuotas: number,
+  ): ResultadoCalculoInteres {
     const interesDecimal = interes / 100;
     const totalPagar = valorCredito * (1 + interesDecimal);
     const valorCuota = totalPagar / totalCuotas;
+
     return {
-      totalPagar: parseFloat(totalPagar.toFixed(2)),
-      valorCuota: parseFloat(valorCuota.toFixed(2))
+      totalPagar: this.roundToTwo(totalPagar),
+      valorCuota: this.roundToTwo(valorCuota),
     };
   }
 
   /**
-   * Calcula el total a pagar y el interés dado el capital, valor de la cuota y número de cuotas.
+   * Calcula el total a pagar y el interés implícito
+   * dado el capital, valor de cuota y número de cuotas.
    */
-  calculateFromCuota(valorCredito: number, valorCuota: number, totalCuotas: number) {
+  calculateFromCuota(
+    valorCredito: number,
+    valorCuota: number,
+    totalCuotas: number,
+  ): ResultadoCalculoCuota {
     const totalPagar = valorCuota * totalCuotas;
     const interes = ((totalPagar - valorCredito) / valorCredito) * 100;
+
     return {
-      totalPagar: parseFloat(totalPagar.toFixed(2)),
-      interes: parseFloat(interes.toFixed(2))
+      totalPagar: this.roundToTwo(totalPagar),
+      interes: this.roundToTwo(interes),
     };
   }
 
-  // --- Funciones de Cálculo de Fechas (Nuevas o actualizadas para 3 frecuencias) ---
+  // ──────────────────────────────────────────────
+  //  Cálculos de Fechas
+  // ──────────────────────────────────────────────
 
   /**
-   * Calcula la fecha hasta la cual un crédito ha sido pagado, basado en los abonos.
-   * Adaptado de tu lógica existente.
+   * Calcula la fecha hasta la cual el crédito ha sido cubierto,
+   * avanzando períodos según las cuotas pagadas con los abonos acumulados.
    */
   calculatePaidUntilDate(
     fechaInicio: Date,
     frecuenciaCobro: FrecuenciaCobro,
     valorCuota: number,
-    abonos: number
+    abonos: number,
   ): Date {
-    // Si no hay valorCuota o es 0, o no hay abonos, el primer pago adeudado es la fecha de inicio.
+    // Si no hay cuota válida o no hay abonos, se adeuda desde el inicio
     if (!valorCuota || valorCuota === 0 || abonos === 0) {
       return this.dateFnsAdapter.startOfDayUtc(new Date(fechaInicio));
     }
 
-    const cuotasPagadasFloat = abonos / valorCuota;
-    const cuotasPagadasEnteras = Math.floor(cuotasPagadasFloat);
+    const cuotasPagadas = Math.floor(abonos / valorCuota);
+    let nextDueDate = this.dateFnsAdapter.startOfDayUtc(new Date(fechaInicio));
 
-    // `nextDueDate` será la fecha de inicio del período que está pendiente.
-    let nextDueDate = this.dateFnsAdapter.startOfDayUtc(new Date(fechaInicio)); // Usar startOfDayUtc
-    for (let i = 0; i < cuotasPagadasEnteras; i++) {
-      switch (frecuenciaCobro) {
-        case FrecuenciaCobro.DIARIO:
-          nextDueDate = this.dateFnsAdapter.addDays(nextDueDate, 1);
-          break;
-        case FrecuenciaCobro.SEMANAL:
-          nextDueDate = this.dateFnsAdapter.addWeeks(nextDueDate, 1);
-          break;
-        case FrecuenciaCobro.MENSUAL:
-          nextDueDate = this.dateFnsAdapter.addMonths(nextDueDate, 1);
-          break;
-        default:
-          throw new BadRequestException(`Frecuencia de cobro desconocida o no soportada: ${frecuenciaCobro}`);
-      }
+    for (let i = 0; i < cuotasPagadas; i++) {
+      nextDueDate = this.addPeriod(nextDueDate, frecuenciaCobro);
     }
-    return nextDueDate; // Esta es la fecha del siguiente pago adeudado
-  }
 
+    return nextDueDate;
+  }
 
   /**
-   * Clasifica el estado del cliente según los días de atraso.
-   * Manteniendo tu lógica actual.
+   * Calcula la fecha límite de pago final del crédito
+   * según la frecuencia, fecha de inicio y número de cuotas.
    */
-  classifyClient(daysOverdue: number): string {
-    if (daysOverdue === 0) {
-      return ClasificacionCliente.BUENO;
-    } else if (daysOverdue >= 1 && daysOverdue <= 7) {
-      return ClasificacionCliente.REGULAR;
-    } else {
-      return ClasificacionCliente.MALO;
+  getDueDate(
+    frecuenciaCobro: FrecuenciaCobro,
+    startDate: Date,
+    totalCuotas: number,
+    timeZone: string,
+  ): Date {
+    // Cobro diario excluye domingos, requiere lógica especial
+    if (frecuenciaCobro === FrecuenciaCobro.DIARIO) {
+      return this.calcularDueDateDiario(startDate, totalCuotas, timeZone);
     }
+
+    // Semanal y mensual: avanzar N períodos directamente
+    let dueDate = new Date(startDate);
+    for (let i = 0; i < totalCuotas; i++) {
+      dueDate = this.addPeriod(dueDate, frecuenciaCobro);
+    }
+    return dueDate;
   }
 
-  public getDueDate(frecuenciaCobro: FrecuenciaCobro, startDate: Date, numberOfPeriods: number, timeZone: string): Date {
-    switch (frecuenciaCobro) {
+  /**
+   * Clasifica al cliente según sus días de atraso.
+   * - 0 días → BUENO
+   * - 1 a 7 días → REGULAR
+   * - Más de 7 días → MALO
+   */
+  classifyClient(daysOverdue: number): ClasificacionCliente {
+    if (daysOverdue === 0) return ClasificacionCliente.BUENO;
+    if (daysOverdue <= 7) return ClasificacionCliente.REGULAR;
+    return ClasificacionCliente.MALO;
+  }
+
+  // ──────────────────────────────────────────────
+  //  Métodos Privados
+  // ──────────────────────────────────────────────
+
+  /**
+   * Avanza una fecha un período según la frecuencia de cobro.
+   * Centraliza la lógica de avance para evitar switches duplicados.
+   */
+  private addPeriod(date: Date, frecuencia: FrecuenciaCobro): Date {
+    switch (frecuencia) {
       case FrecuenciaCobro.DIARIO:
-        return this.calculateDailyDueDateFns(startDate, numberOfPeriods, timeZone);
+        return this.dateFnsAdapter.addDays(date, 1);
       case FrecuenciaCobro.SEMANAL:
-        return this.calculateWeeklyDueDateFns(startDate, numberOfPeriods);
+        return this.dateFnsAdapter.addWeeks(date, 1);
       case FrecuenciaCobro.MENSUAL:
-        return this.calculateMonthlyDueDateFns(startDate, numberOfPeriods);
+        return this.dateFnsAdapter.addMonths(date, 1);
       default:
-        throw new BadRequestException(`Frecuencia de cobro desconocida o no soportada: ${frecuenciaCobro}`);
+        throw new BadRequestException(
+          `Frecuencia de cobro no soportada: ${frecuencia}`,
+        );
     }
   }
 
   /**
-   * Calcula la fecha límite de pago para créditos diarios usando date-fns.
-   * Excluye domingos.
-   * @param startDate La fecha de inicio del crédito (objeto Date).
-   * @param numberOfDays El número de días hábiles.
-   * @returns La fecha límite de pago.
+   * Calcula la fecha límite para créditos diarios excluyendo domingos.
+   * Avanza día a día y solo cuenta días hábiles (lunes a sábado).
    */
-  public calculateDailyDueDateFns(startDate: Date, numberOfDays: number, timeZone: string): Date {
-    let dueDate = new Date(startDate); // Clona para no mutar el original
-    let daysCounted = 0;
+  private calcularDueDateDiario(
+    startDate: Date,
+    totalDias: number,
+    timeZone: string,
+  ): Date {
+    let dueDate = new Date(startDate);
+    let diasContados = 0;
 
-    while (daysCounted < numberOfDays) {
-      dueDate = this.dateFnsAdapter.addDays(dueDate, 1); // Añade un día
-      if (!this.dateFnsAdapter.isSunday(dueDate, timeZone)) { // Si no es domingo
-        daysCounted++;
+    while (diasContados < totalDias) {
+      dueDate = this.dateFnsAdapter.addDays(dueDate, 1);
+      if (!this.dateFnsAdapter.isSunday(dueDate, timeZone)) {
+        diasContados++;
       }
     }
+
     return this.dateFnsAdapter.startOfDayUtc(dueDate);
   }
 
-  /**
-   * Calcula la fecha límite de pago para créditos semanales usando date-fns.
-   * @param startDate La fecha de inicio del crédito (objeto Date).
-   * @param numberOfWeeks El número de semanas.
-   * @returns La fecha límite de pago.
-   */
-  public calculateWeeklyDueDateFns(startDate: Date, numberOfWeeks: number): Date {
-    return this.dateFnsAdapter.addWeeks(new Date(startDate), numberOfWeeks); // Clona y añade semanas
-  }
-
-  public calculateMonthlyDueDateFns(startDate: Date, numberOfMonths: number): Date {
-    return this.dateFnsAdapter.addMonths(new Date(startDate), numberOfMonths); // Clona y añade meses
+  /** Redondea un número a dos decimales */
+  private roundToTwo(value: number): number {
+    return parseFloat(value.toFixed(2));
   }
 }

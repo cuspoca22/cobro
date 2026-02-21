@@ -1,4 +1,4 @@
-import { IsBoolean, IsEnum, IsMongoId, IsNumber, IsOptional, IsString, Min, ValidateIf } from "class-validator";
+import { IsEnum, IsMongoId, IsNumber, IsOptional, IsString, Min, ValidateIf } from "class-validator";
 import { FrecuenciaCobro } from "../interfaces";
 
 export class CreateCreditoDto {
@@ -20,10 +20,6 @@ export class CreateCreditoDto {
    @IsOptional()
    observaciones?: string;
 
-   @IsNumber()
-   @IsOptional()
-   turno?: number = 1;
-
    @IsString()
    @IsEnum(FrecuenciaCobro)
    frecuencia_cobro: FrecuenciaCobro;
@@ -44,6 +40,4 @@ export class CreateCreditoDto {
    @ValidateIf(o => o.interes === undefined || o.interes === null) // Requerido si no hay interés
    valor_cuota?: number;
 
-   @IsBoolean()
-   se_cobran_domingos: boolean;
 }
