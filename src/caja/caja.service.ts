@@ -10,6 +10,7 @@ import { MovimientoCaja } from 'src/movimientoCaja/schemas/caja-movimiento.schem
 import { CajaEntity } from './entities/caja.entity';
 import { Ruta } from '../ruta/schema/ruta.schema';
 import { CreateCajaDto } from './dto';
+import { CurrencyService } from '../currency/currency.service';
 
 
 @Injectable()
@@ -31,6 +32,8 @@ export class CajaService {
 
     @InjectModel(MovimientoCaja.name)
     private readonly cajaMovimientoModel: Model<MovimientoCaja>,
+
+    private readonly currencyService: CurrencyService,
   ) { }
 
   // getUltimaCaja devuelve un objeto que luce asi { hayUltimaCaja: boolean, ultimaCaja: Caja | null }
@@ -215,7 +218,10 @@ export class CajaService {
     caja.retiro = retiros;
     caja.clientes_pendientes = clientesPendientes;
     caja.renovaciones = renovaciones;
-    caja.caja_final = caja.base + caja.cobro + caja.inversion - caja.prestamo - caja.gasto - caja.retiro;
+    caja.caja_final = this.currencyService.round(
+      caja.base + caja.cobro + caja.inversion - caja.prestamo - caja.gasto - caja.retiro,
+      ruta.currency,
+    );
 
     await caja.save({ session });
 

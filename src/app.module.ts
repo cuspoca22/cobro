@@ -15,17 +15,19 @@ import { PruebasModule } from './pruebas/pruebas.module';
 import { LogAuthModule } from './log-auth/log-auth.module';
 import { MessageModule } from './message/message.module';
 import { MovimientoCajaModule } from './movimientoCaja/movimiento-caja.module';
+import { CurrencyModule } from './currency/currency.module';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({isGlobal: true, envFilePath: '.env'}),
+    ConfigModule.forRoot({ isGlobal: true, envFilePath: '.env' }),
     MongooseModule.forRoot(process.env.MONGO_URL, {
       dbName: process.env.MONGO_DB_NAME,
     }),
     ServeStaticModule.forRoot({
-      rootPath: join(__dirname,"..",'public'),
+      rootPath: join(__dirname, "..", 'public'),
     }),
     MovimientoCajaModule,
+    CurrencyModule,
     CreditoModule,
     AuthModule,
     RutaModule,

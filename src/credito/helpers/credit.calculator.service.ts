@@ -1,5 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { DateFnsAdapter } from 'src/common/wrappers/date-fns.adapter';
+import { CurrencyService } from 'src/currency/currency.service';
+import Decimal from 'decimal.js';
 import { FrecuenciaCobro } from '../interfaces/frecuencia-cobro.enum';
 import { ClasificacionCliente } from '../interfaces';
 
@@ -18,7 +20,10 @@ export interface ResultadoCalculoCuota {
 @Injectable()
 export class CreditCalculatorService {
 
-  constructor(private readonly dateFnsAdapter: DateFnsAdapter) { }
+  constructor(
+    private readonly dateFnsAdapter: DateFnsAdapter,
+    private readonly currencyService: CurrencyService,
+  ) { }
 
   // ──────────────────────────────────────────────
   //  Cálculos Financieros
@@ -32,14 +37,15 @@ export class CreditCalculatorService {
     valorCredito: number,
     interes: number,
     totalCuotas: number,
+    currencyCode: string,
   ): ResultadoCalculoInteres {
-    const interesDecimal = interes / 100;
-    const totalPagar = valorCredito * (1 + interesDecimal);
-    const valorCuota = totalPagar / totalCuotas;
+    const interesDecimal = new Decimal(interes).div(100);
+    const totalPagar = new Decimal(valorCredito).times(new Decimal(1).plus(interesDecimal));
+    const valorCuota = totalPagar.div(totalCuotas);
 
     return {
-      totalPagar: this.roundToTwo(totalPagar),
-      valorCuota: this.roundToTwo(valorCuota),
+      totalPagar: this.currencyService.round(totalPagar.toNumber(), currencyCode),
+      valorCuota: this.currencyService.round(valorCuota.toNumber(), currencyCode),
     };
   }
 
@@ -51,13 +57,14 @@ export class CreditCalculatorService {
     valorCredito: number,
     valorCuota: number,
     totalCuotas: number,
+    currencyCode: string,
   ): ResultadoCalculoCuota {
-    const totalPagar = valorCuota * totalCuotas;
-    const interes = ((totalPagar - valorCredito) / valorCredito) * 100;
+    const totalPagar = new Decimal(valorCuota).times(totalCuotas);
+    const interes = totalPagar.minus(valorCredito).div(valorCredito).times(100);
 
     return {
-      totalPagar: this.roundToTwo(totalPagar),
-      interes: this.roundToTwo(interes),
+      totalPagar: this.currencyService.round(totalPagar.toNumber(), currencyCode),
+      interes: this.roundToTwo(interes.toNumber()),
     };
   }
 
@@ -77,11 +84,11 @@ export class CreditCalculatorService {
   ): Date {
     // Si no hay cuota válida o no hay abonos, se adeuda desde el inicio
     if (!valorCuota || valorCuota === 0 || abonos === 0) {
-      return this.dateFnsAdapter.startOfDayUtc(new Date(fechaInicio));
+      return new Date(fechaInicio);
     }
 
     const cuotasPagadas = Math.floor(abonos / valorCuota);
-    let nextDueDate = this.dateFnsAdapter.startOfDayUtc(new Date(fechaInicio));
+    let nextDueDate = new Date(fechaInicio);
 
     for (let i = 0; i < cuotasPagadas; i++) {
       nextDueDate = this.addPeriod(nextDueDate, frecuenciaCobro);
@@ -172,6 +179,6 @@ export class CreditCalculatorService {
 
   /** Redondea un número a dos decimales */
   private roundToTwo(value: number): number {
-    return parseFloat(value.toFixed(2));
+    return new Decimal(value).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber();
   }
 }

@@ -2,6 +2,7 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { ExpressAdapter } from '@nestjs/platform-express';
+import Decimal from 'decimal.js';
 const dns = require('dns');
 dns.setDefaultResultOrder('ipv4first');
 

@@ -251,9 +251,6 @@ export class RutaService {
     throw new InternalServerErrorException("Revisar los logs")
   }
 
-  private roundToTwoDecimals(value: number): number {
-    return Math.round(value * 100) / 100;
-  }
 
   // ACTUALIZAR RUTA IMPLICA QUE SE DEBE CALCULAR NUEVAMENTE SU CARTERA, GASTOS Y DEMAS
   public async actualizarRuta(idRuta: any): Promise<void> {

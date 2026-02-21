@@ -282,7 +282,7 @@ describe('RutaService', () => {
 
   describe('create', () => {
     it('should create a ruta successfully', async () => {
-      const createRutaDto: CreateRutaDto = { nombre: 'Ruta 1', ciudad: 'City', pais: 'Country', timeZone: 'UTC', autoOpen: true };
+      const createRutaDto: CreateRutaDto = { nombre: 'Ruta 1', ciudad: 'City', pais: 'Country', timeZone: 'UTC', autoOpen: true, currency: 'COP' };
       const mockCreatedRuta = { ...createRutaDto, _id: 'someId' };
       mockRutaModel.create.mockResolvedValue(mockCreatedRuta);
 
@@ -293,7 +293,7 @@ describe('RutaService', () => {
     });
 
     it('should handle exceptions during creation', async () => {
-      const createRutaDto: CreateRutaDto = { nombre: 'Ruta 1', ciudad: 'City', pais: 'Country', timeZone: 'UTC', autoOpen: true };
+      const createRutaDto: CreateRutaDto = { nombre: 'Ruta 1', ciudad: 'City', pais: 'Country', timeZone: 'UTC', autoOpen: true, currency: 'COP' };
       mockRutaModel.create.mockRejectedValue(new Error('Some error'));
 
       await expect(service.create(createRutaDto)).rejects.toThrow(InternalServerErrorException);

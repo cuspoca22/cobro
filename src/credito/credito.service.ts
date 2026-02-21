@@ -67,7 +67,8 @@ export class CreditoService {
         const { totalPagar, valorCuota } = this.creditCalculatorSvc.calculateFromInterest(
           valor_credito,
           interes,
-          total_cuotas
+          total_cuotas,
+          ruta.currency,
         );
         calculatedTotalPagar = totalPagar;
         calculatedInteres = interes;
@@ -76,7 +77,8 @@ export class CreditoService {
         const { totalPagar, interes } = this.creditCalculatorSvc.calculateFromCuota(
           valor_credito,
           valor_cuota,
-          total_cuotas
+          total_cuotas,
+          ruta.currency,
         );
         calculatedTotalPagar = totalPagar;
         calculatedInteres = interes;
@@ -181,7 +183,7 @@ export class CreditoService {
 
     const creditsWithDetails = await this.creditoModel.aggregate(pipeline).exec();
 
-    return this.mapToCreditoEntity(creditsWithDetails);
+    return this.mapToCreditoEntity(creditsWithDetails, ruta.timeZone);
   }
 
   /**
@@ -224,7 +226,7 @@ export class CreditoService {
     const creditPlain = creditsWithDetails[0];
     const creditEntity = CreditoEntity.fromObject(creditPlain);
 
-    return this.calculateOverdueAndState(creditEntity);
+    return this.calculateOverdueAndState(creditEntity, ruta.timeZone);
   }
 
   // Este método es invocado después de un pago para actualizar el estado persistente del crédito.
@@ -459,9 +461,9 @@ export class CreditoService {
     };
   }
 
-  private calculateOverdueAndState(credit: CreditoEntity): CreditoEntity {
+  private calculateOverdueAndState(credit: CreditoEntity, timeZone: string): CreditoEntity {
     let daysOverdue = 0;
-    const today = this.dateFnsAdapter.nowUtc();
+    const today = this.dateFnsAdapter.getStartOfTodayInTimeZone(timeZone);
 
     if (credit.status === true) {
       const paidUntilDate = this.creditCalculatorSvc.calculatePaidUntilDate(
@@ -485,10 +487,10 @@ export class CreditoService {
     return credit;
   }
 
-  private mapToCreditoEntity(credits: any[]): CreditoEntity[] {
+  private mapToCreditoEntity(credits: any[], timeZone: string): CreditoEntity[] {
     return credits.map(creditPlainObject => {
       const creditEntity = CreditoEntity.fromObject(creditPlainObject);
-      return this.calculateOverdueAndState(creditEntity);
+      return this.calculateOverdueAndState(creditEntity, timeZone);
     });
   }
 }

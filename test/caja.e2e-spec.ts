@@ -32,7 +32,8 @@ describe('CajaModule (e2e)', () => {
     ciudad: 'Ciudad Test',
     pais: 'Pais Test',
     timeZone: 'America/Mexico_City',
-    autoOpen: true
+    autoOpen: true,
+    currency: 'MXN'
   };
 
   beforeAll(async () => {

@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import Decimal from 'decimal.js';
 
 export interface CurrencyConfig {
   code: string;               // Código ISO 4217 (ej. COP)
@@ -47,6 +48,15 @@ export class CurrencyService {
       roundingRule: 'half-up',
       locale: 'es-GT',
     },
+    MXN: {
+      code: 'MXN',
+      name: 'Peso mexicano',
+      symbol: '$',
+      decimalPlaces: 2,
+      minorUnitFactor: 100,
+      roundingRule: 'half-up',
+      locale: 'es-MX',
+    },
   };
 
   /**
@@ -74,5 +84,34 @@ export class CurrencyService {
    */
   isSupported(currencyCode: string): boolean {
     return !!this.currencies[currencyCode.toUpperCase()];
+  }
+
+  /**
+   * Redondea un valor monetario respetando los decimales de la moneda.
+   * Usa redondeo 'half-up' (Math.round).
+   * Ejemplo: COP (0 dec) → 1000.5 → 1001 | BRL (2 dec) → 1000.505 → 1000.51
+   * @param value - Valor numérico a redondear
+   * @param currencyCode - Código ISO de la moneda (COP, BRL, GTQ, MXN)
+   */
+  round(value: number, currencyCode: string): number {
+    const config = this.getCurrencyConfig(currencyCode);
+    const decimal = new Decimal(value);
+    const rounded = decimal.toDecimalPlaces(config.decimalPlaces, Decimal.ROUND_HALF_UP);
+    return rounded.toNumber();
+  }
+
+  /**
+   * Formatea un valor monetario según el locale y símbolo de la moneda.
+   * @param value - Valor numérico a formatear
+   * @param currencyCode - Código ISO de la moneda
+   */
+  format(value: number, currencyCode: string): string {
+    const config = this.getCurrencyConfig(currencyCode);
+    return new Intl.NumberFormat(config.locale, {
+      style: 'currency',
+      currency: config.code,
+      minimumFractionDigits: config.decimalPlaces,
+      maximumFractionDigits: config.decimalPlaces,
+    }).format(value);
   }
 }

@@ -13,7 +13,6 @@ export class Caja {
    @Prop({
       type: Number,
       default: 0,
-      min: 0
    })
    base: number;
 
@@ -82,7 +81,6 @@ export class Caja {
    @Prop({
       type: Number,
       default: 0,
-      min: 0
    })
    caja_final: number;
 

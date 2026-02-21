@@ -10,10 +10,12 @@ import { Cliente, ClienteSchema } from '../cliente/schema/cliente.schema';
 import { DateFnsAdapter } from '../common/wrappers/date-fns.adapter';
 import { MovimientoCaja, MovimientoCajaSchema } from 'src/movimientoCaja/schemas/caja-movimiento.schemas';
 import { Ruta, RutaSchema } from '../ruta/schema/ruta.schema';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
   imports: [
     ConfigModule,
+    AuthModule,
     MongooseModule.forFeature([
       {
         name: Caja.name,
