@@ -54,6 +54,7 @@ describe('RutaService', () => {
     mockCajaService = {
       getUltimaCaja: jest.fn(),
       create: jest.fn(),
+      getMovimientosResumen: jest.fn().mockResolvedValue(undefined),
     };
 
     mockCreditoModel = {
@@ -247,6 +248,7 @@ describe('RutaService', () => {
       const rutaId = new Types.ObjectId().toHexString();
       const cajaId = new Types.ObjectId().toHexString();
       const mockRuta = {
+        _id: rutaId,
         caja_actual: cajaId,
         status: true,
         save: jest.fn(),
@@ -266,6 +268,8 @@ describe('RutaService', () => {
         session: jest.fn().mockResolvedValue(mockCaja),
       });
 
+      mockCajaService.getMovimientosResumen.mockResolvedValue(undefined);
+
       const result = await service.closeRuta(rutaId);
 
       expect(result).toBe(true);
@@ -274,6 +278,7 @@ describe('RutaService', () => {
       expect(mockCaja.status).toBe(false);
       expect(mockRuta.save).toHaveBeenCalled();
       expect(mockCaja.save).toHaveBeenCalled();
+      expect(mockCajaService.getMovimientosResumen).toHaveBeenCalledWith(rutaId, expect.anything());
       expect(mockSession.commitTransaction).toHaveBeenCalled();
       expect(mockSession.endSession).toHaveBeenCalled();
     });

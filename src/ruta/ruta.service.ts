@@ -134,6 +134,7 @@ export class RutaService {
       }
 
       // cuando la ruta se cierra, actualiza la caja, para que se guarde lo que se trabajo hasta ese preciso momento
+      this.logger.log(`Cerrando ruta ${ruta._id}, actualizando movimientos de caja...`);
       await this.cajaSvc.getMovimientosResumen(ruta._id.toString(), session)
 
       ruta.status = false;
