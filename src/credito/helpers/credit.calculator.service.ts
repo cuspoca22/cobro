@@ -25,6 +25,20 @@ export class CreditCalculatorService {
     private readonly currencyService: CurrencyService,
   ) { }
 
+  /**
+   * Normaliza un valor de frecuencia de cobro a su forma canónica (minúsculas).
+   * @param frecuencia Valor de frecuencia (ej. "DIARIO", "diario", "Diario")
+   * @returns El valor normalizado compatible con el enum FrecuenciaCobro
+   * @throws BadRequestException si el valor no es reconocido
+   */
+  private normalizeFrecuenciaCobro(frecuencia: string): FrecuenciaCobro {
+    const normalized = frecuencia.toLowerCase();
+    if (normalized === 'diario') return FrecuenciaCobro.DIARIO;
+    if (normalized === 'semanal') return FrecuenciaCobro.SEMANAL;
+    if (normalized === 'mensual') return FrecuenciaCobro.MENSUAL;
+    throw new BadRequestException(`Frecuencia de cobro no soportada: ${frecuencia}`);
+  }
+
   // ──────────────────────────────────────────────
   //  Cálculos Financieros
   // ──────────────────────────────────────────────
@@ -78,7 +92,7 @@ export class CreditCalculatorService {
    */
   calculatePaidUntilDate(
     fechaInicio: Date,
-    frecuenciaCobro: FrecuenciaCobro,
+    frecuenciaCobro: string,
     valorCuota: number,
     abonos: number,
   ): Date {
@@ -102,13 +116,13 @@ export class CreditCalculatorService {
    * según la frecuencia, fecha de inicio y número de cuotas.
    */
   getDueDate(
-    frecuenciaCobro: FrecuenciaCobro,
+    frecuenciaCobro: string,
     startDate: Date,
     totalCuotas: number,
     timeZone: string,
   ): Date {
     // Cobro diario excluye domingos, requiere lógica especial
-    if (frecuenciaCobro === FrecuenciaCobro.DIARIO) {
+    if (this.normalizeFrecuenciaCobro(frecuenciaCobro) === FrecuenciaCobro.DIARIO) {
       return this.calcularDueDateDiario(startDate, totalCuotas, timeZone);
     }
 
@@ -140,8 +154,9 @@ export class CreditCalculatorService {
    * Avanza una fecha un período según la frecuencia de cobro.
    * Centraliza la lógica de avance para evitar switches duplicados.
    */
-  private addPeriod(date: Date, frecuencia: FrecuenciaCobro): Date {
-    switch (frecuencia) {
+  private addPeriod(date: Date, frecuencia: string): Date {
+    const normalized = this.normalizeFrecuenciaCobro(frecuencia);
+    switch (normalized) {
       case FrecuenciaCobro.DIARIO:
         return this.dateFnsAdapter.addDays(date, 1);
       case FrecuenciaCobro.SEMANAL:
@@ -149,6 +164,7 @@ export class CreditCalculatorService {
       case FrecuenciaCobro.MENSUAL:
         return this.dateFnsAdapter.addMonths(date, 1);
       default:
+        // Este caso no debería ocurrir porque normalizeFrecuenciaCobro ya valida
         throw new BadRequestException(
           `Frecuencia de cobro no soportada: ${frecuencia}`,
         );

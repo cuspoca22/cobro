@@ -24,6 +24,9 @@ update.js
 comandos.json
 notas.txt
 update-cajas.js
+migracion_cleanup_creditos.js
+migracion_rutas_currency.js
+migracion_dueDate.js
 # OS
 .DS_Store
 .windsurfrules
