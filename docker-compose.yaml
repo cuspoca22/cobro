@@ -1,8 +1,9 @@
-version: '3.8'
 services:
   mongo-db:
     image: mongo:8.0
+    container_name: cobro-mongo
     restart: always
+    command: ["--replSet", "rs0", "--bind_ip_all"]
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER}
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD}
