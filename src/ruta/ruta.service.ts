@@ -219,11 +219,12 @@ export class RutaService {
     }
   }
 
-  @Cron('00 00 4 * * 1-7', {
+  @Cron('00 00 4 * * *', {
     name: 'closeAllRutas',
     timeZone: 'America/sao_paulo',
   })
   async closeAllRutas() {
+    this.logger.log('Iniciando cierre automático de rutas...');
     const rutasToClose = await this.rutaModel.find({ status: true }).exec();
 
     for (const ruta of rutasToClose) {
@@ -234,7 +235,31 @@ export class RutaService {
           this.logger.log(`La ruta ${rutaId} se ha cerrado exitosamente`);
         }
       } catch (error) {
-        this.handleExceptions(error)
+        this.logger.error(`Error al cerrar la ruta ${rutaId}: ${error.message}`);
+      }
+    }
+  }
+
+  @Cron('00 00 7 * * *', {
+    name: 'openAllRutas',
+    timeZone: 'America/sao_paulo',
+  })
+  async openAllRutas() {
+    this.logger.log('Iniciando apertura automática de rutas...');
+    const rutasToOpen = await this.rutaModel.find({
+      status: false,
+      autoOpen: true
+    }).exec();
+
+    for (const ruta of rutasToOpen) {
+      const rutaId = ruta._id.toString();
+      try {
+        const result = await this.openRuta(rutaId);
+        if (result.ok) {
+          this.logger.log(`La ruta ${rutaId} se ha abierto exitosamente`);
+        }
+      } catch (error) {
+        this.logger.error(`Error al abrir la ruta ${rutaId}: ${error.message}`);
       }
     }
   }
