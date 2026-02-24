@@ -219,9 +219,9 @@ export class RutaService {
     }
   }
 
-  @Cron('00 00 4 * * *', {
+  @Cron('00 00 3 * * *', {
     name: 'closeAllRutas',
-    timeZone: 'America/sao_paulo',
+    timeZone: 'America/Sao_Paulo',
   })
   async closeAllRutas() {
     this.logger.log('Iniciando cierre automático de rutas...');
@@ -242,7 +242,7 @@ export class RutaService {
 
   @Cron('00 00 7 * * *', {
     name: 'openAllRutas',
-    timeZone: 'America/sao_paulo',
+    timeZone: 'America/Sao_Paulo',
   })
   async openAllRutas() {
     this.logger.log('Iniciando apertura automática de rutas...');
