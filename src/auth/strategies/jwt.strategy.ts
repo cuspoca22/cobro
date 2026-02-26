@@ -10,32 +10,32 @@ import { User } from '../schemas/user.schema';
 import { UserEntity } from '../entities/user.entity';
 
 @Injectable()
-export class JWTStrategy extends PassportStrategy(Strategy){
+export class JWTStrategy extends PassportStrategy(Strategy, 'jwt') {
 
   constructor(
     @InjectModel(User.name)
     private userModel: Model<User>,
 
     configService: ConfigService
-  ){
+  ) {
     super({
       secretOrKey: configService.get('SECRETORPRIVATEKEY'),
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken()
     });
   }
 
-  async validate(payload: JwtPayload): Promise<UserEntity>{
-    const {id} = payload;
-    
+  async validate(payload: JwtPayload): Promise<UserEntity> {
+    const { id } = payload;
+
     let user = await this.userModel.findById(id)
       .populate([
         { path: 'ruta' }
       ])
 
-    if(!user)
+    if (!user)
       throw new UnauthorizedException('Token no valido');
-    
-    if(!user.estado)
+
+    if (!user.estado)
       throw new UnauthorizedException('usuario no esta activo');
 
 

@@ -17,6 +17,7 @@ import { LogAuthModule } from './log-auth/log-auth.module';
 import { MessageModule } from './message/message.module';
 import { MovimientoCajaModule } from './movimientoCaja/movimiento-caja.module';
 import { CurrencyModule } from './currency/currency.module';
+import { RenovacionModule } from './renovacion/renovacion.module';
 
 @Module({
   imports: [
@@ -39,6 +40,7 @@ import { CurrencyModule } from './currency/currency.module';
     PruebasModule,
     LogAuthModule,
     MessageModule,
+    RenovacionModule,
   ],
   controllers: [],
   providers: [],

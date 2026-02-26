@@ -13,7 +13,7 @@ export class GetUserDto {
       return obj.id.toString(); // Asegura que sea string
     }
     // Si ni _id ni id existen, devuelve null o undefined.
-    return null; 
+    return null;
   })
   id: string;
 
@@ -31,7 +31,7 @@ export class GetUserDto {
   rol: string
 
   @Expose()
-  @Transform(({ obj }) => obj.ruta ? obj.empresa.toString() : null) // Convierte el ObjectId de EMPRESA a string
+  @Transform(({ obj }) => obj.empresa ? obj.empresa.toString() : null) // Convierte el ObjectId de EMPRESA a string
   empresa: string;
 
   @Expose()

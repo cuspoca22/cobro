@@ -5,8 +5,8 @@ import { SubTipo } from '../interfaces/sub-tipo.enum';
 import { TipoMovimiento } from '../interfaces/tipo-movimiento.enum';
 import { CategoriaGasto } from '../interfaces/categoria-gasto.enum';
 
-@Schema({ 
-    versionKey: false, 
+@Schema({
+    versionKey: false,
     timestamps: true,
     collection: 'movimientoCaja'
 })
@@ -108,4 +108,5 @@ export const MovimientoCajaSchema = SchemaFactory.createForClass(MovimientoCaja)
 // Puedes añadir índices compuestos si ves patrones de búsqueda comunes, por ejemplo:
 MovimientoCajaSchema.index({ caja: 1, createdAt: 1 }); // Para obtener movimientos de una caja en un rango de fechas
 MovimientoCajaSchema.index({ caja: 1, tipoMovimiento: 1, subTipo: 1 }); // Para filtrar rápidamente por tipo y subtipo
-MovimientoCajaSchema.index({credito: 1, tipoMovimiento: 1, subTipo: 1, createdAt: -1})
+MovimientoCajaSchema.index({ credito: 1, tipoMovimiento: 1, subTipo: 1, createdAt: -1 })
+MovimientoCajaSchema.index({ subTipo: 1, fecha: 1, ruta: 1 });

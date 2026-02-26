@@ -7,6 +7,6 @@ import { UserRolGuard } from '../guards/user-rol.guard';
 export function Auth(...roles: ValidRoles[]) {
   return applyDecorators(
     RolProtected(...roles),
-    UseGuards(AuthGuard(), UserRolGuard),
+    UseGuards(AuthGuard('jwt'), UserRolGuard),
   );
 }
