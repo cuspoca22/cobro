@@ -80,11 +80,14 @@ export class MovimientoCajaService {
       }], { session });
 
       // llamamos el handlePaymentMade del credito
-      await this.creditoService.handlePaymentMade(creditoId, rutaId, clienteId, session);
+      const { ok, message } = await this.creditoService.handlePaymentMade(creditoId, rutaId, clienteId, session);
 
 
       await session.commitTransaction();
-      return true;
+      return {
+        ok,
+        message
+      };
 
     } catch (error) {
 
@@ -300,6 +303,7 @@ export class MovimientoCajaService {
     const inicioBusqueda = new Date(baseDate);
     const finBusqueda = new Date(baseDate);
     finBusqueda.setUTCHours(23, 59, 59, 999);
+    console.log(baseDate, inicioBusqueda, finBusqueda, fecha)
     const pagos = await this.cajaMovimientoModel.aggregate([
       {
         $match: {
@@ -327,6 +331,7 @@ export class MovimientoCajaService {
           fecha: 1,
           monto: 1,
           subTipo: 1,
+          comentario: 1,
           cliente: {
             id: '$clienteInfo._id',
             nombre: '$clienteInfo.nombre',

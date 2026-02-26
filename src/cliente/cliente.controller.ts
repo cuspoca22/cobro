@@ -19,8 +19,8 @@ export class ClienteController {
 
   @Get()
   async findAll(
-    @Query('status', ParseBoolPipe) status: boolean, 
-    @Query('idRuta', ParseMongoIdPipe) idRuta: string, 
+    @Query('status', ParseBoolPipe) status: boolean,
+    @Query('idRuta', ParseMongoIdPipe) idRuta: string,
   ) {
     return this.clienteService.findAll(status, idRuta);
   }
@@ -32,19 +32,13 @@ export class ClienteController {
     return this.clienteService.findByAdmin(idRuta);
   }
 
+  // Obtener informacion del cliente con el historial de sus creditos
   @Get(':termino')
   async findOne(
     @Param('termino') termino: string,
   ) {
     return this.clienteService.findOne(termino);
   }
-
-  // @Get('historial/:id')
-  // async getHistorialCliente(
-  //   @Param('id', ParseMongoIdPipe) id: string
-  // ) {
-  //   return this.clienteService.getHistorial(id);
-  // }
 
   @Patch(':id')
   update(

@@ -1,7 +1,8 @@
 import { Types } from "mongoose";
 
 export interface RenovacionDetalle {
-  cliente: string;
+  id: Types.ObjectId;
+  nombre: string;
   alias?: string;
   monto: number;
   fecha: Date;

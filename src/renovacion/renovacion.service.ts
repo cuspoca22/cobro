@@ -111,8 +111,9 @@ export class RenovacionService {
           },
           renovaciones: {
             $push: {
+              id: '$clienteInfo._id',
               // Manejo seguro por si el cliente no existe
-              cliente: { $ifNull: ['$clienteInfo.nombre', 'Cliente no registrado'] },
+              nombre: { $ifNull: ['$clienteInfo.nombre', 'Cliente no registrado'] },
               alias: { $ifNull: ['$clienteInfo.alias', ''] },
               monto: '$monto',
               fecha: '$fecha',

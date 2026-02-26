@@ -6,11 +6,13 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { Cliente, ClienteSchema } from './schema/cliente.schema';
 import { AuthModule } from 'src/auth/auth.module';
 import { Credito, CreditoSchema } from 'src/credito/schemas/credito.schema';
+import { CreditoModule } from 'src/credito/credito.module';
 
 @Module({
   imports: [
     ConfigModule,
     AuthModule,
+    CreditoModule,
     MongooseModule.forFeature([
       {
         name: Cliente.name,
@@ -26,4 +28,4 @@ import { Credito, CreditoSchema } from 'src/credito/schemas/credito.schema';
   providers: [ClienteService],
   exports: [ClienteService, MongooseModule]
 })
-export class ClienteModule {}
+export class ClienteModule { }
