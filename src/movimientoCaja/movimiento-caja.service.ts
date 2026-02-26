@@ -303,7 +303,6 @@ export class MovimientoCajaService {
     const inicioBusqueda = new Date(baseDate);
     const finBusqueda = new Date(baseDate);
     finBusqueda.setUTCHours(23, 59, 59, 999);
-    console.log(baseDate, inicioBusqueda, finBusqueda, fecha)
     const pagos = await this.cajaMovimientoModel.aggregate([
       {
         $match: {
