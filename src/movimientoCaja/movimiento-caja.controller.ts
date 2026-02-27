@@ -2,7 +2,7 @@ import { Body, Controller, Get, Param, Patch, Post, Query } from "@nestjs/common
 
 import { Auth, GetUser } from '../auth/decorators';
 import { MovimientoCajaService } from "./movimiento-caja.service";
-import { CreateMovimientoCajaDto, UpdateMovimientoCajaDto } from "./dto";
+import { CreateMovimientoCajaDto, UpdateMovimientoCajaDto, ResumenOficinaQueryDto } from "./dto";
 import { ParseMongoIdPipe } from '../common/pipes/parse-mongo-id.pipe';
 import { CreateCreditoDto } from "src/credito/dto";
 
@@ -12,7 +12,7 @@ export class MovimientoCajaController {
 
   constructor(
     private movimientoCajaService: MovimientoCajaService
-  ){}
+  ) { }
 
   @Get('historial-pagos')
   async historialPagos(
@@ -26,14 +26,14 @@ export class MovimientoCajaController {
   async getResumenDiarioPorRuta(
     @Query('rutaId') rutaId: string,
     @Query('fecha') fecha: string,
-  ){
+  ) {
     return await this.movimientoCajaService.getResumenDiario(rutaId, fecha);
   }
 
   @Post('add')
   async createPago(
     @Body() createMovimientoCajaDto: CreateMovimientoCajaDto
-  ){
+  ) {
     return this.movimientoCajaService.addPago(createMovimientoCajaDto);
   }
 
@@ -58,11 +58,16 @@ export class MovimientoCajaController {
     return await this.movimientoCajaService.addOficinaMovimiento(createMovimientoDto);
   }
 
+  @Get('oficina/resumen')
+  async getResumenOficina(@Query() query: ResumenOficinaQueryDto) {
+    return this.movimientoCajaService.getResumenOficina(query.rutaId, query.fecha);
+  }
+
   @Patch('update/:movimientoId')
   async updateMovimiento(
     @Body() updateMovimientoCajaDto: UpdateMovimientoCajaDto,
     @Param('movimientoId', ParseMongoIdPipe) movimientoId: string
-  ){
+  ) {
     return this.movimientoCajaService.updateMovimiento(movimientoId, updateMovimientoCajaDto);
   }
 

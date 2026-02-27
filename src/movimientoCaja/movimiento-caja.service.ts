@@ -8,7 +8,7 @@ import { Caja } from "src/caja/schemas/caja.schema";
 import { Ruta } from "src/ruta/schema/ruta.schema";
 import { DateFnsAdapter } from '../common/wrappers/date-fns.adapter';
 import { CreditoService } from "src/credito/credito.service";
-import { SubTipo, TipoMovimiento } from "./interfaces";
+import { SubTipo, TipoMovimiento, ResumenOficinaResponse, GrupoMovimiento, MovimientoResumen } from "./interfaces";
 import { CreateCreditoDto } from "src/credito/dto";
 import { CajaMovimientoEntity } from "./entities/caja-movimiento.entity";
 
@@ -342,6 +342,104 @@ export class MovimientoCajaService {
 
     return pagos;
 
+  }
+
+  /**
+   * Obtiene el resumen de movimientos de oficina (gastos, retiros, inversiones, depósitos)
+   * para una ruta en un día determinado, respetando el timeZone de la ruta.
+   * @param rutaId - ID de la ruta
+   * @param fecha - Fecha en formato YYYY-MM-DD (opcional, por defecto hoy)
+   */
+  async getResumenOficina(rutaId: string, fecha?: string): Promise<ResumenOficinaResponse> {
+    // Validar que la ruta exista y obtener su timeZone
+    const ruta = await this.rutaModel.findById(rutaId).lean();
+    if (!ruta) throw new NotFoundException(`La ruta con el id ${rutaId} no existe`);
+
+    // Calcular rango del día respetando la timeZone de la ruta
+    const { inicioDia, finDia } = this.calcularRangoDia(fecha, ruta.timeZone);
+
+    // Subtipos relevantes para movimientos de oficina
+    const subTiposOficina = [
+      SubTipo.GASTO,
+      SubTipo.RETIRO,
+      SubTipo.INVERSION,
+    ];
+
+    // Aggregation pipeline: agrupar movimientos por subtipo
+    const resultados = await this.cajaMovimientoModel.aggregate<{
+      _id: string;
+      total: number;
+      movimientos: MovimientoResumen[];
+    }>([
+      {
+        $match: {
+          ruta: new Types.ObjectId(rutaId),
+          fecha: { $gte: inicioDia, $lte: finDia },
+          subTipo: { $in: subTiposOficina },
+        },
+      },
+      {
+        $group: {
+          _id: '$subTipo',
+          total: { $sum: '$monto' },
+          movimientos: {
+            $push: {
+              id: '$_id',
+              monto: '$monto',
+              concepto: '$concepto',
+              comentario: '$comentario',
+              categoriaGasto: '$categoriaGasto',
+              fecha: '$fecha',
+            },
+          },
+        },
+      },
+    ]);
+
+    // Transformar el resultado del aggregation al formato de respuesta tipado
+    return this.mapearResultadosResumen(resultados);
+  }
+
+  /**
+   * Calcula el inicio y fin de un día en la timeZone dada.
+   * Si no se proporciona fecha, usa el día actual.
+   */
+  private calcularRangoDia(fecha: string | undefined, timeZone: string): { inicioDia: Date; finDia: Date } {
+    if (fecha) {
+      // Parsear la fecha proporcionada y obtener inicio/fin del día en la timeZone
+      const fechaBase = new Date(`${fecha}T00:00:00`);
+      const inicioDia = this.dateFnsAdapter.convertZonedTimeToUtc(fechaBase, timeZone);
+      const finFecha = new Date(`${fecha}T23:59:59.999`);
+      const finDia = this.dateFnsAdapter.convertZonedTimeToUtc(finFecha, timeZone);
+      return { inicioDia, finDia };
+    }
+
+    // Sin fecha, usar el día actual en la timeZone de la ruta
+    return {
+      inicioDia: this.dateFnsAdapter.getStartOfTodayInTimeZone(timeZone),
+      finDia: this.dateFnsAdapter.getEndOfTodayInTimeZone(timeZone),
+    };
+  }
+
+  /**
+   * Mapea los resultados del aggregation al formato tipado de ResumenOficinaResponse.
+   * Si un subtipo no tiene movimientos, retorna un grupo vacío.
+   */
+  private mapearResultadosResumen(
+    resultados: { _id: string; total: number; movimientos: MovimientoResumen[] }[],
+  ): ResumenOficinaResponse {
+    const grupoVacio: GrupoMovimiento = { total: 0, movimientos: [] };
+
+    // Crear un mapa para acceso rápido por subtipo
+    const mapa = new Map(
+      resultados.map((r) => [r._id, { total: r.total, movimientos: r.movimientos }]),
+    );
+
+    return {
+      gastos: mapa.get(SubTipo.GASTO) ?? { ...grupoVacio },
+      retiros: mapa.get(SubTipo.RETIRO) ?? { ...grupoVacio },
+      inversiones: mapa.get(SubTipo.INVERSION) ?? { ...grupoVacio },
+    };
   }
 
   private handleExceptions(error: any) {
