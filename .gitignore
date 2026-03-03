@@ -50,3 +50,5 @@ migracion_dueDate.js
 !.vscode/tasks.json
 !.vscode/launch.json
 !.vscode/extensions.json
+
+dist.rar

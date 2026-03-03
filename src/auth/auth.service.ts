@@ -205,7 +205,7 @@ export class AuthService {
       }
 
       try {
-         await user.updateOne(updateUserDto, { new: true });
+         await user.updateOne(updateUserDto, { returnDocument: 'after' });
 
          return {
             ...user.toJSON(),

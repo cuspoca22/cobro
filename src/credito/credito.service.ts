@@ -286,7 +286,7 @@ export class CreditoService {
   async updateTurno(id: string, updateCreditoDto: UpdateCreditoDto) {
     try {
 
-      await this.creditoModel.findByIdAndUpdate(id, updateCreditoDto, { new: true });
+      await this.creditoModel.findByIdAndUpdate(id, updateCreditoDto, { returnDocument: 'after' });
 
       return true;
 

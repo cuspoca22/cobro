@@ -89,7 +89,7 @@ export class ClienteService {
 
     try {
 
-      return await this.clienteModel.findByIdAndUpdate(id, updateClienteDto, { new: true });
+      return await this.clienteModel.findByIdAndUpdate(id, updateClienteDto, { returnDocument: 'after' });
 
     } catch (error) {
 
@@ -101,7 +101,7 @@ export class ClienteService {
 
   async remove(id: string) {
     const client = await this.findOne(id);
-    // await client.updateOne({ state: false }, { new: true });
+    // await client.updateOne({ state: false }, { returnDocument: 'after' });
 
     return true;
   }

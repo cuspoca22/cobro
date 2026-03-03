@@ -56,13 +56,13 @@ export class Ruta extends Document {
 
    @Prop({
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'cajas'
+      ref: 'Caja'
    })
    ultima_caja: Types.ObjectId;
 
    @Prop({
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'cajas'
+      ref: 'Caja'
    })
    caja_actual: Types.ObjectId;
 

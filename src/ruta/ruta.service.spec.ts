@@ -340,7 +340,7 @@ describe('RutaService', () => {
 
       const result = await service.update(rutaId, updateRutaDto);
       expect(result).toEqual(mockUpdatedRuta);
-      expect(mockRutaModel.findByIdAndUpdate).toHaveBeenCalledWith(rutaId, updateRutaDto, { new: true });
+      expect(mockRutaModel.findByIdAndUpdate).toHaveBeenCalledWith(rutaId, updateRutaDto, { returnDocument: 'after' });
     });
   });
 
@@ -376,7 +376,7 @@ describe('RutaService', () => {
         total_prestado: 3000,
         clientes: 10,
         clientes_activos: 5,
-      }, { new: true });
+      }, { returnDocument: 'after' });
     });
 
     it('should throw NotFoundException if ruta not found', async () => {

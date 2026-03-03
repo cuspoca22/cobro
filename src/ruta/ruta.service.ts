@@ -15,6 +15,8 @@ import { CajaService } from '../caja/caja.service';
 import { DateFnsAdapter } from '../common/wrappers/date-fns.adapter';
 import { Ruta } from './schema/ruta.schema';
 import { CajaEntity } from '../caja/entities/caja.entity';
+import { SubTipo, TipoMovimiento } from '../movimientoCaja/interfaces';
+import { RutaEntity } from './entities/ruta.entity';
 
 @Injectable()
 export class RutaService {
@@ -71,25 +73,83 @@ export class RutaService {
 
   }
 
-  async findOne(id: string): Promise<Ruta> {
-
+  async findOne(id: string): Promise<any> {
 
     const ruta = await this.rutaModel.findById(id)
       .populate("ultima_caja")
       .populate("caja_actual")
+      .lean();
 
     if (!ruta) {
       throw new NotFoundException(`No existe una ruta con el id ${id}`);
     }
 
-    return ruta;
+    const [total_clientes, clientes_activos] = await Promise.all([
+      this.clienteModel.countDocuments({ ruta: ruta._id }),
+      this.clienteModel.countDocuments({ ruta: ruta._id, status: true }),
+    ]);
+
+    const metrics = await this.creditoModel.aggregate([
+      { $match: { ruta: ruta._id, status: true } },
+      {
+        $lookup: {
+          from: 'movimientoCaja',
+          localField: '_id',
+          foreignField: 'credito',
+          as: 'allPayments',
+          pipeline: [
+            {
+              $match: {
+                tipoMovimiento: TipoMovimiento.INGRESO,
+                subTipo: SubTipo.PAGOCREDITO,
+              }
+            }
+          ]
+        },
+      },
+      {
+        $addFields: {
+          abonos: {
+            $reduce: {
+              input: "$allPayments",
+              initialValue: 0,
+              in: { $add: ["$$value", "$$this.monto"] }
+            }
+          }
+        },
+      },
+      {
+        $project: {
+          saldo: { $subtract: ["$total_pagar", "$abonos"] },
+          ganancia_credito: { $subtract: ["$total_pagar", "$valor_credito"] }
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          cartera: { $sum: "$saldo" },
+          ganancia_total: { $sum: "$ganancia_credito" }
+        }
+      }
+    ]);
+
+    const cartera = metrics.length > 0 ? metrics[0].cartera : 0;
+    const ganancia_total = metrics.length > 0 ? metrics[0].ganancia_total : 0;
+
+    return RutaEntity.fromObject({
+      ...ruta,
+      total_clientes,
+      clientes_activos,
+      cartera,
+      ganancia_total
+    });
 
   }
 
   async update(id: string, updateRutaDto: UpdateRutaDto) {
 
     try {
-      const rutaUpdate = await this.rutaModel.findByIdAndUpdate(id, updateRutaDto, { new: true });
+      const rutaUpdate = await this.rutaModel.findByIdAndUpdate(id, updateRutaDto, { returnDocument: 'after' });
       return rutaUpdate;
     } catch (error) {
       this.handleExceptions(error);
@@ -304,7 +364,7 @@ export class RutaService {
         total_prestado: totalPrestado,
         clientes,
         clientes_activos: clientesActivos,
-      }, { new: true });
+      }, { returnDocument: 'after' });
 
     } catch (error) {
 

@@ -11,6 +11,10 @@ export class RutaEntity {
    ultima_caja: string;
    caja_actual: string;
    currency: string;
+   total_clientes?: number;
+   clientes_activos?: number;
+   cartera?: number;
+   ganancia_total?: number;
    _id?: string;
 
    constructor(data?: Partial<RutaEntity>) {
@@ -38,6 +42,10 @@ export class RutaEntity {
          ultima_caja: object.ultima_caja,
          caja_actual: object.caja_actual,
          currency: object.currency,
+         total_clientes: object.total_clientes,
+         clientes_activos: object.clientes_activos,
+         cartera: object.cartera,
+         ganancia_total: object.ganancia_total,
       });
 
       return ruta;

@@ -178,7 +178,7 @@ export class EmpresaService {
 
     try {
 
-      await empresa.updateOne(updateEmpresaDto, { new: true });
+      await empresa.updateOne(updateEmpresaDto, { returnDocument: 'after' });
 
       return true;
 
