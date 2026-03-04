@@ -68,7 +68,7 @@ export class MovimientoCajaController {
     @Body() updateMovimientoCajaDto: UpdateMovimientoCajaDto,
     @Param('movimientoId', ParseMongoIdPipe) movimientoId: string
   ) {
-    return this.movimientoCajaService.updateMovimiento(movimientoId, updateMovimientoCajaDto);
+    return this.movimientoCajaService.updatePago(movimientoId, updateMovimientoCajaDto);
   }
 
 }
