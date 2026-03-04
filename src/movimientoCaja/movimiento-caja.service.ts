@@ -11,11 +11,14 @@ import { CreditoService } from "src/credito/credito.service";
 import { SubTipo, TipoMovimiento, ResumenOficinaResponse, GrupoMovimiento, MovimientoResumen } from "./interfaces";
 import { CreateCreditoDto } from "src/credito/dto";
 import { CajaMovimientoEntity } from "./entities/caja-movimiento.entity";
+import { TransactionHelper } from '../common/helpers';
 
 @Injectable()
 export class MovimientoCajaService {
 
   private logger = new Logger("MovimientoCajaService");
+
+  private transactionHelper: TransactionHelper;
 
   constructor(
     @InjectModel(MovimientoCaja.name)
@@ -30,14 +33,13 @@ export class MovimientoCajaService {
     private readonly dateFnsAdapter: DateFnsAdapter,
     private readonly creditoService: CreditoService,
     @InjectConnection() private readonly connection: Connection
-  ) { }
+  ) {
+    this.transactionHelper = new TransactionHelper(connection);
+  }
 
 
   async addPago(createPagoDto: CreateMovimientoCajaDto) {
-    const session = await this.connection.startSession();
-    session.startTransaction();
-
-    try {
+    return this.transactionHelper.withTransaction(async (session) => {
       const { rutaId, monto, creditoId, clienteId, ...rest } = createPagoDto;
 
       const ruta = await this.rutaModel.findById(rutaId).session(session);
@@ -51,20 +53,27 @@ export class MovimientoCajaService {
 
       const credito = await this.creditoService.getCreditoById(creditoId, rutaId, session);
       if (!credito) throw new NotFoundException(`Credito con el id ${creditoId} no existe`);
-      if (monto > credito.saldo) {
+
+      // Usar precisión de 2 decimales para validación
+      const saldoRedondeado = Math.round(credito.saldo * 100) / 100;
+      const montoRedondeado = Math.round(monto * 100) / 100;
+
+      if (montoRedondeado > saldoRedondeado) {
         throw new BadRequestException(
-          `El monto del pago (${monto}) excede el saldo pendiente del crédito (${credito.saldo}).`
+          `El monto del pago (${montoRedondeado}) excede el saldo pendiente del crédito (${saldoRedondeado}).`
         );
       }
 
-      // Verificar si ya existe un pago 
+      // Verificar si ya existe un pago hoy (manteniendo restricción de un pago por día)
       const pagoExistente = await this.cajaMovimientoModel.findOne({
         credito: credito.id,
         subTipo: SubTipo.PAGOCREDITO,
         fecha: { $gte: fecha }
       }).session(session);
 
-      if (pagoExistente) throw new BadRequestException(`Ya ingresaste este pago, por favor recarga la pagina`);
+      if (pagoExistente) {
+        throw new BadRequestException(`Ya ingresaste este pago, por favor recarga la pagina`);
+      }
 
       // crear el movimiento
       await this.cajaMovimientoModel.create([{
@@ -80,26 +89,13 @@ export class MovimientoCajaService {
       }], { session });
 
       // llamamos el handlePaymentMade del credito
-      const { ok, message } = await this.creditoService.handlePaymentMade(creditoId, rutaId, clienteId, session);
+      const result = await this.creditoService.handlePaymentMade(creditoId, rutaId, clienteId, session);
 
-
-      await session.commitTransaction();
       return {
-        ok,
-        message
+        ok: result.ok,
+        message: result.message
       };
-
-    } catch (error) {
-
-      await session.abortTransaction();
-      this.handleExceptions(error);
-
-    } finally {
-
-      await session.endSession();
-
-    }
-
+    }, 'MovimientoCajaService.addPago');
   }
 
   async addOficinaMovimiento(createMovimientoDto: CreateMovimientoCajaDto) {
@@ -151,7 +147,7 @@ export class MovimientoCajaService {
       const updateMovimiento = await this.cajaMovimientoModel.findByIdAndUpdate(
         movimientoId,
         { $set: updateMovimientoCajaDto },
-        { new: true, session }
+        { returnDocument: 'after', session }
       );
 
       if (!updateMovimiento) throw new NotFoundException(`Movimiento con el id ${movimientoId} no existe`);
@@ -186,12 +182,16 @@ export class MovimientoCajaService {
 
       const credito = await this.creditoService.getCreditoById(movimiento.credito.toString(), caja.ruta.toString(), session);
 
-      // Restauramos el saldo del credito, y el saldo de la caja
+      // Restauramos el saldo del credito (simulando que el pago anterior no existió)
       const saldoCreditoRestaurado = credito.saldo + movimiento.monto;
 
-      // volver a verificar si el monto es menor al saldo del credito 
-      if (updateMovimientoCajaDto.monto > saldoCreditoRestaurado) {
-        throw new BadRequestException(`El monto del pago (${updateMovimientoCajaDto.monto}) excede el saldo pendiente del crédito (${saldoCreditoRestaurado}).`);
+      // Usar precisión de 2 decimales para validación
+      const saldoRedondeado = Math.round(saldoCreditoRestaurado * 100) / 100;
+      const montoRedondeado = Math.round(updateMovimientoCajaDto.monto * 100) / 100;
+
+      // volver a verificar si el monto es menor al saldo del credito
+      if (montoRedondeado > saldoRedondeado) {
+        throw new BadRequestException(`El monto del pago (${montoRedondeado}) excede el saldo pendiente del crédito (${saldoRedondeado}).`);
       }
 
       movimiento.monto = updateMovimientoCajaDto.monto;
@@ -199,21 +199,25 @@ export class MovimientoCajaService {
 
       await caja.save({ session });
 
-      await this.creditoService.handlePaymentMade(movimiento.credito.toString(), caja.ruta.toString(), movimiento.cliente.toString(), session);
+      const result = await this.creditoService.handlePaymentMade(
+        movimiento.credito.toString(),
+        caja.ruta.toString(),
+        movimiento.cliente.toString(),
+        session
+      );
 
       await session.commitTransaction();
 
-      return true;
+      return {
+        success: true
+      };
 
     } catch (error) {
-
       await session.abortTransaction();
       this.handleExceptions(error);
 
     } finally {
-
       await session.endSession();
-
     }
   }
 

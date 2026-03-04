@@ -123,7 +123,7 @@ export class CreditoService {
       await this.clienteModel.findByIdAndUpdate(
         clienteId,
         { $set: { status: true } },
-        { new: true, session }
+        { returnDocument: 'after', session }
       );
 
       // Preparar y retornar el DTO fuera de la transacción para mayor eficiencia
@@ -205,7 +205,7 @@ export class CreditoService {
     const endOfToday = this.dateFnsAdapter.getEndOfTodayInTimeZone(ruta.timeZone);
 
     const pipeline = this.getCommonAggregationPipeline(
-      { _id: new mongoose.Types.ObjectId(creditId), status: true },
+      { _id: new mongoose.Types.ObjectId(creditId) },
       startOfToday,
       endOfToday
     );
@@ -230,6 +230,7 @@ export class CreditoService {
   }
 
   // Este método es invocado después de un pago para actualizar el estado persistente del crédito.
+  // LÓGICA ACTUALIZADA: Un cliente solo puede tener un crédito activo a la vez
   async handlePaymentMade(creditoId: string, rutaId: string, clienteId: string, session?: ClientSession) {
     const creditDetails = await this.getCreditoById(creditoId, rutaId, session);
     const cliente = await this.clienteModel.findById(clienteId).session(session)
@@ -237,45 +238,52 @@ export class CreditoService {
       throw new NotFoundException(`Cliente con ID ${clienteId} no encontrado.`);
     }
 
-    const saldoActualizado = creditDetails.saldo;
-    let updatedCreditStatus = creditDetails.status;
-    let updatedClientState = creditDetails.state;
-    let updatedCliente = cliente.status;
+    // Usar precisión de 2 decimales para comparaciones financieras
+    const saldoRedondeado = Math.round(creditDetails.saldo * 100) / 100;
+    const isCreditPaid = saldoRedondeado <= 0;
 
-    // Lógica para actualizar `status` (boolean)
-    if (saldoActualizado <= 0 && updatedCreditStatus === true) {
-      updatedCreditStatus = false;
-      updatedCliente = false; // Marcar como inactivo (pagado)
-      updatedClientState = 'BUENO'; // Si se salda, el cliente vuelve a ser 'BUENO'
-    } else {
-      updatedCliente = true;
-      updatedCreditStatus = true;
+    // LÓGICA SIMPLIFICADA: Un cliente solo puede tener un crédito activo
+    // - Si el crédito está pagado: cliente inactivo (false)
+    // - Si el crédito NO está pagado: cliente activo (true)
+    const updatedCreditStatus = !isCreditPaid;
+    const updatedClientState = isCreditPaid ? 'BUENO' : creditDetails.state;
+    const updatedClienteStatus = !isCreditPaid; // Cliente activo solo si crédito NO pagado
+
+    try {
+      await this.creditoModel.updateOne(
+        { _id: creditoId },
+        {
+          $set: {
+            status: updatedCreditStatus,
+            state: updatedClientState,
+            ultimo_pago: creditDetails.ultimo_pago
+          }
+        },
+        { session }
+      );
+    } catch (error) {
+      throw error;
     }
 
-    await this.creditoModel.updateOne(
-      { _id: creditoId },
-      {
-        $set: {
-          status: updatedCreditStatus,
-          state: updatedClientState,
-          ultimo_pago: creditDetails.ultimo_pago
-        }
-      },
-      { session }
-    );
-
-    await this.clienteModel.updateOne(
-      { _id: clienteId },
-      { $set: { status: updatedCliente } },
-      { session }
-    );
+    try {
+      await this.clienteModel.updateOne(
+        { _id: clienteId },
+        { $set: { status: updatedClienteStatus } },
+        { session }
+      );
+    } catch (error) {
+      throw error;
+    }
 
     let txtMessage: string = `
-      Fecha: ${new Date(creditDetails.fecha_inicio).toLocaleDateString()}
-      Abonos: $${creditDetails.abonos}.00 
-      Saldo: $${creditDetails.saldo}.00 
-      Atrasos: ${creditDetails.daysOverdue} 
-      Cuotas Pendientes: ${(creditDetails.saldo / creditDetails.valor_cuota).toFixed(2)}  
+      Cliente: ${cliente.nombre}
+      Fecha de inicio: ${new Date(creditDetails.fecha_inicio).toLocaleDateString()}
+      Abonos: $${creditDetails.abonos}
+      Saldo: $${creditDetails.saldo}
+      Cuotas Pendientes: ${(creditDetails.saldo / creditDetails.valor_cuota).toFixed(2)}
+      =====================
+      Fecha de pago: ${new Date(creditDetails.paymentsToday.createdAt).toLocaleDateString()}
+      cuota Abonada: $${creditDetails.paymentsToday.monto}
     `
     return {
       ok: true,

@@ -36,7 +36,11 @@ export class CajaService {
     private readonly currencyService: CurrencyService,
   ) { }
 
-  // getUltimaCaja devuelve un objeto que luce asi { hayUltimaCaja: boolean, ultimaCaja: Caja | null }
+  /**
+   * Obtiene la última caja registrada para una ruta específica.
+   * @param rutaId ID de la ruta.
+   * @param session Sesión de Mongoose para transacciones.
+   */
   async getUltimaCaja(rutaId: string, session: ClientSession) {
 
     const ultimaCaja = await this.cajaModel
@@ -93,6 +97,9 @@ export class CajaService {
     }
   }
 
+  /**
+   * Calcula el número de clientes pendientes y renovaciones para una ruta y fecha dadas.
+   */
   async getClientesPendientesYRenovados(rutaId: string, startOfDayUtc: Date, session?: ClientSession, endOfDayUtc?: Date) {
     const rutaObjectId = new mongoose.Types.ObjectId(rutaId);
 
@@ -218,12 +225,6 @@ export class CajaService {
     const pipeline = this.getResumenPipeline(rutaId, startOfDayUtc, endOfDayUtc);
     const result = await this.cajaMovimientoModel.aggregate(pipeline).session(session || null);
 
-    if (result.length === 0) {
-      this.logger.log(`No se encontraron movimientos para la ruta ${rutaId} desde ${startOfDayUtc.toISOString()}`);
-    } else {
-      this.logger.log(`Movimientos encontrados: ${JSON.stringify(result[0])}`);
-    }
-
     const {
       cobro = 0,
       prestamos = 0,
@@ -249,11 +250,16 @@ export class CajaService {
     return CajaEntity.fromObject(caja);
   }
 
+  /**
+   * Obtiene la caja actual (resumen de movimientos) para una ruta.
+   */
   async currentCaja(rutaId: string) {
     return await this.getMovimientosResumen(rutaId);
   }
 
-  // Esta busqueda es para el historial de cajas del lado del admin
+  /**
+   * Busca cajas históricas para una ruta en una fecha específica (uso de administración).
+   */
   async findAll(rutaId: string, fecha: string) {
     const ruta = await this.rutaModel.findById(rutaId);
     if (!ruta) throw new NotFoundException(`Ruta con el id ${rutaId} no existe`);
@@ -281,6 +287,9 @@ export class CajaService {
     return caja[0];
   }
 
+  /**
+   * Manejador centralizado de excepciones para el servicio.
+   */
   private handleExceptions(error: any) {
     if (error.code === 11000) {
       throw new BadRequestException({ code: 11000, message: "Ya existe esta Caja" });
@@ -290,10 +299,13 @@ export class CajaService {
       throw error;
     }
 
-    this.logger.error(error);
-    throw new InternalServerErrorException("Por favor revisa los logs");
+    this.logger.error(`Error no controlado en CajaService: ${error.message}`, error.stack);
+    throw new InternalServerErrorException("Error interno en el servidor, por favor revise los logs");
   }
 
+  /**
+   * Genera el pipeline de agregación para el resumen de movimientos.
+   */
   private getResumenPipeline(rutaId: string, startOfDayUtc: Date, endOfDayUtc: Date): PipelineStage[] {
     return [
       {
