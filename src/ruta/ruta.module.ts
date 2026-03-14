@@ -12,6 +12,8 @@ import { Caja, CajaSchema } from '../caja/schemas/caja.schema';
 import { MessageModule } from 'src/message/message.module';
 import { CajaModule } from '../caja/caja.module';
 import { DateFnsAdapter } from '../common/wrappers/date-fns.adapter';
+import { User, UserSchema } from 'src/auth/schemas/user.schema';
+import { MovimientoCaja, MovimientoCajaSchema } from 'src/movimientoCaja/schemas/caja-movimiento.schemas';
 
 @Module({
   imports: [
@@ -34,6 +36,14 @@ import { DateFnsAdapter } from '../common/wrappers/date-fns.adapter';
       {
         name: Caja.name,
         schema: CajaSchema
+      },
+      {
+        name: User.name,
+        schema: UserSchema
+      },
+      {
+        name: MovimientoCaja.name,
+        schema: MovimientoCajaSchema
       }
     ]),
     MessageModule,

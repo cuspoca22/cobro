@@ -23,7 +23,7 @@ import { UserEntity } from 'src/auth/entities/user.entity';
 @Auth()
 @Controller('ruta')
 export class RutaController {
-  constructor(private readonly rutaService: RutaService) {}
+  constructor(private readonly rutaService: RutaService) { }
 
   @Auth(ValidRoles.admin, ValidRoles.superAdmin)
   @Post()
@@ -51,7 +51,7 @@ export class RutaController {
 
   @Patch(':id')
   async update(
-    @Param('id', ParseMongoIdPipe) id: string, 
+    @Param('id', ParseMongoIdPipe) id: string,
     @Body() updateRutaDto: UpdateRutaDto
   ) {
     return this.rutaService.update(id, updateRutaDto);
@@ -60,9 +60,8 @@ export class RutaController {
   @Delete(":id")
   async remove(
     @Param("id", ParseMongoIdPipe) id: string,
-    @Query() globalParams: GlobalParams
   ) {
-    return this.rutaService.delete(id, globalParams);
+    return this.rutaService.delete(id);
   }
 
   @Patch("open/:id")

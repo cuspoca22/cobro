@@ -14,6 +14,8 @@ import { MessageGateway } from 'src/message/message.gateway';
 import { CajaService } from '../caja/caja.service';
 import { DateFnsAdapter } from '../common/wrappers/date-fns.adapter';
 import { Ruta } from './schema/ruta.schema';
+import { User } from '../auth/schemas/user.schema';
+import { MovimientoCaja } from '../movimientoCaja/schemas/caja-movimiento.schemas';
 import { CajaEntity } from '../caja/entities/caja.entity';
 import { SubTipo, TipoMovimiento } from '../movimientoCaja/interfaces';
 import { RutaEntity } from './entities/ruta.entity';
@@ -37,6 +39,12 @@ export class RutaService {
 
     @InjectModel(Caja.name)
     private readonly cajaModel: Model<Caja>,
+
+    @InjectModel(User.name)
+    private readonly userModel: Model<User>,
+
+    @InjectModel(MovimientoCaja.name)
+    private readonly cajaMovimientoModel: Model<MovimientoCaja>,
 
     @Inject(forwardRef(() => AuthService))
     private readonly authService: AuthService,
@@ -157,16 +165,52 @@ export class RutaService {
 
   }
 
-  async delete(id: string, globalParams: GlobalParams): Promise<boolean> {
-    const { userId } = globalParams;
-    const user = await this.authService.findOne(userId);
+  async delete(id: string): Promise<boolean> {
+    const session = await this.connection.startSession();
+    session.startTransaction();
 
-    // await this.rutaModel.findByIdAndDelete(id);
+    try {
+      const ruta = await this.rutaModel.findById(id).session(session);
+      if (!ruta) {
+        throw new NotFoundException(`La ruta con el id ${id} no existe`);
+      }
 
-    // user.rutas = user.rutas.filter(ruta => ruta._id !== id);
-    // await user.save();
+      const user = await this.userModel.findOne({ ruta: id }).session(session);
 
-    return true;
+      this.logger.log(`Iniciando eliminación de la ruta ${id} y sus dependencias...`);
+
+      // 1. Eliminar Movimientos de Caja relacionados a la ruta
+      await this.cajaMovimientoModel.deleteMany({ ruta: id }).session(session);
+
+      // 2. Eliminar Créditos relacionados a la ruta
+      await this.creditoModel.deleteMany({ ruta: id }).session(session);
+
+      // 3. Eliminar Clientes relacionados a la ruta
+      await this.clienteModel.deleteMany({ ruta: id }).session(session);
+
+      // 4. Eliminar Cajas relacionadas a la ruta
+      await this.cajaModel.deleteMany({ ruta: id }).session(session);
+
+      // 5. Remover la ruta del perfil del usuario si existe
+      if (user) {
+        this.logger.log(`Limpiando referencia de ruta en el usuario ${user._id}`);
+        await this.userModel.findByIdAndUpdate(user._id, { $unset: { ruta: 1 } }, { session });
+      }
+
+      // 6. Eliminar la Ruta
+      await this.rutaModel.findByIdAndDelete(id).session(session);
+
+      await session.commitTransaction();
+      this.logger.log(`Ruta ${id} eliminada exitosamente junto con todos sus datos relacionados.`);
+
+      return true;
+
+    } catch (error) {
+      await session.abortTransaction();
+      this.handleExceptions(error);
+    } finally {
+      session.endSession();
+    }
   }
 
   async closeRuta(rutaId: string): Promise<boolean> {
