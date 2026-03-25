@@ -1,0 +1,447 @@
+openapi: 3.0.0
+info:
+  title: Peticiones Ubicación API
+  description: API para gestión de solicitudes de cambio de ubicación de clientes
+  version: 1.0.0
+  contact:
+    name: PayFlow API Team
+    email: desarrollo@payflow.com
+
+servers:
+  - url: /api
+    description: API Base Path
+
+tags:
+  - name: Peticiones Ubicación
+    description: Endpoints para gestionar solicitudes de cambio de ubicación
+
+paths:
+  /peticiones-ubicacion:
+    post:
+      tags:
+        - Peticiones Ubicación
+      summary: Crear una nueva solicitud de cambio de ubicación
+      description: |
+        Crea una nueva solicitud de cambio de ubicación para un cliente.
+        Requiere autenticación y roles permitidos: superAdmin, admin, cobrador, supervisor.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePeticionesUbicacionDto'
+      responses:
+        '201':
+          description: Solicitud creada exitosamente
+          content:
+            application/json:
+              schema:
+                type: boolean
+                example: true
+        '400':
+          description: |
+            - El cliente ya tiene una solicitud pendiente
+            - Coordenadas inválidas
+            - Datos de entrada inválidos
+        '401':
+          description: No autenticado
+        '403':
+          description: Rol no autorizado
+        '500':
+          description: Error interno del servidor
+
+    get:
+      tags:
+        - Peticiones Ubicación
+      summary: Obtener listado de solicitudes de ubicación
+      description: |
+        Retorna un listado de solicitudes de cambio de ubicación con filtros opcionales.
+        Requiere autenticación.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: estado
+          in: query
+          description: Estado de la solicitud (pendiente, aceptada, rechazada)
+          schema:
+            type: string
+            enum: [pendiente, aceptada, rechazada]
+        - name: id_cliente
+          in: query
+          description: ID del cliente (MongoDB ObjectId)
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{24}$'
+        - name: id_ruta
+          in: query
+          description: ID de la ruta (MongoDB ObjectId)
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{24}$'
+        - name: id_empresa
+          in: query
+          description: ID de la empresa (MongoDB ObjectId)
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{24}$'
+        - name: fecha_desde
+          in: query
+          description: Fecha desde (formato ISO 8601)
+          schema:
+            type: string
+            format: date-time
+        - name: fecha_hasta
+          in: query
+          description: Fecha hasta (formato ISO 8601)
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: Lista de solicitudes de ubicación
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PeticionesUbicacionEntity'
+        '401':
+          description: No autenticado
+        '500':
+          description: Error interno del servidor
+
+  /peticiones-ubicacion/{id}:
+    get:
+      tags:
+        - Peticiones Ubicación
+      summary: Obtener una solicitud por ID
+      description: |
+        Retorna los detalles de una solicitud de cambio de ubicación específica.
+        Requiere autenticación.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: ID de la solicitud (MongoDB ObjectId)
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{24}$'
+      responses:
+        '200':
+          description: Detalles de la solicitud
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PeticionesUbicacionEntity'
+        '400':
+          description: ID inválido
+        '404':
+          description: Solicitud no encontrada
+        '401':
+          description: No autenticado
+        '500':
+          description: Error interno del servidor
+
+    patch:
+      tags:
+        - Peticiones Ubicación
+      summary: Actualizar una solicitud de ubicación
+      description: |
+        Actualiza el estado o detalles de una solicitud de cambio de ubicación.
+        Solo permite transiciones: 'pendiente' → 'aceptada' o 'rechazada'.
+        Requiere autenticación y roles: superAdmin, admin, supervisor.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: ID de la solicitud (MongoDB ObjectId)
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{24}$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePeticionesUbicacionDto'
+      responses:
+        '200':
+          description: Solicitud actualizada exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PeticionesUbicacionEntity'
+        '400':
+          description: |
+            - ID inválido
+            - Transición de estado no permitida
+            - Coordenadas inválidas
+        '404':
+          description: Solicitud no encontrada
+        '401':
+          description: No autenticado
+        '403':
+          description: Rol no autorizado
+        '500':
+          description: Error interno del servidor
+
+    delete:
+      tags:
+        - Peticiones Ubicación
+      summary: Eliminar una solicitud de ubicación
+      description: |
+        Elimina permanentemente una solicitud de cambio de ubicación.
+        Requiere autenticación y roles: superAdmin, admin.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: ID de la solicitud (MongoDB ObjectId)
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{24}$'
+      responses:
+        '204':
+          description: Solicitud eliminada exitosamente
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Solicitud de ubicación 507f1f77bcf86cd799439011 eliminada correctamente"
+        '400':
+          description: ID inválido
+        '404':
+          description: Solicitud no encontrada
+        '401':
+          description: No autenticado
+        '403':
+          description: Rol no autorizado
+        '500':
+          description: Error interno del servidor
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    CreatePeticionesUbicacionDto:
+      type: object
+      required:
+        - new_ubicacion
+        - id_cliente
+      properties:
+        old_ubicacion:
+          type: array
+          description: Coordenadas antiguas [longitud, latitud]
+          items:
+            type: number
+            format: double
+          minItems: 2
+          maxItems: 2
+          example: [-90.5123, 14.6349]
+        new_ubicacion:
+          type: array
+          description: Coordenadas nuevas [longitud, latitud]
+          items:
+            type: number
+            format: double
+          minItems: 2
+          maxItems: 2
+          example: [-90.5125, 14.6351]
+        id_cliente:
+          type: string
+          description: ID del cliente (MongoDB ObjectId)
+          pattern: '^[0-9a-fA-F]{24}$'
+          example: "507f1f77bcf86cd799439011"
+        id_usuario:
+          type: string
+          description: ID del usuario que crea la solicitud (opcional, se toma del token)
+          pattern: '^[0-9a-fA-F]{24}$'
+        id_ruta:
+          type: string
+          description: ID de la ruta (opcional, se toma del usuario si es cobrador)
+          pattern: '^[0-9a-fA-F]{24}$'
+        estado:
+          type: string
+          description: Estado inicial de la solicitud
+          enum: [pendiente, aceptada, rechazada]
+          default: pendiente
+
+    UpdatePeticionesUbicacionDto:
+      type: object
+      properties:
+        old_ubicacion:
+          type: array
+          description: Coordenadas antiguas [longitud, latitud]
+          items:
+            type: number
+            format: double
+          minItems: 2
+          maxItems: 2
+        new_ubicacion:
+          type: array
+          description: Coordenadas nuevas [longitud, latitud]
+          items:
+            type: number
+            format: double
+          minItems: 2
+          maxItems: 2
+        id_cliente:
+          type: string
+          description: ID del cliente (MongoDB ObjectId)
+          pattern: '^[0-9a-fA-F]{24}$'
+        id_usuario:
+          type: string
+          description: ID del usuario
+          pattern: '^[0-9a-fA-F]{24}$'
+        id_ruta:
+          type: string
+          description: ID de la ruta
+          pattern: '^[0-9a-fA-F]{24}$'
+        estado:
+          type: string
+          description: Nuevo estado de la solicitud
+          enum: [pendiente, aceptada, rechazada]
+        esAprobado:
+          type: boolean
+          description: Indica si la solicitud fue aprobada (actualiza ubicación del cliente)
+          default: false
+
+    GetPeticionesUbicacionDto:
+      type: object
+      properties:
+        estado:
+          type: string
+          enum: [pendiente, aceptada, rechazada]
+        id_cliente:
+          type: string
+          pattern: '^[0-9a-fA-F]{24}$'
+        id_ruta:
+          type: string
+          pattern: '^[0-9a-fA-F]{24}$'
+        id_empresa:
+          type: string
+          pattern: '^[0-9a-fA-F]{24}$'
+        fecha_desde:
+          type: string
+          format: date-time
+        fecha_hasta:
+          type: string
+          format: date-time
+
+    PeticionesUbicacionEntity:
+      type: object
+      properties:
+        id:
+          type: string
+          description: ID de la solicitud
+          example: "507f1f77bcf86cd799439011"
+        old_ubicacion:
+          type: array
+          description: Coordenadas antiguas [longitud, latitud]
+          items:
+            type: number
+          example: [-90.5123, 14.6349]
+        new_ubicacion:
+          type: array
+          description: Coordenadas nuevas [longitud, latitud]
+          items:
+            type: number
+          example: [-90.5125, 14.6351]
+        estado:
+          type: string
+          enum: [pendiente, aceptada, rechazada]
+          example: pendiente
+        fecha_solicitud:
+          type: string
+          format: date-time
+          example: "2024-01-15T10:30:00.000Z"
+        fecha_actualizacion:
+          type: string
+          format: date-time
+          example: "2024-01-15T10:30:00.000Z"
+        cobrador:
+          type: object
+          properties:
+            id:
+              type: string
+              example: "507f1f77bcf86cd799439012"
+            nombre:
+              type: string
+              example: "Juan Pérez"
+        cliente:
+          type: object
+          properties:
+            id:
+              type: string
+              example: "507f1f77bcf86cd799439013"
+            nombre:
+              type: string
+              example: "María López"
+            alias:
+              type: string
+              example: "María"
+        ruta:
+          type: object
+          properties:
+            id:
+              type: string
+              example: "507f1f77bcf86cd799439014"
+            nombre:
+              type: string
+              example: "Ruta Centro"
+        empresa:
+          type: object
+          properties:
+            id:
+              type: string
+              example: "507f1f77bcf86cd799439015"
+            nombre:
+              type: string
+              example: "Empresa XYZ"
+
+    ErrorResponse:
+      type: object
+      properties:
+        statusCode:
+          type: integer
+          example: 400
+        message:
+          type: string
+          example: "El cliente ya tiene una solicitud de cambio de ubicación pendiente"
+        error:
+          type: string
+          example: "Bad Request"
+        timestamp:
+          type: string
+          format: date-time
+        path:
+          type: string
+          example: "/api/peticiones-ubicacion"
+
+# Información adicional
+x-changelog:
+  version: 1.0.0
+  date: 2024-01-15
+  changes:
+    - added: Endpoint POST /peticiones-ubicacion
+    - added: Endpoint GET /peticiones-ubicacion con filtros
+    - added: Endpoint GET /peticiones-ubicacion/{id}
+    - added: Endpoint PATCH /peticiones-ubicacion/{id}
+    - added: Endpoint DELETE /peticiones-ubicacion/{id}
+    - added: Validación de coordenadas y transiciones de estado
+    - added: Integración con autenticación JWT y control de roles
