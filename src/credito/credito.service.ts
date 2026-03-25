@@ -57,7 +57,7 @@ export class CreditoService {
       let calculatedValorCuota: number;
 
       // Obtener la ruta dentro de la transacción
-      const ruta = await this.rutaModel.findById(rutaId).session(session).lean();
+      const ruta = await this.rutaModel.findById(rutaId, null, { session }).lean();
       if (!ruta) {
         throw new NotFoundException(`Ruta con el id ${rutaId} no existe`);
       }
@@ -233,14 +233,14 @@ export class CreditoService {
   // LÓGICA ACTUALIZADA: Un cliente solo puede tener un crédito activo a la vez
   async handlePaymentMade(creditoId: string, rutaId: string, clienteId: string, session?: ClientSession) {
     const creditDetails = await this.getCreditoById(creditoId, rutaId, session);
-    const cliente = await this.clienteModel.findById(clienteId).session(session)
+    const cliente = await this.clienteModel.findById(clienteId, null, { session })
     if (!cliente) {
       throw new NotFoundException(`Cliente con ID ${clienteId} no encontrado.`);
     }
 
-    // Usar precisión de 2 decimales para comparaciones financieras
-    const saldoRedondeado = Math.round(creditDetails.saldo * 100) / 100;
-    const isCreditPaid = saldoRedondeado <= 0;
+    // Determinar si el crédito está pagado con tolerancia para errores de redondeo
+    const EPSILON = 0.005; // medio centavo
+    const isCreditPaid = Math.abs(creditDetails.saldo) < EPSILON;
 
     // LÓGICA SIMPLIFICADA: Un cliente solo puede tener un crédito activo
     // - Si el crédito está pagado: cliente inactivo (false)
@@ -262,6 +262,7 @@ export class CreditoService {
         { session }
       );
     } catch (error) {
+      this.logger.error(`Error actualizando crédito ${creditoId}: ${error.message}`, error.stack);
       throw error;
     }
 
@@ -272,8 +273,17 @@ export class CreditoService {
         { session }
       );
     } catch (error) {
+      this.logger.error(`Error actualizando cliente ${clienteId}: ${error.message}`, error.stack);
       throw error;
     }
+
+    // Construir mensaje informativo, manejando el caso donde paymentsToday es null
+    const fechaPago = creditDetails.paymentsToday
+      ? new Date(creditDetails.paymentsToday.createdAt).toLocaleDateString()
+      : 'No registrada';
+    const montoAbonado = creditDetails.paymentsToday
+      ? `$${creditDetails.paymentsToday.monto}`
+      : '$0.00';
 
     let txtMessage: string = `
       Cliente: ${cliente.nombre}
@@ -282,12 +292,14 @@ export class CreditoService {
       Saldo: $${creditDetails.saldo}
       Cuotas Pendientes: ${(creditDetails.saldo / creditDetails.valor_cuota).toFixed(2)}
       =====================
-      Fecha de pago: ${new Date(creditDetails.paymentsToday.createdAt).toLocaleDateString()}
-      cuota Abonada: $${creditDetails.paymentsToday.monto}
+      Fecha de pago: ${fechaPago}
+      cuota Abonada: ${montoAbonado}
     `
     return {
       ok: true,
-      message: txtMessage
+      message: txtMessage,
+      creditPaid: isCreditPaid,
+      clientStatus: updatedClienteStatus
     }
   }
 

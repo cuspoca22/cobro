@@ -46,9 +46,10 @@ export class MovimientoCajaController {
 
   @Patch('update-pago/:movimentoId')
   async updatePago(
+    @Body() updateMovimientoCajaDto: UpdateMovimientoCajaDto,
     @Param('movimentoId', ParseMongoIdPipe) movimentoId: string,
   ) {
-    return;
+    return await this.movimientoCajaService.updatePago(movimentoId, updateMovimientoCajaDto);
   }
 
   @Post('oficina')
