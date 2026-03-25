@@ -18,6 +18,7 @@ import { MessageModule } from './message/message.module';
 import { MovimientoCajaModule } from './movimientoCaja/movimiento-caja.module';
 import { CurrencyModule } from './currency/currency.module';
 import { RenovacionModule } from './renovacion/renovacion.module';
+import { PeticionesUbicacionModule } from './peticiones-ubicacion/peticiones-ubicacion.module';
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { RenovacionModule } from './renovacion/renovacion.module';
     LogAuthModule,
     MessageModule,
     RenovacionModule,
+    PeticionesUbicacionModule,
   ],
   controllers: [],
   providers: [],
