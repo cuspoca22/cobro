@@ -143,9 +143,8 @@ export class PeticionesUbicacionController {
   async update(
     @Param('id', ParseMongoIdPipe) id: string,
     @Body() updatePeticionesUbicacionDto: UpdatePeticionesUbicacionDto,
-    @GetUser() user: UserEntity,
   ): Promise<PeticionesUbicacionEntity> {
-    return this.peticionesUbicacionService.update(id, updatePeticionesUbicacionDto, user);
+    return this.peticionesUbicacionService.update(id, updatePeticionesUbicacionDto);
   }
 
   @Delete(':id')
