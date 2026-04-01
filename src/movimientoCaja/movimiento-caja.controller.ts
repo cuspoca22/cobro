@@ -5,6 +5,7 @@ import { MovimientoCajaService } from "./movimiento-caja.service";
 import { CreateMovimientoCajaDto, UpdateMovimientoCajaDto, ResumenOficinaQueryDto } from "./dto";
 import { ParseMongoIdPipe } from '../common/pipes/parse-mongo-id.pipe';
 import { CreateCreditoDto } from "src/credito/dto";
+import { RutaAbierta } from "src/common/decorators";
 
 @Auth()
 @Controller("movimiento-caja")
@@ -30,6 +31,7 @@ export class MovimientoCajaController {
     return await this.movimientoCajaService.getResumenDiario(rutaId, fecha);
   }
 
+  @RutaAbierta()
   @Post('add')
   async createPago(
     @Body() createMovimientoCajaDto: CreateMovimientoCajaDto
@@ -37,6 +39,7 @@ export class MovimientoCajaController {
     return this.movimientoCajaService.addPago(createMovimientoCajaDto);
   }
 
+  @RutaAbierta()
   @Post('renovacion')
   addRenovacion(
     @Body() createCreditoDto: CreateCreditoDto
@@ -44,6 +47,7 @@ export class MovimientoCajaController {
     return this.movimientoCajaService.addRenovacion(createCreditoDto);
   }
 
+  @RutaAbierta()
   @Patch('update-pago/:movimentoId')
   async updatePago(
     @Body() updateMovimientoCajaDto: UpdateMovimientoCajaDto,
@@ -52,6 +56,7 @@ export class MovimientoCajaController {
     return await this.movimientoCajaService.updatePago(movimentoId, updateMovimientoCajaDto);
   }
 
+  @RutaAbierta()
   @Post('oficina')
   async createGasto(
     @Body() createMovimientoDto: CreateMovimientoCajaDto,

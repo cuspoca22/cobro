@@ -1,4 +1,4 @@
-import { Module } from "@nestjs/common";
+import { forwardRef, Module } from "@nestjs/common";
 import { MongooseModule } from "@nestjs/mongoose";
 
 import { MovimientoCajaService } from "./movimiento-caja.service";
@@ -9,11 +9,12 @@ import { Caja, CajaSchema } from '../caja/schemas/caja.schema';
 import { Ruta, RutaSchema } from '../ruta/schema/ruta.schema';
 import { CreditoModule } from '../credito/credito.module';
 import { DateFnsAdapter } from '../common/wrappers/date-fns.adapter';
-import { AuthModule } from '../auth/auth.module';
+import { RutaAbiertaInterceptor } from "src/common/interceptors";
+import { RutaModule } from "src/ruta/ruta.module";
 
 @Module({
   imports: [
-    AuthModule,
+    forwardRef(() => RutaModule),
     ConfigModule,
     CreditoModule,
     MongooseModule.forFeature([
@@ -32,7 +33,7 @@ import { AuthModule } from '../auth/auth.module';
     ]),
   ],
   controllers: [MovimientoCajaController],
-  providers: [MovimientoCajaService, DateFnsAdapter],
+  providers: [MovimientoCajaService, DateFnsAdapter, RutaAbiertaInterceptor],
   exports: [MovimientoCajaService],
 })
 export class MovimientoCajaModule { }
