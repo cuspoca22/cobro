@@ -60,6 +60,12 @@ export class User extends Document {
    })
    empresa: Types.ObjectId;
 
+   @Prop({
+      type: Boolean,
+      default: false
+   })
+   puedeActualizarUbicacion: boolean;
+
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

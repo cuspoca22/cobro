@@ -8,6 +8,7 @@ export class UserEntity {
    empresa: string;
    estado: boolean;
    ruta?: string;
+   puedeActualizarUbicacion?: boolean;
 
    constructor(data?: Partial<UserEntity>) {
       if (data) {
@@ -30,7 +31,8 @@ export class UserEntity {
          rol: object.rol,
          empresa: object.empresa,
          estado: object.estado,
-         ruta: object.ruta
+         ruta: object.ruta,
+         puedeActualizarUbicacion: object.puedeActualizarUbicacion
       });
 
    }

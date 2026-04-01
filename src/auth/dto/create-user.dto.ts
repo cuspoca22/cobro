@@ -26,7 +26,7 @@ export class CreateUserDto {
    @IsOptional()
    ruta?: string;
 
-   @IsMongoId({each: true})
+   @IsMongoId({ each: true })
    @IsArray()
    @IsOptional()
    rutas?: string[];
@@ -37,5 +37,5 @@ export class CreateUserDto {
 
    @IsBoolean()
    @IsOptional()
-   close_ruta: boolean;
+   puedeActualizarUbicacion?: boolean;
 }
