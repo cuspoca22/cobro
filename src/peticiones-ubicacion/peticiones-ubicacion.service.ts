@@ -35,7 +35,6 @@ export class PeticionesUbicacionService {
       const { old_ubicacion, new_ubicacion, id_cliente, estado } = createPeticionesUbicacionDto;
 
       // Validate that coordinates are valid [longitude, latitude]
-      this.validateCoordinates(old_ubicacion);
       this.validateCoordinates(new_ubicacion);
 
       // Check if a pending request already exists for this client
@@ -60,6 +59,7 @@ export class PeticionesUbicacionService {
 
       return true;
     } catch (error) {
+      console.log(error)
       this.handleExceptions(error);
     }
   }
@@ -157,7 +157,6 @@ export class PeticionesUbicacionService {
   async update(
     id: string,
     updatePeticionesUbicacionDto: UpdatePeticionesUbicacionDto,
-    user: UserEntity,
   ): Promise<PeticionesUbicacionEntity> {
     try {
       if (!Types.ObjectId.isValid(id)) {
@@ -177,25 +176,19 @@ export class PeticionesUbicacionService {
         this.validateCoordinates(updatePeticionesUbicacionDto.new_ubicacion);
       }
 
-      // If updating estado, validate state transition
-      if (updatePeticionesUbicacionDto.estado) {
-        this.validateStateTransition(existing.estado, updatePeticionesUbicacionDto.estado);
-      }
-
-      // Update fields
       const updatedData = {
         ...updatePeticionesUbicacionDto,
         fecha_actualizacion: new Date(),
       };
 
+      // If updating estado, validate state transition
       if (updatePeticionesUbicacionDto.esAprobado) {
         await this.clienteSvc.update(existing.id_cliente.toString(), {
           ubication: existing.new_ubicacion,
         });
-      }
 
-      // If userId is provided (e.g., admin updating), we could track who made the update
-      // For now, we keep original id_usuario.
+        updatedData.estado = 'aceptada';
+      }
 
       const updated = await this.peticionesUbicacionModel
         .findByIdAndUpdate(id, updatedData, { returnDocument: 'after' })
@@ -250,26 +243,6 @@ export class PeticionesUbicacionService {
     }
     if (coords[1] < -90 || coords[1] > 90) {
       throw new BadRequestException('Latitud debe estar entre -90 y 90');
-    }
-  }
-
-  /**
-   * Validates state transition for a location change request.
-   * @param current Current state.
-   * @param next Desired next state.
-   */
-  private validateStateTransition(current: string, next: string): void {
-    const allowedTransitions = {
-      pendiente: ['aceptada', 'rechazada'],
-      aceptada: [], // Once accepted, cannot change
-      rechazada: [], // Once rejected, cannot change
-    };
-
-    if (!allowedTransitions[current]?.includes(next)) {
-      throw new BadRequestException(
-        `Transición de estado no permitida: ${current} → ${next}. ` +
-        `Solo se permite: ${allowedTransitions[current]?.join(', ') || 'ninguna'}`,
-      );
     }
   }
 

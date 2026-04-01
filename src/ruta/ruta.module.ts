@@ -18,7 +18,7 @@ import { MovimientoCaja, MovimientoCajaSchema } from 'src/movimientoCaja/schemas
 @Module({
   imports: [
     ConfigModule,
-    CajaModule,
+    forwardRef(() => CajaModule),
     forwardRef(() => AuthModule),
     MongooseModule.forFeature([
       {
