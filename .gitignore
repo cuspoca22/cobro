@@ -52,3 +52,5 @@ migracion_dueDate.js
 !.vscode/extensions.json
 
 dist.rar
+# Documentation
+docs/
