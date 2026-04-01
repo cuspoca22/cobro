@@ -4,12 +4,14 @@ import { CreateClienteDto } from './dto/create-cliente.dto';
 import { UpdateClienteDto } from './dto/update-cliente.dto';
 import { Auth } from '../auth/decorators/auth.decorator';
 import { ParseMongoIdPipe } from 'src/common/pipes/parse-mongo-id.pipe';
+import { RutaAbierta } from 'src/common/decorators';
 
 @Auth()
 @Controller('cliente')
 export class ClienteController {
   constructor(private readonly clienteService: ClienteService) { }
 
+  @RutaAbierta()
   @Post()
   async create(
     @Body() createClienteDto: CreateClienteDto

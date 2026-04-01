@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { ClienteService } from './cliente.service';
 import { ClienteController } from './cliente.controller';
 import { ConfigModule } from '@nestjs/config';
@@ -7,10 +7,13 @@ import { Cliente, ClienteSchema } from './schema/cliente.schema';
 import { AuthModule } from 'src/auth/auth.module';
 import { Credito, CreditoSchema } from 'src/credito/schemas/credito.schema';
 import { CreditoModule } from 'src/credito/credito.module';
+import { RutaAbiertaInterceptor } from 'src/common/interceptors';
+import { RutaModule } from 'src/ruta/ruta.module';
 
 @Module({
   imports: [
     ConfigModule,
+    forwardRef(() => RutaModule),
     AuthModule,
     CreditoModule,
     MongooseModule.forFeature([
@@ -25,7 +28,7 @@ import { CreditoModule } from 'src/credito/credito.module';
     ])
   ],
   controllers: [ClienteController],
-  providers: [ClienteService],
+  providers: [ClienteService, RutaAbiertaInterceptor],
   exports: [ClienteService, MongooseModule]
 })
 export class ClienteModule { }
