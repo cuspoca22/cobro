@@ -39,7 +39,7 @@ import { DateFnsAdapter } from '../common/wrappers/date-fns.adapter';
         return {
           secret: configService.get("SECRETORPRIVATEKEY"),
           signOptions: {
-            expiresIn: "1h"
+            expiresIn: "12h"
           }
         }
       }
