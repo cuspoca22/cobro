@@ -1,10 +1,10 @@
-import { Body, Controller, Get, Param, Patch, Post, Query } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from "@nestjs/common";
 
 import { Auth, GetUser } from '../auth/decorators';
 import { MovimientoCajaService } from "./movimiento-caja.service";
 import { CreateMovimientoCajaDto, UpdateMovimientoCajaDto, ResumenOficinaQueryDto } from "./dto";
 import { ParseMongoIdPipe } from '../common/pipes/parse-mongo-id.pipe';
-import { CreateCreditoDto } from "src/credito/dto";
+import { CreateCreditoDto, UpdateCreditoDto } from "src/credito/dto";
 import { RutaAbierta } from "src/common/decorators";
 
 @Auth()
@@ -75,6 +75,22 @@ export class MovimientoCajaController {
     @Param('movimientoId', ParseMongoIdPipe) movimientoId: string
   ) {
     return this.movimientoCajaService.updateMovimiento(movimientoId, updateMovimientoCajaDto);
+  }
+
+  @Patch('update-credito/:creditoId')
+  async updateCredito(
+    @Body() updateCreditoDto: UpdateCreditoDto,
+    @Param('creditoId', ParseMongoIdPipe) creditoId: string,
+  ) {
+    return this.movimientoCajaService.updateCredito(creditoId, updateCreditoDto);
+  }
+
+  @Delete('delete-credito/:creditoId/:movimientoId')
+  async deleteCredito(
+    @Param('creditoId', ParseMongoIdPipe) creditoId: string,
+    @Param('movimientoId', ParseMongoIdPipe) movimientoId: string,
+  ) {
+    return this.movimientoCajaService.deleteCredito(creditoId, movimientoId);
   }
 
 }
