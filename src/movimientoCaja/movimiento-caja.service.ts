@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, InternalServerErrorException, Logger, NotFoundException } from "@nestjs/common";
 import { InjectModel, InjectConnection } from "@nestjs/mongoose";
-import { Model, Connection, Types } from "mongoose";
+import mongoose, { Model, Connection, Types } from "mongoose";
 
 import { MovimientoCaja } from "./schemas/caja-movimiento.schemas";
 import { CreateMovimientoCajaDto, UpdateMovimientoCajaDto } from "./dto";
@@ -9,7 +9,7 @@ import { Ruta } from "src/ruta/schema/ruta.schema";
 import { DateFnsAdapter } from '../common/wrappers/date-fns.adapter';
 import { CreditoService } from "src/credito/credito.service";
 import { SubTipo, TipoMovimiento, ResumenOficinaResponse, GrupoMovimiento, MovimientoResumen } from "./interfaces";
-import { CreateCreditoDto } from "src/credito/dto";
+import { CreateCreditoDto, UpdateCreditoDto } from "src/credito/dto";
 import { CajaMovimientoEntity } from "./entities/caja-movimiento.entity";
 import { TransactionHelper } from '../common/helpers';
 
@@ -167,6 +167,51 @@ export class MovimientoCajaService {
 
     }
 
+  }
+
+  async updateCredito(creditoId: string, updateCreditoDto: UpdateCreditoDto) {
+    const session = await this.connection.startSession();
+    session.startTransaction();
+
+    try {
+
+      const updateMovimiento = await this.cajaMovimientoModel.findOneAndUpdate(
+        { credito: new mongoose.Types.ObjectId(creditoId) },
+        { $set: { monto: updateCreditoDto.valor_credito } },
+        { returnDocument: 'after', session }
+      );
+
+      if (!updateMovimiento) throw new NotFoundException(`Credito con el id ${creditoId} no existe`);
+
+      await this.creditoService.updateCredito(creditoId, updateCreditoDto, session);
+
+      await session.commitTransaction();
+
+      return true;
+
+    } catch (error) {
+
+      await session.abortTransaction();
+      this.handleExceptions(error);
+
+    } finally {
+
+      await session.endSession();
+
+    }
+  }
+
+  async deleteCredito(creditoId: string, movimientoId: string) {
+    return this.transactionHelper.withTransaction(async (session) => {
+
+      const deleteMovimiento = await this.cajaMovimientoModel.findByIdAndDelete(movimientoId, { session });
+      if (!deleteMovimiento) throw new NotFoundException(`Movimiento con el id ${movimientoId} no existe`);
+
+      await this.creditoService.deleteCredito(creditoId, session);
+
+      return true;
+
+    }, 'MovimientoCajaService.deleteCredito');
   }
 
   async updatePago(movimientoId: string, updateMovimientoCajaDto: UpdateMovimientoCajaDto) {
