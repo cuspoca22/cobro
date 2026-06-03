@@ -20,9 +20,12 @@ import { CurrencyModule } from './currency/currency.module';
 import { RenovacionModule } from './renovacion/renovacion.module';
 import { PeticionesUbicacionModule } from './peticiones-ubicacion/peticiones-ubicacion.module';
 
+const environment = process.env.NODE_ENV || 'development';
+const envFile = `.env.${environment}`;
+
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true, envFilePath: '.env' }),
+    ConfigModule.forRoot({ isGlobal: true, envFilePath: [envFile, '.env'] }),
     ScheduleModule.forRoot(),
     MongooseModule.forRoot(process.env.MONGO_URL, {
       dbName: process.env.MONGO_DB_NAME,
