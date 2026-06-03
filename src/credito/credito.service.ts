@@ -12,11 +12,13 @@ import { SubTipo, TipoMovimiento } from 'src/movimientoCaja/interfaces';
 import { Ruta } from 'src/ruta/schema/ruta.schema';
 import { CreditoEntity } from './entities/credito.entity';
 import { HistorialCredito } from './interfaces';
+import { TransactionHelper } from 'src/common/helpers';
 
 @Injectable()
 export class CreditoService {
 
   private logger = new Logger("CreditoService");
+  private transactionHelper: TransactionHelper;
 
   constructor(
     @InjectModel(Credito.name)
@@ -31,7 +33,9 @@ export class CreditoService {
     private dateFnsAdapter: DateFnsAdapter,
     private creditCalculatorSvc: CreditCalculatorService,
     @InjectConnection() private readonly connection: Connection,
-  ) { }
+  ) {
+    this.transactionHelper = new TransactionHelper(connection);
+  }
 
   /**
    * Crea un nuevo crédito, manejando los cálculos para modo automático o manual.
@@ -141,6 +145,163 @@ export class CreditoService {
       throw error;
     }
 
+  }
+
+  async updateCredito(
+    creditoId: string,
+    updateCreditoDto: UpdateCreditoDto,
+    externalSession?: ClientSession
+  ) {
+    const {
+      rutaId,
+      valor_credito,
+      total_cuotas,
+      frecuencia_cobro,
+      interes,
+      valor_cuota,
+    } = updateCreditoDto;
+
+    // --- Validaciones de campos obligatorios ---
+    if (!rutaId) throw new BadRequestException('rutaId es requerido');
+    if (!valor_credito || valor_credito <= 0) {
+      throw new BadRequestException('valor_credito debe ser un número positivo');
+    }
+    if (!total_cuotas || total_cuotas < 1) {
+      throw new BadRequestException('total_cuotas debe ser al menos 1');
+    }
+    if (!frecuencia_cobro) {
+      throw new BadRequestException('frecuencia_cobro es requerido');
+    }
+
+    const hasInteres = interes !== undefined && interes !== null;
+    const hasValorCuota = valor_cuota !== undefined && valor_cuota !== null;
+
+    // Validar exclusión mutua (crédito automático vs manual)
+    if (!hasInteres && !hasValorCuota) {
+      throw new BadRequestException(
+        'Debe proporcionar "interes" (crédito automático) o "valor_cuota" (crédito manual).'
+      );
+    }
+    if (hasInteres && hasValorCuota) {
+      throw new BadRequestException(
+        'No puede proporcionar ambos: "interes" y "valor_cuota". Elija un modo.'
+      );
+    }
+
+    // --- Manejo de sesión (transacción) ---
+    let session = externalSession;
+    let ownsSession = false;
+
+    if (!session) {
+      session = await this.creditoModel.db.startSession();
+      session.startTransaction();
+      ownsSession = true;
+    }
+
+    try {
+      // 1. Obtener la ruta (para currency, timeZone)
+      const ruta = await this.rutaModel.findById(rutaId, null, { session }).lean();
+      if (!ruta) {
+        throw new NotFoundException(`Ruta con id ${rutaId} no existe`);
+      }
+
+      // 2. Obtener el crédito existente
+      const credito = await this.creditoModel.findById(creditoId, null, { session });
+      if (!credito) {
+        throw new NotFoundException(`Crédito con id ${creditoId} no existe`);
+      }
+
+      // --- Cálculos financieros según el modo ---
+      let calculatedTotalPagar: number;
+      let calculatedInteres: number;
+      let calculatedValorCuota: number;
+
+      if (hasInteres) {
+        // Modo automático: se proporciona interés
+        const { totalPagar, valorCuota } = this.creditCalculatorSvc.calculateFromInterest(
+          valor_credito,
+          interes,
+          total_cuotas,
+          ruta.currency,
+        );
+        calculatedTotalPagar = totalPagar;
+        calculatedInteres = interes;
+        calculatedValorCuota = valorCuota;
+      } else {
+        // Modo manual: se proporciona valor_cuota
+        const { totalPagar, interes: calcInteres } = this.creditCalculatorSvc.calculateFromCuota(
+          valor_credito,
+          valor_cuota,
+          total_cuotas,
+          ruta.currency,
+        );
+        calculatedTotalPagar = totalPagar;
+        calculatedInteres = calcInteres;
+        calculatedValorCuota = valor_cuota;
+      }
+
+      // Fecha de inicio: si el crédito es virgen, probablemente sea hoy. Se puede usar la existente o forzar hoy.
+      // En este ejemplo, se recalcula siempre con la zona horaria (como hacía el original)
+      const fecha_inicio = this.dateFnsAdapter.getStartOfTodayInTimeZone(ruta.timeZone);
+
+      const dueDate = this.creditCalculatorSvc.getDueDate(
+        frecuencia_cobro,
+        fecha_inicio,
+        total_cuotas,
+        ruta.timeZone,
+      );
+
+      // --- Actualización atómica ---
+      const updatedCredito = await this.creditoModel.findOneAndUpdate(
+        { _id: creditoId },
+        {
+          $set: {
+            rutaId, // si se permite cambiar de ruta (ojo con reglas de negocio)
+            valor_credito,
+            total_cuotas,
+            frecuencia_cobro,
+            interes: calculatedInteres,
+            valor_cuota: calculatedValorCuota,
+            total_pagar: calculatedTotalPagar,
+            fecha_inicio,
+            dueDate,
+          },
+        },
+        { session, returnDocument: 'after', runValidators: true }
+      );
+
+      if (ownsSession) {
+        await session.commitTransaction();
+      }
+
+      return updatedCredito;
+    } catch (error) {
+      if (ownsSession) {
+        await session.abortTransaction();
+      }
+      this.handleExceptions(error);
+    } finally {
+      if (ownsSession) {
+        await session.endSession();
+      }
+    }
+  }
+
+  async deleteCredito(creditoId: string, session: ClientSession) {
+    const deletedCredito = await this.creditoModel.findByIdAndDelete(creditoId, { session });
+    if (!deletedCredito) {
+      throw new NotFoundException(`Credito con el id ${creditoId} no existe`);
+    }
+
+    // Actualizar status del cliente a false (inactivo) al eliminar el crédito
+    const clienteId = deletedCredito.cliente;
+    await this.clienteModel.findByIdAndUpdate(
+      clienteId,
+      { $set: { status: false } },
+      { session }
+    );
+
+    return deletedCredito;
   }
 
   async getCreditosByRuta(rutaId?: string): Promise<CreditoEntity[]> {
