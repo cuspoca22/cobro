@@ -162,7 +162,9 @@ export class DateFnsAdapter {
     const dateRightObject = new Date(dateRight);
 
     let count = 0;
-    let current = new Date(dateLeftObject);
+    // Empezamos desde el día siguiente a dateLeft (paidUntilDate),
+    // porque dateLeft es el último día pagado y no debe contar como atraso.
+    let current = addDays(dateLeftObject, 1);
 
     while (isBefore(current, dateRightObject)) {
       if (!this.isSunday(current, timeZone)) {
