@@ -147,4 +147,30 @@ export class DateFnsAdapter {
 
     return isEqual(dateLeftObject, dateRightObject);
   }
+
+  /**
+   * Cuenta los días entre dateLeft y dateRight excluyendo los domingos (días no hábiles).
+   * Solo cuenta días hacia adelante (dateLeft debe ser anterior a dateRight).
+   * @returns Número de días hábiles entre las dos fechas.
+   */
+  public countBusinessDays(
+    dateLeft: Date | string | number,
+    dateRight: Date | string | number,
+    timeZone: string,
+  ): number {
+    const dateLeftObject = new Date(dateLeft);
+    const dateRightObject = new Date(dateRight);
+
+    let count = 0;
+    let current = new Date(dateLeftObject);
+
+    while (isBefore(current, dateRightObject)) {
+      if (!this.isSunday(current, timeZone)) {
+        count++;
+      }
+      current = addDays(current, 1);
+    }
+
+    return count;
+  }
 }

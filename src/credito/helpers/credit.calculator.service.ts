@@ -95,6 +95,7 @@ export class CreditCalculatorService {
     frecuenciaCobro: string,
     valorCuota: number,
     abonos: number,
+    timeZone?: string,
   ): Date {
     // Si no hay cuota válida o no hay abonos, se adeuda desde el inicio
     if (!valorCuota || valorCuota === 0 || abonos === 0) {
@@ -104,8 +105,20 @@ export class CreditCalculatorService {
     const cuotasPagadas = Math.floor(abonos / valorCuota);
     let nextDueDate = new Date(fechaInicio);
 
-    for (let i = 0; i < cuotasPagadas; i++) {
-      nextDueDate = this.addPeriod(nextDueDate, frecuenciaCobro);
+    if (
+      this.normalizeFrecuenciaCobro(frecuenciaCobro) === FrecuenciaCobro.DIARIO &&
+      timeZone
+    ) {
+      // Para frecuencia diaria, avanzamos saltando domingos
+      for (let i = 0; i < cuotasPagadas; i++) {
+        do {
+          nextDueDate = this.dateFnsAdapter.addDays(nextDueDate, 1);
+        } while (this.dateFnsAdapter.isSunday(nextDueDate, timeZone));
+      }
+    } else {
+      for (let i = 0; i < cuotasPagadas; i++) {
+        nextDueDate = this.addPeriod(nextDueDate, frecuenciaCobro);
+      }
     }
 
     return nextDueDate;

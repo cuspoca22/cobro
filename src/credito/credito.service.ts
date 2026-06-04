@@ -651,11 +651,12 @@ export class CreditoService {
         credit.fecha_inicio,
         credit.frecuencia_cobro,
         credit.valor_cuota,
-        credit.abonos
+        credit.abonos,
+        timeZone
       );
 
       if (this.dateFnsAdapter.isBefore(paidUntilDate, today)) {
-        daysOverdue = this.dateFnsAdapter.differenceInDays(today, paidUntilDate);
+        daysOverdue = this.dateFnsAdapter.countBusinessDays(paidUntilDate, today, timeZone);
         if (daysOverdue < 0) daysOverdue = 0;
       }
     }
