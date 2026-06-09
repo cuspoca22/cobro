@@ -31,7 +31,7 @@ async function bootstrap() {
   if (enableSwagger) {
     const config = new DocumentBuilder()
       .setTitle('PayFlow API')
-      .setDescription('API para gestión de cobros y clientes')
+      .setDescription('API para gestión de cobros, clientes y reportes administrativos')
       .setVersion('1.0')
       .addBearerAuth(
         {

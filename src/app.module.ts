@@ -19,6 +19,7 @@ import { MovimientoCajaModule } from './movimientoCaja/movimiento-caja.module';
 import { CurrencyModule } from './currency/currency.module';
 import { RenovacionModule } from './renovacion/renovacion.module';
 import { PeticionesUbicacionModule } from './peticiones-ubicacion/peticiones-ubicacion.module';
+import { ReportesModule } from './reportes/reportes.module';
 
 const environment = process.env.NODE_ENV || 'development';
 const envFile = `.env.${environment}`;
@@ -46,6 +47,7 @@ const envFile = `.env.${environment}`;
     MessageModule,
     RenovacionModule,
     PeticionesUbicacionModule,
+    ReportesModule,
   ],
   controllers: [],
   providers: [],
