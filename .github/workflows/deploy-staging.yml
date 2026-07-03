@@ -1,0 +1,52 @@
+name: Deploy Staging a Digital Ocean
+
+on:
+  push:
+    branches:
+      - staging
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Clonar repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Generar build de staging
+        run: npm run build:staging
+
+      - name: Subir archivos al servidor via SCP
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.DO_HOST }}
+          username: ${{ secrets.DO_USER }}
+          key: ${{ secrets.DO_SSH_KEY }}
+          source: "dist/,package.json"
+          target: "~/proyectos/api-staging"
+          strip_components: 0
+
+      - name: Ejecutar deploy en el servidor
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DO_HOST }}
+          username: ${{ secrets.DO_USER }}
+          key: ${{ secrets.DO_SSH_KEY }}
+          script: |
+            cd ~/proyectos/api-staging
+            npm install --production
+            if pm2 describe cobro-staging > /dev/null 2>&1; then
+              pm2 restart cobro-staging
+            else
+              pm2 start npm --name cobro-staging -- run start:staging:server
+              pm2 save
+            fi
