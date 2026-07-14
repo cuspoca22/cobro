@@ -3,6 +3,7 @@
 /node_modules
 /mongo
 /.agent
+/exports
 
 # Logs
 logs
