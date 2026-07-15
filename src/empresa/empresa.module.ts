@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { EmpresaService } from './empresa.service';
 import { EmpresaController } from './empresa.controller';
 import { AuthModule } from '../auth/auth.module';
@@ -7,22 +7,20 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { Empresa, EmpresaSchema } from './schemas/empresa.schema';
 import { RutaModule } from '../ruta/ruta.module';
 import { ClienteModule } from '../cliente/cliente.module';
-import { User, UserSchema } from 'src/auth/schemas/user.schema';
 
+/**
+ * V4b: solo registra Empresa. User vía AuthService (forwardRef Auth↔Empresa).
+ */
 @Module({
   imports: [
     ConfigModule,
-    AuthModule,
-    RutaModule,
+    forwardRef(() => AuthModule),
+    forwardRef(() => RutaModule),
     ClienteModule,
     MongooseModule.forFeature([
       {
         name: Empresa.name,
         schema: EmpresaSchema
-      },
-      {
-        name: User.name,
-        schema: UserSchema
       },
     ])
   ],

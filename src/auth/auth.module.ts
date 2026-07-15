@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { MongooseModule } from '@nestjs/mongoose';
@@ -9,12 +9,19 @@ import { AuthController } from './auth.controller';
 import { JWTStrategy } from './strategies/jwt.strategy';
 import { LogAuth, LogAuthSchema } from '../log-auth/entities/log-auth.entity';
 import { User, UserSchema } from './schemas/user.schema';
-import { Caja, CajaSchema } from 'src/caja/schemas/caja.schema';
 import { DateFnsAdapter } from '../common/wrappers/date-fns.adapter';
+import { CajaDayCheckModule } from 'src/caja/caja-day-check.module';
+import { EmpresaModule } from 'src/empresa/empresa.module';
 
+/**
+ * V4b: solo registra User/LogAuth. Empresa vía EmpresaModule (forwardRef ciclo Auth↔Empresa).
+ * Check de caja del día vía CajaDayCheckModule (sin importar CajaModule).
+ */
 @Module({
   imports: [
     ConfigModule,
+    CajaDayCheckModule,
+    forwardRef(() => EmpresaModule),
     MongooseModule.forFeature([
       {
         name: User.name,
@@ -24,10 +31,6 @@ import { DateFnsAdapter } from '../common/wrappers/date-fns.adapter';
         name: LogAuth.name,
         schema: LogAuthSchema
       },
-      {
-        name: Caja.name,
-        schema: CajaSchema
-      }
     ]),
     PassportModule.register({
       defaultStrategy: "jwt"

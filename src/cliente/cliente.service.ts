@@ -1,10 +1,9 @@
-import { BadRequestException, Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, forwardRef, Inject, Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
 import { CreateClienteDto } from './dto/create-cliente.dto';
 import { UpdateClienteDto } from './dto/update-cliente.dto';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { ClientSession, Model, Types, PipelineStage } from 'mongoose';
 import { Cliente } from './schema/cliente.schema';
-import { Credito } from 'src/credito/schemas/credito.schema';
 import { ClienteEntity } from './entities/cliente.entity';
 import { CreditoService } from 'src/credito/credito.service';
 
@@ -16,9 +15,7 @@ export class ClienteService {
   constructor(
     @InjectModel(Cliente.name)
     private clienteModel: Model<Cliente>,
-
-    @InjectModel(Credito.name)
-    private creditoModel: Model<Credito>,
+    @Inject(forwardRef(() => CreditoService))
     private readonly creditoService: CreditoService,
   ) { }
 
@@ -64,23 +61,17 @@ export class ClienteService {
   async findOne(termino: string) {
 
     const cliente = await this.clienteModel.findById(termino);
-    const credito = await this.creditoModel.findOne({
-      cliente: termino,
-      status: true
-    });
 
     if (!cliente) throw new NotFoundException("No existe el cliente");
 
-    if (!credito) {
-      return {
-        cliente: ClienteEntity.fromObject(cliente),
-        credito: null
-      }
-    }
+    const credito = await this.creditoService.getActiveCreditoForCliente(
+      termino,
+      cliente.ruta.toString(),
+    );
 
     return {
       cliente: ClienteEntity.fromObject(cliente),
-      credito: await this.creditoService.getCreditoById(credito._id.toString(), cliente.ruta.toString())
+      credito,
     }
 
   }
@@ -104,6 +95,74 @@ export class ClienteService {
     // await client.updateOne({ state: false }, { returnDocument: 'after' });
 
     return true;
+  }
+
+  // --- APIs para otros módulos (Vertical 1 / 4) ---
+
+  /** Ownership: resolver ruta a partir de un cliente. */
+  async getRutaByClienteId(
+    clienteId: string,
+  ): Promise<{ exists: false } | { exists: true; rutaId: string | null }> {
+    const cliente = await this.clienteModel.findById(clienteId).select('ruta').lean();
+    if (!cliente) return { exists: false };
+    return {
+      exists: true,
+      rutaId: cliente.ruta ? cliente.ruta.toString() : null,
+    };
+  }
+
+  async countByRuta(rutaId: string | Types.ObjectId, status?: boolean): Promise<number> {
+    const filter: any = { ruta: rutaId };
+    if (status !== undefined) filter.status = status;
+    return this.clienteModel.countDocuments(filter);
+  }
+
+  async deleteManyByRuta(rutaId: string, session: ClientSession): Promise<void> {
+    await this.clienteModel.deleteMany({ ruta: rutaId }).session(session);
+  }
+
+  // --- APIs para CreditoService (V4b: sin @InjectModel Cliente ajeno) ---
+
+  async findByIdLean(
+    clienteId: string | Types.ObjectId,
+    session?: ClientSession,
+  ): Promise<{ _id: Types.ObjectId; nombre: string; status: boolean } | null> {
+    const cliente = await this.clienteModel
+      .findById(clienteId)
+      .select('nombre status')
+      .session(session || null)
+      .lean();
+    if (!cliente) return null;
+    return cliente as { _id: Types.ObjectId; nombre: string; status: boolean };
+  }
+
+  async setStatus(
+    clienteId: string | Types.ObjectId,
+    status: boolean,
+    session?: ClientSession,
+  ): Promise<void> {
+    await this.clienteModel.findByIdAndUpdate(
+      clienteId,
+      { $set: { status } },
+      { session: session || undefined },
+    );
+  }
+
+  async setTurno(
+    clienteId: string | Types.ObjectId,
+    turno: number,
+    session?: ClientSession,
+  ): Promise<void> {
+    await this.clienteModel.findByIdAndUpdate(
+      clienteId,
+      { $set: { turno } },
+      { returnDocument: 'after', session: session || undefined },
+    );
+  }
+
+  /** Reportes: agregaciones sin exponer el model. */
+  async aggregatePipeline<T = any>(pipeline: PipelineStage[]): Promise<T[]> {
+    return this.clienteModel.aggregate<T>(pipeline);
   }
 
   private handleExceptions(error: any) {

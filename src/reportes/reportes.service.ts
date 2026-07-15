@@ -1,18 +1,17 @@
 import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
 import Decimal from 'decimal.js';
-import { Model, PipelineStage, Types } from 'mongoose';
+import { PipelineStage, Types } from 'mongoose';
 
-import { Empresa } from '../empresa/schemas/empresa.schema';
-import { Ruta } from '../ruta/schema/ruta.schema';
-import { Cliente } from '../cliente/schema/cliente.schema';
-import { Credito } from '../credito/schemas/credito.schema';
-import { Caja } from '../caja/schemas/caja.schema';
-import { MovimientoCaja } from '../movimientoCaja/schemas/caja-movimiento.schemas';
 import { SubTipo } from '../movimientoCaja/interfaces/sub-tipo.enum';
 import { TipoMovimiento } from '../movimientoCaja/interfaces/tipo-movimiento.enum';
 import { ClasificacionCliente } from '../credito/interfaces/clasificacion-cliente.enum';
 import { DateFnsAdapter } from '../common/wrappers/date-fns.adapter';
+import { MovimientoCajaService } from '../movimientoCaja/movimiento-caja.service';
+import { EmpresaService } from '../empresa/empresa.service';
+import { RutaService } from '../ruta/ruta.service';
+import { ClienteService } from '../cliente/cliente.service';
+import { CreditoService } from '../credito/credito.service';
+import { CajaService } from '../caja/caja.service';
 import { ReporteCarteraQueryDto, ReporteRangoQueryDto } from './dto';
 import { buildRutaFechaOrConditions } from './helpers/calcular-rango-fechas.helper';
 import {
@@ -49,15 +48,27 @@ interface MovimientoRaw {
 @Injectable()
 export class ReportesService {
   constructor(
-    @InjectModel(Empresa.name) private readonly empresaModel: Model<Empresa>,
-    @InjectModel(Ruta.name) private readonly rutaModel: Model<Ruta>,
-    @InjectModel(Cliente.name) private readonly clienteModel: Model<Cliente>,
-    @InjectModel(Credito.name) private readonly creditoModel: Model<Credito>,
-    @InjectModel(Caja.name) private readonly cajaModel: Model<Caja>,
-    @InjectModel(MovimientoCaja.name)
-    private readonly movimientoModel: Model<MovimientoCaja>,
+    private readonly empresaService: EmpresaService,
+    private readonly rutaService: RutaService,
+    private readonly clienteService: ClienteService,
+    private readonly creditoService: CreditoService,
+    private readonly cajaService: CajaService,
+    private readonly movimientoCajaService: MovimientoCajaService,
     private readonly dateFnsAdapter: DateFnsAdapter,
   ) {}
+
+  private resolveContext(empresaId: string, rutaId?: string) {
+    return resolveEmpresaContext(
+      (id) => this.empresaService.findByIdLean(id, 'rutas name'),
+      (ids) =>
+        this.rutaService.findLean(
+          { _id: { $in: ids } },
+          { select: 'nombre timeZone currency' },
+        ),
+      empresaId,
+      rutaId,
+    );
+  }
 
   async getReporteOficina(
     dto: ReporteRangoQueryDto,
@@ -66,12 +77,7 @@ export class ReportesService {
     const { fechaInicio, fechaFin, rutaId } = dto;
     validarRangoFechas(fechaInicio, fechaFin);
 
-    const contexto = await resolveEmpresaContext(
-      this.empresaModel,
-      this.rutaModel,
-      empresaId,
-      rutaId,
-    );
+    const contexto = await this.resolveContext(empresaId, rutaId);
 
     if (contexto.rutas.length === 0) {
       return this.respuestaOficinaVacia(contexto, fechaInicio, fechaFin);
@@ -84,14 +90,16 @@ export class ReportesService {
       this.dateFnsAdapter,
     );
 
-    const movimientos = await this.movimientoModel
-      .find({
+    const movimientos = await this.movimientoCajaService.findLean(
+      {
         $or: orConditions,
         subTipo: { $in: [SubTipo.GASTO, SubTipo.RETIRO, SubTipo.INVERSION] },
-      })
-      .select('_id ruta subTipo monto concepto comentario categoriaGasto fecha')
-      .sort({ fecha: -1 })
-      .lean();
+      },
+      {
+        select: '_id ruta subTipo monto concepto comentario categoriaGasto fecha',
+        sort: { fecha: -1 },
+      },
+    );
 
     const rutasReporte = contexto.rutas.map((ruta) => {
       const movsRuta = movimientos.filter(
@@ -147,12 +155,7 @@ export class ReportesService {
     const { fechaInicio, fechaFin, rutaId } = dto;
     validarRangoFechas(fechaInicio, fechaFin);
 
-    const contexto = await resolveEmpresaContext(
-      this.empresaModel,
-      this.rutaModel,
-      empresaId,
-      rutaId,
-    );
+    const contexto = await this.resolveContext(empresaId, rutaId);
 
     if (contexto.rutas.length === 0) {
       return this.respuestaFinancieroVacia(contexto, fechaInicio, fechaFin);
@@ -272,12 +275,7 @@ export class ReportesService {
     dto: ReporteCarteraQueryDto,
     empresaId: string,
   ): Promise<ReporteCarteraResponseDto> {
-    const contexto = await resolveEmpresaContext(
-      this.empresaModel,
-      this.rutaModel,
-      empresaId,
-      dto.rutaId,
-    );
+    const contexto = await this.resolveContext(empresaId, dto.rutaId);
 
     if (contexto.rutas.length === 0) {
       return this.respuestaCarteraVacia(contexto);
@@ -286,7 +284,7 @@ export class ReportesService {
     const rutaIds = contexto.rutas.map((r) => r.rutaId);
 
     const [metricasCreditos, conteosClientes] = await Promise.all([
-      this.creditoModel.aggregate<{
+      this.creditoService.aggregatePipeline<{
         _id: Types.ObjectId;
         cartera: number;
         capitalPrestado: number;
@@ -294,7 +292,7 @@ export class ReportesService {
         distribucionEstado: DistribucionEstadoDto;
         clientesMorosos: number;
       }>(this.pipelineCartera(rutaIds)),
-      this.clienteModel.aggregate<{
+      this.clienteService.aggregatePipeline<{
         _id: Types.ObjectId;
         totalClientes: number;
         clientesActivos: number;
@@ -388,12 +386,7 @@ export class ReportesService {
     const { fechaInicio, fechaFin, rutaId } = dto;
     validarRangoFechas(fechaInicio, fechaFin);
 
-    const contexto = await resolveEmpresaContext(
-      this.empresaModel,
-      this.rutaModel,
-      empresaId,
-      rutaId,
-    );
+    const contexto = await this.resolveContext(empresaId, rutaId);
 
     if (contexto.rutas.length === 0) {
       return this.respuestaCajaHistoricoVacia(contexto, fechaInicio, fechaFin);
@@ -406,11 +399,13 @@ export class ReportesService {
       this.dateFnsAdapter,
     );
 
-    const cajas = await this.cajaModel
-      .find({ $or: orConditions })
-      .select('ruta fecha cobro prestamo gasto retiro inversion caja_final pretendido')
-      .sort({ fecha: 1 })
-      .lean();
+    const cajas = await this.cajaService.findLean(
+      { $or: orConditions },
+      {
+        select: 'ruta fecha cobro prestamo gasto retiro inversion caja_final pretendido',
+        sort: { fecha: 1 },
+      },
+    );
 
     const rutasSeries = contexto.rutas.map((ruta) => {
       const cajasRuta = cajas.filter(
@@ -616,7 +611,7 @@ export class ReportesService {
       },
     ];
 
-    return this.movimientoModel.aggregate<MovimientoRaw>(pipeline);
+    return this.movimientoCajaService.aggregatePipeline<MovimientoRaw>(pipeline);
   }
 
   private pipelineCartera(rutaIds: Types.ObjectId[]): PipelineStage[] {

@@ -1,17 +1,17 @@
-import { BadRequestException, Injectable, InternalServerErrorException, Logger, NotFoundException } from "@nestjs/common";
+import { BadRequestException, forwardRef, Inject, Injectable, InternalServerErrorException, Logger, NotFoundException } from "@nestjs/common";
 import { InjectModel, InjectConnection } from "@nestjs/mongoose";
-import mongoose, { Model, Connection, Types } from "mongoose";
+import mongoose, { Model, Connection, Types, ClientSession, PipelineStage } from "mongoose";
 
 import { MovimientoCaja } from "./schemas/caja-movimiento.schemas";
 import { CreateMovimientoCajaDto, UpdateMovimientoCajaDto } from "./dto";
-import { Caja } from "src/caja/schemas/caja.schema";
-import { Ruta } from "src/ruta/schema/ruta.schema";
 import { DateFnsAdapter } from '../common/wrappers/date-fns.adapter';
 import { CreditoService } from "src/credito/credito.service";
 import { SubTipo, TipoMovimiento, ResumenOficinaResponse, GrupoMovimiento, MovimientoResumen } from "./interfaces";
 import { CreateCreditoDto, UpdateCreditoDto } from "src/credito/dto";
 import { CajaMovimientoEntity } from "./entities/caja-movimiento.entity";
 import { TransactionHelper } from '../common/helpers';
+import { RutaService } from "src/ruta/ruta.service";
+import { CajaService } from "src/caja/caja.service";
 
 @Injectable()
 export class MovimientoCajaService {
@@ -24,14 +24,15 @@ export class MovimientoCajaService {
     @InjectModel(MovimientoCaja.name)
     private readonly cajaMovimientoModel: Model<MovimientoCaja>,
 
-    @InjectModel(Caja.name)
-    private readonly cajaModel: Model<Caja>,
+    @Inject(forwardRef(() => RutaService))
+    private readonly rutaService: RutaService,
 
-    @InjectModel(Ruta.name)
-    private readonly rutaModel: Model<Ruta>,
+    @Inject(forwardRef(() => CajaService))
+    private readonly cajaService: CajaService,
 
     private readonly dateFnsAdapter: DateFnsAdapter,
     private readonly creditoService: CreditoService,
+    // Ledger-first: durante el día NO se reescribe Caja; el snapshot se congela al cerrar.
     @InjectConnection() private readonly connection: Connection
   ) {
     this.transactionHelper = new TransactionHelper(connection);
@@ -42,11 +43,15 @@ export class MovimientoCajaService {
     return this.transactionHelper.withTransaction(async (session) => {
       const { rutaId, monto, creditoId, clienteId, ...rest } = createPagoDto;
 
-      const ruta = await this.rutaModel.findById(rutaId).session(session);
+      const ruta = await this.rutaService.findOperacionContextById(rutaId, session);
       if (!ruta) throw new NotFoundException(`La ruta con el id ${rutaId} no existe`);
       if (!ruta.caja_actual) throw new BadRequestException(`La ruta con el id ${rutaId} no tiene caja asociada`);
+      // FIX [P0 TOCTOU]: no aceptar pagos si la ruta ya está cerrada dentro de la txn
+      if (!ruta.status) {
+        throw new BadRequestException(`La ruta con el id ${rutaId} está cerrada`);
+      }
 
-      const caja = await this.cajaModel.findById(ruta.caja_actual).session(session);
+      const caja = await this.cajaService.findByIdLean(ruta.caja_actual, session);
       if (!caja) throw new NotFoundException(`Caja con el id ${rutaId} no existe`);
 
       const fecha = this.dateFnsAdapter.getStartOfTodayInTimeZone(ruta.timeZone);
@@ -75,22 +80,32 @@ export class MovimientoCajaService {
         throw new BadRequestException(`Ya ingresaste este pago, por favor recarga la pagina`);
       }
 
-      // crear el movimiento
-      await this.cajaMovimientoModel.create([{
-        caja: caja._id,
-        monto,
-        tipoMovimiento: TipoMovimiento.INGRESO,
-        subTipo: SubTipo.PAGOCREDITO,
-        fecha,
-        cliente: clienteId,
-        credito: creditoId,
-        ruta: rutaId,
-        ...rest
-      }], { session });
+      // crear el movimiento — el índice unique_pago_credito_por_dia evita doble insert concurrente
+      try {
+        await this.cajaMovimientoModel.create([{
+          caja: caja._id,
+          monto,
+          tipoMovimiento: TipoMovimiento.INGRESO,
+          subTipo: SubTipo.PAGOCREDITO,
+          fecha,
+          cliente: clienteId,
+          credito: creditoId,
+          ruta: rutaId,
+          ...rest
+        }], { session });
+      } catch (error: any) {
+        // FIX [P0 doble-pago]: race condition → duplicate key del índice único
+        if (error?.code === 11000) {
+          throw new BadRequestException(`Ya ingresaste este pago, por favor recarga la pagina`);
+        }
+        throw error;
+      }
 
       // llamamos el handlePaymentMade del credito
       const result = await this.creditoService.handlePaymentMade(creditoId, rutaId, clienteId, session);
 
+      // Ledger-first: no persistir aggregates de Caja aquí; currentCaja calcula en vivo;
+      // el snapshot se congela solo en closeRuta.
       return {
         ok: result.ok,
         message: result.message
@@ -107,7 +122,7 @@ export class MovimientoCajaService {
 
     try {
 
-      const ruta = await this.rutaModel.findById(rutaId).session(session);
+      const ruta = await this.rutaService.findOperacionContextById(rutaId, session);
       if (!ruta) throw new NotFoundException(`La ruta con el id ${rutaId} no existe`);
       if (!ruta.caja_actual) throw new BadRequestException(`La ruta con el id ${rutaId} no tiene caja asociada`);
 
@@ -176,7 +191,8 @@ export class MovimientoCajaService {
     try {
 
       const updateMovimiento = await this.cajaMovimientoModel.findOneAndUpdate(
-        { credito: new mongoose.Types.ObjectId(creditoId) },
+        // FIX [P1]: filtrar por préstamo; antes podía machacar un pago_credito del mismo crédito
+        { credito: new mongoose.Types.ObjectId(creditoId), subTipo: SubTipo.PRESTAMO },
         { $set: { monto: updateCreditoDto.valor_credito } },
         { returnDocument: 'after', session }
       );
@@ -222,10 +238,10 @@ export class MovimientoCajaService {
       const movimiento = await this.cajaMovimientoModel.findById(movimientoId).session(session);
       if (!movimiento) throw new NotFoundException(`Movimiento con el id ${movimientoId} no existe`);
 
-      const caja = await this.cajaModel.findById(movimiento.caja).session(session);
+      const caja = await this.cajaService.findByIdLean(movimiento.caja, session);
       if (!caja) throw new NotFoundException(`Caja con el id ${movimiento.caja} no existe`);
 
-      const credito = await this.creditoService.getCreditoById(movimiento.credito.toString(), caja.ruta.toString(), session);
+      const credito = await this.creditoService.getCreditoById(movimiento.credito.toString(), caja.ruta, session);
 
       // Restauramos el saldo del credito (simulando que el pago anterior no existió)
       const saldoCreditoRestaurado = credito.saldo + movimiento.monto;
@@ -242,11 +258,9 @@ export class MovimientoCajaService {
       movimiento.monto = updateMovimientoCajaDto.monto;
       await movimiento.save({ session });
 
-      await caja.save({ session });
-
       const result = await this.creditoService.handlePaymentMade(
         movimiento.credito.toString(),
-        caja.ruta.toString(),
+        caja.ruta,
         movimiento.cliente.toString(),
         session
       );
@@ -275,9 +289,14 @@ export class MovimientoCajaService {
 
     try {
 
-      const ruta = await this.rutaModel.findById(rutaId).session(session);
+      const ruta = await this.rutaService.findOperacionContextById(rutaId, session);
       if (!ruta) throw new NotFoundException(`La ruta con el id ${rutaId} no existe`);
+      if (!ruta.caja_actual) throw new BadRequestException(`La ruta con el id ${rutaId} no tiene caja asociada`);
+      if (!ruta.status) {
+        throw new BadRequestException(`La ruta con el id ${rutaId} está cerrada`);
+      }
 
+      // create() ya rechaza si hay crédito activo (invariante P0 renovación)
       const credito = await this.creditoService.create(createCreditoDto, session);
 
       const movimiento = new this.cajaMovimientoModel({
@@ -345,7 +364,7 @@ export class MovimientoCajaService {
   }
 
   async getResumenDiario(rutaId: string, fecha: string) {
-    const ruta = await this.rutaModel.findById(rutaId);
+    const ruta = await this.rutaService.findOperacionContextById(rutaId);
     if (!ruta) throw new NotFoundException('La Ruta no existe');
     const baseDate = new Date(fecha);
     baseDate.setUTCHours(0, 0, 0, 0);
@@ -401,7 +420,7 @@ export class MovimientoCajaService {
    */
   async getResumenOficina(rutaId: string, fecha?: string): Promise<ResumenOficinaResponse> {
     // Validar que la ruta exista y obtener su timeZone
-    const ruta = await this.rutaModel.findById(rutaId).lean();
+    const ruta = await this.rutaService.findOperacionContextById(rutaId);
     if (!ruta) throw new NotFoundException(`La ruta con el id ${rutaId} no existe`);
 
     // Calcular rango del día respetando la timeZone de la ruta
@@ -489,6 +508,200 @@ export class MovimientoCajaService {
       retiros: mapa.get(SubTipo.RETIRO) ?? { ...grupoVacio },
       inversiones: mapa.get(SubTipo.INVERSION) ?? { ...grupoVacio },
     };
+  }
+
+  // --- APIs para otros módulos (Vertical 2: sin @InjectModel ajeno de MovimientoCaja) ---
+
+  async getClienteIdsRenovadosEnRango(
+    rutaId: string,
+    startOfDayUtc: Date,
+    endOfDayUtc: Date,
+    session?: ClientSession,
+  ): Promise<string[]> {
+    const result = await this.cajaMovimientoModel
+      .aggregate([
+        {
+          $match: {
+            ruta: new mongoose.Types.ObjectId(rutaId),
+            subTipo: SubTipo.PRESTAMO,
+            fecha: { $gte: startOfDayUtc, $lt: endOfDayUtc },
+          },
+        },
+        { $group: { _id: '$cliente' } },
+      ])
+      .session(session || null);
+
+    return result.map((c) => c._id.toString());
+  }
+
+  async getClienteIdsQuePagaronEnRango(
+    rutaId: string,
+    startOfDayUtc: Date,
+    endOfDayUtc: Date,
+    session?: ClientSession,
+  ): Promise<string[]> {
+    const result = await this.cajaMovimientoModel
+      .aggregate([
+        {
+          $match: {
+            ruta: new mongoose.Types.ObjectId(rutaId),
+            tipoMovimiento: TipoMovimiento.INGRESO,
+            subTipo: SubTipo.PAGOCREDITO,
+            fecha: { $gte: startOfDayUtc, $lt: endOfDayUtc },
+          },
+        },
+        { $group: { _id: '$cliente' } },
+      ])
+      .session(session || null);
+
+    return result
+      .filter((c) => c._id != null)
+      .map((c) => c._id.toString());
+  }
+
+  async getTotalesLedgerPorRango(
+    rutaId: string,
+    startOfDayUtc: Date,
+    endOfDayUtc: Date,
+    session?: ClientSession,
+  ): Promise<{
+    cobro: number;
+    prestamos: number;
+    inversiones: number;
+    gastos: number;
+    retiros: number;
+  }> {
+    const result = await this.cajaMovimientoModel
+      .aggregate([
+        {
+          $match: {
+            ruta: new Types.ObjectId(rutaId),
+            fecha: { $gte: startOfDayUtc, $lt: endOfDayUtc },
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            cobro: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $eq: ['$tipoMovimiento', TipoMovimiento.INGRESO] },
+                      { $eq: ['$subTipo', SubTipo.PAGOCREDITO] },
+                    ],
+                  },
+                  '$monto',
+                  0,
+                ],
+              },
+            },
+            prestamos: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $eq: ['$tipoMovimiento', TipoMovimiento.EGRESO] },
+                      { $eq: ['$subTipo', SubTipo.PRESTAMO] },
+                    ],
+                  },
+                  '$monto',
+                  0,
+                ],
+              },
+            },
+            inversiones: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $eq: ['$tipoMovimiento', TipoMovimiento.INGRESO] },
+                      { $eq: ['$subTipo', SubTipo.INVERSION] },
+                    ],
+                  },
+                  '$monto',
+                  0,
+                ],
+              },
+            },
+            gastos: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $eq: ['$tipoMovimiento', TipoMovimiento.EGRESO] },
+                      { $eq: ['$subTipo', SubTipo.GASTO] },
+                    ],
+                  },
+                  '$monto',
+                  0,
+                ],
+              },
+            },
+            retiros: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $eq: ['$tipoMovimiento', TipoMovimiento.EGRESO] },
+                      { $eq: ['$subTipo', SubTipo.RETIRO] },
+                    ],
+                  },
+                  '$monto',
+                  0,
+                ],
+              },
+            },
+          },
+        },
+      ])
+      .session(session || null);
+
+    const row = result[0] || {};
+    return {
+      cobro: row.cobro ?? 0,
+      prestamos: row.prestamos ?? 0,
+      inversiones: row.inversiones ?? 0,
+      gastos: row.gastos ?? 0,
+      retiros: row.retiros ?? 0,
+    };
+  }
+
+  async deleteManyByRuta(rutaId: string, session: ClientSession): Promise<void> {
+    await this.cajaMovimientoModel.deleteMany({ ruta: rutaId }).session(session);
+  }
+
+  /** Ownership: resolver ruta a partir de un movimiento. */
+  async getRutaByMovimientoId(
+    movimientoId: string,
+  ): Promise<{ exists: false } | { exists: true; rutaId: string | null }> {
+    const mov = await this.cajaMovimientoModel
+      .findById(movimientoId)
+      .select('ruta')
+      .lean();
+    if (!mov) return { exists: false };
+    return {
+      exists: true,
+      rutaId: mov.ruta ? mov.ruta.toString() : null,
+    };
+  }
+
+  /**
+   * Vertical 3: reportes / renovaciones ejecutan pipelines propios vía el dueño del model.
+   * Evita forFeature(MovimientoCaja) en módulos ajenos.
+   */
+  async aggregatePipeline<T = any>(pipeline: PipelineStage[]): Promise<T[]> {
+    return this.cajaMovimientoModel.aggregate<T>(pipeline);
+  }
+
+  async findLean(
+    filter: Record<string, any>,
+    options?: { select?: string; sort?: Record<string, 1 | -1> },
+  ): Promise<any[]> {
+    let query = this.cajaMovimientoModel.find(filter);
+    if (options?.select) query = query.select(options.select);
+    if (options?.sort) query = query.sort(options.sort);
+    return query.lean();
   }
 
   private handleExceptions(error: any) {

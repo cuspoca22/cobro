@@ -1,18 +1,18 @@
-import { BadRequestException, Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, forwardRef, Inject, Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Credito } from './schemas/credito.schema';
-import { ClientSession, Connection, Model, PipelineStage } from 'mongoose';
+import { ClientSession, Connection, Model, PipelineStage, Types } from 'mongoose';
 import mongoose from 'mongoose';
 
 import { CreateCreditoDto, UpdateCreditoDto } from './dto/';
-import { Cliente } from '../cliente/schema/cliente.schema';
 import { DateFnsAdapter } from '../common/wrappers/date-fns.adapter';
 import { CreditCalculatorService } from './helpers/credit.calculator.service';
 import { SubTipo, TipoMovimiento } from 'src/movimientoCaja/interfaces';
-import { Ruta } from 'src/ruta/schema/ruta.schema';
 import { CreditoEntity } from './entities/credito.entity';
 import { HistorialCredito } from './interfaces';
 import { TransactionHelper } from 'src/common/helpers';
+import { ClienteService } from '../cliente/cliente.service';
+import { RutaService } from '../ruta/ruta.service';
 
 @Injectable()
 export class CreditoService {
@@ -24,11 +24,11 @@ export class CreditoService {
     @InjectModel(Credito.name)
     private readonly creditoModel: Model<Credito>,
 
-    @InjectModel(Cliente.name)
-    private readonly clienteModel: Model<Cliente>,
+    @Inject(forwardRef(() => ClienteService))
+    private readonly clienteService: ClienteService,
 
-    @InjectModel(Ruta.name)
-    private readonly rutaModel: Model<Ruta>,
+    @Inject(forwardRef(() => RutaService))
+    private readonly rutaService: RutaService,
 
     private dateFnsAdapter: DateFnsAdapter,
     private creditCalculatorSvc: CreditCalculatorService,
@@ -61,7 +61,7 @@ export class CreditoService {
       let calculatedValorCuota: number;
 
       // Obtener la ruta dentro de la transacción
-      const ruta = await this.rutaModel.findById(rutaId, null, { session }).lean();
+      const ruta = await this.rutaService.findContextById(rutaId, session);
       if (!ruta) {
         throw new NotFoundException(`Ruta con el id ${rutaId} no existe`);
       }
@@ -101,46 +101,65 @@ export class CreditoService {
         ruta.timeZone
       );
 
-      // Crear el nuevo documento de crédito dentro de la transacción
-      const creditos = await this.creditoModel.create([{
-        cliente: clienteId,
-        ruta: rutaId,
-        valor_credito,
-        interes: calculatedInteres,
-        total_cuotas,
-        total_pagar: calculatedTotalPagar,
-        valor_cuota: calculatedValorCuota,
-        frecuencia_cobro,
-        fecha_inicio,
-        observaciones,
-        status: true,
-        dueDate,
-      }], { session });
-
-      const newCredito = creditos ? creditos[0] : null;
-
-      if (!newCredito) {
-        throw new InternalServerErrorException('No se pudo crear el crédito');
+      // FIX [P0 renovación]: invariante — rechazar si el cliente ya tiene un crédito activo.
+      // El índice unique_credito_activo_por_cliente actúa como red de seguridad en concurrencia.
+      const creditoActivo = await this.creditoModel.findOne(
+        { cliente: clienteId, status: true },
+        null,
+        { session },
+      ).lean();
+      if (creditoActivo) {
+        throw new BadRequestException(
+          'El cliente ya tiene un crédito activo. Debe saldarlo antes de crear una renovación o un nuevo préstamo.',
+        );
       }
 
-      // Actualizar el estado del cliente dentro de la transacción
-      await this.clienteModel.findByIdAndUpdate(
-        clienteId,
-        { $set: { status: true } },
-        { returnDocument: 'after', session }
-      );
+      // Crear el nuevo documento de crédito dentro de la transacción
+      try {
+        const creditos = await this.creditoModel.create([{
+          cliente: clienteId,
+          ruta: rutaId,
+          valor_credito,
+          interes: calculatedInteres,
+          total_cuotas,
+          total_pagar: calculatedTotalPagar,
+          valor_cuota: calculatedValorCuota,
+          frecuencia_cobro,
+          fecha_inicio,
+          observaciones,
+          status: true,
+          dueDate,
+        }], { session });
 
-      // Preparar y retornar el DTO fuera de la transacción para mayor eficiencia
-      const createdCreditForDto = {
-        ...newCredito.toObject(),
-        abonos: 0,
-        saldo: calculatedTotalPagar,
-        daysOverdue: 0,
-        state: this.creditCalculatorSvc.classifyClient(0),
-        paidToday: false,
-      };
+        const newCredito = creditos ? creditos[0] : null;
 
-      return createdCreditForDto;
+        if (!newCredito) {
+          throw new InternalServerErrorException('No se pudo crear el crédito');
+        }
+
+        // Actualizar el estado del cliente dentro de la transacción
+        await this.clienteService.setStatus(clienteId, true, session);
+
+        // Preparar y retornar el DTO fuera de la transacción para mayor eficiencia
+        const createdCreditForDto = {
+          ...newCredito.toObject(),
+          abonos: 0,
+          saldo: calculatedTotalPagar,
+          daysOverdue: 0,
+          state: this.creditCalculatorSvc.classifyClient(0),
+          paidToday: false,
+        };
+
+        return createdCreditForDto;
+      } catch (createError: any) {
+        // Duplicate key del índice unique_credito_activo_por_cliente (carrera concurrente)
+        if (createError?.code === 11000) {
+          throw new BadRequestException(
+            'El cliente ya tiene un crédito activo. Debe saldarlo antes de crear una renovación o un nuevo préstamo.',
+          );
+        }
+        throw createError;
+      }
     } catch (error) {
       throw error;
     }
@@ -200,7 +219,7 @@ export class CreditoService {
 
     try {
       // 1. Obtener la ruta (para currency, timeZone)
-      const ruta = await this.rutaModel.findById(rutaId, null, { session }).lean();
+      const ruta = await this.rutaService.findContextById(rutaId, session);
       if (!ruta) {
         throw new NotFoundException(`Ruta con id ${rutaId} no existe`);
       }
@@ -240,9 +259,11 @@ export class CreditoService {
         calculatedValorCuota = valor_cuota;
       }
 
-      // Fecha de inicio: si el crédito es virgen, probablemente sea hoy. Se puede usar la existente o forzar hoy.
-      // En este ejemplo, se recalcula siempre con la zona horaria (como hacía el original)
-      const fecha_inicio = this.dateFnsAdapter.getStartOfTodayInTimeZone(ruta.timeZone);
+      // FIX [P1 bug rutaId]: el schema usa `ruta`, no `rutaId`. Antes se escribía un
+      // campo fantasma y la afiliación real no se actualizaba.
+      // FIX [P1]: conservar fecha_inicio original al editar monto/cuotas; solo
+      // recalcular dueDate a partir de esa fecha (no forzar "hoy").
+      const fecha_inicio = credito.fecha_inicio;
 
       const dueDate = this.creditCalculatorSvc.getDueDate(
         frecuencia_cobro,
@@ -256,14 +277,13 @@ export class CreditoService {
         { _id: creditoId },
         {
           $set: {
-            rutaId, // si se permite cambiar de ruta (ojo con reglas de negocio)
+            ruta: rutaId,
             valor_credito,
             total_cuotas,
             frecuencia_cobro,
             interes: calculatedInteres,
             valor_cuota: calculatedValorCuota,
             total_pagar: calculatedTotalPagar,
-            fecha_inicio,
             dueDate,
           },
         },
@@ -293,20 +313,24 @@ export class CreditoService {
       throw new NotFoundException(`Credito con el id ${creditoId} no existe`);
     }
 
-    // Actualizar status del cliente a false (inactivo) al eliminar el crédito
+    // FIX [P0 renovación]: solo marcar cliente sin crédito activo si no queda otro status:true.
     const clienteId = deletedCredito.cliente;
-    await this.clienteModel.findByIdAndUpdate(
-      clienteId,
-      { $set: { status: false } },
-      { session }
-    );
+    const otroActivo = await this.creditoModel.exists({
+      cliente: clienteId,
+      status: true,
+      _id: { $ne: deletedCredito._id },
+    }).session(session);
+
+    if (!otroActivo) {
+      await this.clienteService.setStatus(clienteId, false, session);
+    }
 
     return deletedCredito;
   }
 
   async getCreditosByRuta(rutaId?: string): Promise<CreditoEntity[]> {
 
-    const ruta = await this.rutaModel.findById(rutaId).lean();
+    const ruta = await this.rutaService.findContextById(rutaId);
 
     if (!ruta) throw new NotFoundException(`Ruta con el id ${rutaId} no existe`);
 
@@ -356,9 +380,7 @@ export class CreditoService {
     session?: ClientSession
   ): Promise<CreditoEntity> {
 
-    const sessionOption = { session: session || null };
-
-    const ruta = await this.rutaModel.findById(rutaId, null, sessionOption);
+    const ruta = await this.rutaService.findContextById(rutaId, session);
 
     if (!ruta) throw new NotFoundException(`Ruta con el id ${rutaId} no existe`);
 
@@ -394,7 +416,7 @@ export class CreditoService {
   // LÓGICA ACTUALIZADA: Un cliente solo puede tener un crédito activo a la vez
   async handlePaymentMade(creditoId: string, rutaId: string, clienteId: string, session?: ClientSession) {
     const creditDetails = await this.getCreditoById(creditoId, rutaId, session);
-    const cliente = await this.clienteModel.findById(clienteId, null, { session })
+    const cliente = await this.clienteService.findByIdLean(clienteId, session);
     if (!cliente) {
       throw new NotFoundException(`Cliente con ID ${clienteId} no encontrado.`);
     }
@@ -428,11 +450,7 @@ export class CreditoService {
     }
 
     try {
-      await this.clienteModel.updateOne(
-        { _id: clienteId },
-        { $set: { status: updatedClienteStatus } },
-        { session }
-      );
+      await this.clienteService.setStatus(clienteId, updatedClienteStatus, session);
     } catch (error) {
       this.logger.error(`Error actualizando cliente ${clienteId}: ${error.message}`, error.stack);
       throw error;
@@ -464,10 +482,23 @@ export class CreditoService {
     }
   }
 
+  // FIX [P1 turno]: listados ordenan por Cliente.turno; el endpoint de turno
+  // escribía Credito.turno y el cobrador no veía el reorder. Fuente de verdad = Cliente.turno.
   async updateTurno(id: string, updateCreditoDto: UpdateCreditoDto) {
     try {
+      if (updateCreditoDto.turno === undefined || updateCreditoDto.turno === null) {
+        throw new BadRequestException('turno es requerido');
+      }
 
-      await this.creditoModel.findByIdAndUpdate(id, updateCreditoDto, { returnDocument: 'after' });
+      const credito = await this.creditoModel.findById(id).lean();
+      if (!credito) {
+        throw new NotFoundException(`Credito con el id ${id} no existe`);
+      }
+
+      await this.clienteService.setTurno(credito.cliente, updateCreditoDto.turno);
+
+      // Mantener Credito.turno alineado por compatibilidad con lecturas antiguas
+      await this.creditoModel.findByIdAndUpdate(id, { $set: { turno: updateCreditoDto.turno } });
 
       return true;
 
@@ -519,7 +550,176 @@ export class CreditoService {
 
   }
 
+  // --- APIs de consulta/comando para otros módulos (Vertical 1–4: sin @InjectModel ajeno) ---
+
+  /** Ownership: resolver ruta a partir de un crédito. */
+  async getRutaByCreditoId(
+    creditoId: string,
+  ): Promise<{ exists: false } | { exists: true; rutaId: string | null }> {
+    const credito = await this.creditoModel.findById(creditoId).select('ruta').lean();
+    if (!credito) return { exists: false };
+    return {
+      exists: true,
+      rutaId: credito.ruta ? credito.ruta.toString() : null,
+    };
+  }
+
+  /** Cliente.findOne: crédito activo del cliente (o null). */
+  async getActiveCreditoForCliente(
+    clienteId: string,
+    rutaId: string,
+    session?: ClientSession,
+  ): Promise<CreditoEntity | null> {
+    const credito = await this.creditoModel
+      .findOne({ cliente: clienteId, status: true })
+      .session(session || null);
+    if (!credito) return null;
+    return this.getCreditoById(credito._id.toString(), rutaId, session);
+  }
+
+  /** Conteos / borrado usados por RutaService */
+  async deleteManyByRuta(rutaId: string, session: ClientSession): Promise<void> {
+    await this.creditoModel.deleteMany({ ruta: rutaId }).session(session);
+  }
+
+  async findIdsAndValorByRuta(
+    rutaId: string,
+    status?: boolean,
+  ): Promise<Array<{ valor_credito: number; status?: boolean }>> {
+    const filter: any = { ruta: rutaId };
+    if (status !== undefined) filter.status = status;
+    return this.creditoModel.find(filter).select('valor_credito status').lean();
+  }
+
+  /**
+   * Cartera y ganancia potencial de créditos activos (antes inline en RutaService.findOne).
+   */
+  async getCarteraYGananciaByRuta(rutaId: Types.ObjectId | string): Promise<{
+    cartera: number;
+    ganancia_total: number;
+  }> {
+    const rutaObjectId =
+      typeof rutaId === 'string' ? new mongoose.Types.ObjectId(rutaId) : rutaId;
+
+    const metrics = await this.creditoModel.aggregate([
+      { $match: { ruta: rutaObjectId, status: true } },
+      {
+        $lookup: {
+          from: 'movimientoCaja',
+          localField: '_id',
+          foreignField: 'credito',
+          as: 'allPayments',
+          pipeline: [
+            {
+              $match: {
+                tipoMovimiento: TipoMovimiento.INGRESO,
+                subTipo: SubTipo.PAGOCREDITO,
+              },
+            },
+          ],
+        },
+      },
+      {
+        $addFields: {
+          abonos: {
+            $reduce: {
+              input: '$allPayments',
+              initialValue: 0,
+              in: { $add: ['$$value', '$$this.monto'] },
+            },
+          },
+        },
+      },
+      {
+        $project: {
+          saldo: { $subtract: ['$total_pagar', '$abonos'] },
+          ganancia_credito: { $subtract: ['$total_pagar', '$valor_credito'] },
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          cartera: { $sum: '$saldo' },
+          ganancia_total: { $sum: '$ganancia_credito' },
+        },
+      },
+    ]);
+
+    return {
+      cartera: metrics.length > 0 ? metrics[0].cartera : 0,
+      ganancia_total: metrics.length > 0 ? metrics[0].ganancia_total : 0,
+    };
+  }
+
+  /** Clientes con crédito activo iniciado antes de startOfDay (pendientes de caja). */
+  async getClienteIdsConCreditoActivoAntesDe(
+    rutaId: string,
+    startOfDayUtc: Date,
+    session?: ClientSession,
+  ): Promise<string[]> {
+    const result = await this.creditoModel
+      .aggregate([
+        {
+          $match: {
+            ruta: new mongoose.Types.ObjectId(rutaId),
+            status: true,
+            fecha_inicio: { $lt: startOfDayUtc },
+          },
+        },
+        { $group: { _id: '$cliente' } },
+      ])
+      .session(session || null);
+
+    return result.map((c) => c._id.toString());
+  }
+
+  /** Pretendido / total clientes activos al abrir caja. */
+  async getCreditSummaryForRuta(rutaId: string): Promise<{
+    pretendido: number;
+    totalClientes: number;
+    clientesPendietes: number;
+  }> {
+    const result = await this.creditoModel.aggregate([
+      {
+        $match: {
+          status: true,
+          ruta: new mongoose.Types.ObjectId(rutaId),
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          pretendido: { $sum: '$valor_cuota' },
+          totalClientes: { $sum: 1 },
+        },
+      },
+    ]);
+
+    if (result.length > 0) {
+      return {
+        pretendido: result[0].pretendido,
+        totalClientes: result[0].totalClientes,
+        clientesPendietes: result[0].totalClientes,
+      };
+    }
+
+    return { pretendido: 0, totalClientes: 0, clientesPendietes: 0 };
+  }
+
+  /** Reportes: agregaciones sin exponer el model. */
+  async aggregatePipeline<T = any>(pipeline: PipelineStage[]): Promise<T[]> {
+    return this.creditoModel.aggregate<T>(pipeline);
+  }
+
+  // FIX [P1]: repropagar HttpException (404/400) en lugar de enmascararlas como 500
   private handleExceptions(error: any) {
+    if (
+      error instanceof NotFoundException ||
+      error instanceof BadRequestException ||
+      error instanceof InternalServerErrorException
+    ) {
+      throw error;
+    }
     this.logger.error(error);
     throw new InternalServerErrorException("Por favor revisa los logs")
   }

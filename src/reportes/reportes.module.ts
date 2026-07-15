@@ -1,29 +1,26 @@
-import { Module } from '@nestjs/common';
-import { MongooseModule } from '@nestjs/mongoose';
+import { Module, forwardRef } from '@nestjs/common';
 
-import { Empresa, EmpresaSchema } from '../empresa/schemas/empresa.schema';
-import { Ruta, RutaSchema } from '../ruta/schema/ruta.schema';
-import { Cliente, ClienteSchema } from '../cliente/schema/cliente.schema';
-import { Credito, CreditoSchema } from '../credito/schemas/credito.schema';
-import { Caja, CajaSchema } from '../caja/schemas/caja.schema';
-import {
-  MovimientoCaja,
-  MovimientoCajaSchema,
-} from '../movimientoCaja/schemas/caja-movimiento.schemas';
 import { DateFnsAdapter } from '../common/wrappers/date-fns.adapter';
 import { ReportesController } from './reportes.controller';
 import { ReportesService } from './reportes.service';
+import { MovimientoCajaModule } from '../movimientoCaja/movimiento-caja.module';
+import { EmpresaModule } from '../empresa/empresa.module';
+import { RutaModule } from '../ruta/ruta.module';
+import { ClienteModule } from '../cliente/cliente.module';
+import { CreditoModule } from '../credito/credito.module';
+import { CajaModule } from '../caja/caja.module';
 
+/**
+ * Reportes P2: sin forFeature ajenos — solo módulos dueños + facades.
+ */
 @Module({
   imports: [
-    MongooseModule.forFeature([
-      { name: Empresa.name, schema: EmpresaSchema },
-      { name: Ruta.name, schema: RutaSchema },
-      { name: Cliente.name, schema: ClienteSchema },
-      { name: Credito.name, schema: CreditoSchema },
-      { name: Caja.name, schema: CajaSchema },
-      { name: MovimientoCaja.name, schema: MovimientoCajaSchema },
-    ]),
+    EmpresaModule,
+    forwardRef(() => RutaModule),
+    forwardRef(() => ClienteModule),
+    forwardRef(() => CreditoModule),
+    forwardRef(() => CajaModule),
+    forwardRef(() => MovimientoCajaModule),
   ],
   controllers: [ReportesController],
   providers: [ReportesService, DateFnsAdapter],

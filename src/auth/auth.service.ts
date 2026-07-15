@@ -1,7 +1,7 @@
 import { Request } from 'express';
-import { Injectable, UnauthorizedException, Logger, BadRequestException, InternalServerErrorException, NotFoundException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, Logger, BadRequestException, InternalServerErrorException, NotFoundException, Inject, forwardRef } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, isValidObjectId } from 'mongoose';
+import { ClientSession, Model, Types, isValidObjectId } from 'mongoose';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from "bcrypt";
 
@@ -11,9 +11,8 @@ import { UpdateUserDto } from './dto/update-user.dto';
 import { LogAuth } from 'src/log-auth/entities/log-auth.entity';
 import { User } from './schemas/user.schema';
 import { UserEntity } from './entities/user.entity';
-import { DateFnsAdapter } from 'src/common/wrappers/date-fns.adapter';
-import { Caja } from 'src/caja/schemas/caja.schema';
-import { startOfDay } from 'date-fns';
+import { CajaDayCheckService } from 'src/caja/caja-day-check.service';
+import { EmpresaService } from 'src/empresa/empresa.service';
 
 @Injectable()
 export class AuthService {
@@ -28,9 +27,11 @@ export class AuthService {
       private readonly logAuth: Model<LogAuth>,
 
       private readonly jwtService: JwtService,
-      private readonly dateFnsAdapter: DateFnsAdapter,
-      @InjectModel(Caja.name)
-      private readonly cajaModel: Model<Caja>,
+
+      private readonly cajaDayCheckService: CajaDayCheckService,
+
+      @Inject(forwardRef(() => EmpresaService))
+      private readonly empresaService: EmpresaService,
    ) { }
 
    async create(createUserDto: CreateUserDto): Promise<User> {
@@ -219,6 +220,15 @@ export class AuthService {
 
    public async deleteUser(id: string): Promise<string> {
       try {
+         const user = await this.userModel.findById(id);
+         if (!user) {
+            throw new NotFoundException(`Usuario con id ${id} no existe`);
+         }
+
+         // FIX [P1 dual-refs]: $pull de Empresa.employes (vía EmpresaService)
+         if (user.empresa) {
+            await this.empresaService.pullEmploye(user.empresa, user._id);
+         }
 
          await this.userModel.findByIdAndDelete(id);
          return id;
@@ -230,24 +240,70 @@ export class AuthService {
       }
    }
 
+   /** Ruta.delete: localizar cobrador asignado a la ruta. */
+   async findOneByRuta(
+      rutaId: string,
+      session?: ClientSession,
+   ): Promise<{ _id: string } | null> {
+      const user = await this.userModel
+         .findOne({ ruta: rutaId })
+         .select('_id')
+         .session(session || null)
+         .lean();
+      if (!user) return null;
+      return { _id: user._id.toString() };
+   }
+
+   /** Ruta.delete: quitar referencia ruta del usuario. */
+   async unsetRuta(
+      userId: string | Types.ObjectId,
+      session?: ClientSession,
+   ): Promise<void> {
+      await this.userModel.findByIdAndUpdate(
+         userId,
+         { $unset: { ruta: 1 } },
+         { session: session || undefined },
+      );
+   }
+
+   /** Empresa: lectura lean por id. */
+   async findByIdLean(
+      id: string,
+      select?: string,
+   ): Promise<{ _id: string; empresa?: string | null } | null> {
+      let query = this.userModel.findById(id);
+      if (select) query = query.select(select);
+      const user = await query.lean();
+      if (!user) return null;
+      return {
+         _id: user._id.toString(),
+         empresa: user.empresa ? user.empresa.toString() : null,
+      };
+   }
+
+   async deleteById(id: string, session?: ClientSession): Promise<void> {
+      await this.userModel.findByIdAndDelete(id).session(session || null);
+   }
+
+   async setEmpresa(
+      userId: string,
+      empresaId: string | Types.ObjectId,
+   ): Promise<void> {
+      const user = await this.userModel.findById(userId);
+      if (!user) {
+         throw new NotFoundException(`Usuario con id ${userId} no existe`);
+      }
+      user.empresa = new Types.ObjectId(empresaId.toString()) as any;
+      await user.save();
+   }
+
    private getJwtToken(payload: JwtPayload): string {
       const token = this.jwtService.sign(payload);
       return token;
    }
 
    private async checkCaja(idRuta: string, timeZone: string) {
-      const caja = await this.cajaModel.findOne({
-         ruta: idRuta
-      }).sort({ fecha: -1 })
-
-      const startOfDayUtc = this.dateFnsAdapter.getStartOfTodayInTimeZone(timeZone);
-
-      if (!this.dateFnsAdapter.isEqual(caja.fecha, startOfDayUtc)) {
-         return false
-      }
-
-      return true;
-
+      return this.cajaDayCheckService.isUltimaCajaDeHoy(idRuta, timeZone);
    }
 
    private handleExceptions(error: any) {

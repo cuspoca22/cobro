@@ -1,9 +1,6 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { Model, Types } from 'mongoose';
+import { Types } from 'mongoose';
 import { differenceInDays } from 'date-fns';
-
-import { Empresa } from '../../empresa/schemas/empresa.schema';
-import { Ruta } from '../../ruta/schema/ruta.schema';
 
 export interface RutaContext {
   rutaId: Types.ObjectId;
@@ -17,6 +14,18 @@ export interface EmpresaContext {
   nombre: string;
   rutas: RutaContext[];
 }
+
+export type EmpresaLeanForReportes = {
+  rutas?: unknown[];
+  name: string;
+};
+
+export type RutaLeanForReportes = {
+  _id: Types.ObjectId;
+  nombre: string;
+  timeZone?: string;
+  currency: string;
+};
 
 const MAX_RANGO_DIAS = 365;
 
@@ -33,13 +42,16 @@ export function validarRangoFechas(fechaInicio: string, fechaFin: string): void 
   }
 }
 
+/**
+ * Vertical reportes: ya no recibe Models; usa facades lean de módulos dueños.
+ */
 export async function resolveEmpresaContext(
-  empresaModel: Model<Empresa>,
-  rutaModel: Model<Ruta>,
+  loadEmpresa: (id: string) => Promise<EmpresaLeanForReportes | null>,
+  loadRutas: (ids: Types.ObjectId[]) => Promise<RutaLeanForReportes[]>,
   empresaId: string,
   rutaId?: string,
 ): Promise<EmpresaContext> {
-  const empresa = await empresaModel.findById(empresaId).select('rutas name').lean();
+  const empresa = await loadEmpresa(empresaId);
   if (!empresa) {
     throw new NotFoundException(`Empresa con ID ${empresaId} no encontrada`);
   }
@@ -69,10 +81,7 @@ export async function resolveEmpresaContext(
     };
   }
 
-  const rutas = await rutaModel
-    .find({ _id: { $in: filtroRutas } })
-    .select('nombre timeZone currency')
-    .lean();
+  const rutas = await loadRutas(filtroRutas);
 
   return {
     empresaId: new Types.ObjectId(empresaId),

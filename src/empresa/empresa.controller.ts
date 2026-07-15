@@ -13,7 +13,8 @@ import { CreateRutaDto } from '../ruta/dto/create-ruta.dto';
 export class EmpresaController {
   constructor(private readonly empresaService: EmpresaService) {}
 
-  @Auth()
+  // FIX [P0 seguridad]: crear empresa solo para roles elevados (antes: cualquier JWT).
+  @Auth(ValidRoles.admin, ValidRoles.superAdmin)
   @Post()
   create(@Body() createEmpresaDto: CreateEmpresaDto) {
     return this.empresaService.create(createEmpresaDto);
@@ -28,6 +29,8 @@ export class EmpresaController {
     return this.empresaService.findAll(empresa);
   }
 
+  // FIX [P0 seguridad]: endpoint público que listaba empresas/rutas abiertas.
+  @Auth(ValidRoles.admin, ValidRoles.superAdmin, ValidRoles.supervisor)
   @Get('get-open-rutas')
   findEmpresaWithRutasOpened(){
     return this.empresaService.findEmpresaWithRutasOpened()
@@ -100,7 +103,8 @@ export class EmpresaController {
     return this.empresaService.addRuta(empresaID, rutaDto)
   }
 
-  @Auth()
+  // FIX [P0 seguridad]: asignar owner / borrar empresa requiere roles elevados.
+  @Auth(ValidRoles.admin, ValidRoles.superAdmin)
   @Patch('add-owner')
   addOwner(
     @Query('empresa', ParseMongoIdPipe) empresa: string,
@@ -109,14 +113,14 @@ export class EmpresaController {
     return this.empresaService.addOwner(empresa, user);
   }
 
-  @Auth()
+  @Auth(ValidRoles.admin, ValidRoles.superAdmin)
   @Delete(':id')
   remove(@Param('id') id: string) {
     return this.empresaService.remove(+id);
   }
 
-  //cierres y aperturas de rutas
-  // @Auth()
+  // FIX [P0 seguridad]: stub openorclose estaba público (@Auth comentado).
+  @Auth(ValidRoles.admin, ValidRoles.superAdmin, ValidRoles.supervisor)
   @Get('ruta/openorclose/:idEmpresa/:idRuta')
   openOrCloseRuta(
     @Param('idEmpresa', ParseMongoIdPipe) idEmpresa: string,

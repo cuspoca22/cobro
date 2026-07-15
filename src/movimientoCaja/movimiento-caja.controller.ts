@@ -1,11 +1,13 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from "@nestjs/common";
 
-import { Auth, GetUser } from '../auth/decorators';
+import { Auth } from '../auth/decorators';
+import { ValidRoles } from '../auth/interfaces';
 import { MovimientoCajaService } from "./movimiento-caja.service";
 import { CreateMovimientoCajaDto, UpdateMovimientoCajaDto, ResumenOficinaQueryDto } from "./dto";
 import { ParseMongoIdPipe } from '../common/pipes/parse-mongo-id.pipe';
 import { CreateCreditoDto, UpdateCreditoDto } from "src/credito/dto";
 import { RutaAbierta } from "src/common/decorators";
+import { RutaOwnership } from "src/common/ownership";
 
 @Auth()
 @Controller("movimiento-caja")
@@ -15,6 +17,10 @@ export class MovimientoCajaController {
     private movimientoCajaService: MovimientoCajaService
   ) { }
 
+  @RutaOwnership({
+    rutaId: { in: 'query', key: 'rutaId' },
+    creditoId: { in: 'query', key: 'creditoId' },
+  })
   @Get('historial-pagos')
   async historialPagos(
     @Query('rutaId') rutaId: string,
@@ -23,6 +29,7 @@ export class MovimientoCajaController {
     return this.movimientoCajaService.getHistorialPagos(rutaId, creditoId);
   }
 
+  @RutaOwnership({ rutaId: { in: 'query', key: 'rutaId' } })
   @Get("resumen-por-ruta")
   async getResumenDiarioPorRuta(
     @Query('rutaId') rutaId: string,
@@ -32,6 +39,7 @@ export class MovimientoCajaController {
   }
 
   @RutaAbierta()
+  @RutaOwnership({ rutaId: { in: 'body', key: 'rutaId' } })
   @Post('add')
   async createPago(
     @Body() createMovimientoCajaDto: CreateMovimientoCajaDto
@@ -40,6 +48,7 @@ export class MovimientoCajaController {
   }
 
   @RutaAbierta()
+  @RutaOwnership({ rutaId: { in: 'body', key: 'rutaId' } })
   @Post('renovacion')
   addRenovacion(
     @Body() createCreditoDto: CreateCreditoDto
@@ -48,6 +57,7 @@ export class MovimientoCajaController {
   }
 
   @RutaAbierta()
+  @RutaOwnership({ movimientoId: { in: 'params', key: 'movimentoId' } })
   @Patch('update-pago/:movimentoId')
   async updatePago(
     @Body() updateMovimientoCajaDto: UpdateMovimientoCajaDto,
@@ -57,6 +67,7 @@ export class MovimientoCajaController {
   }
 
   @RutaAbierta()
+  @RutaOwnership({ rutaId: { in: 'body', key: 'rutaId' } })
   @Post('oficina')
   async createGasto(
     @Body() createMovimientoDto: CreateMovimientoCajaDto,
@@ -64,11 +75,15 @@ export class MovimientoCajaController {
     return await this.movimientoCajaService.addOficinaMovimiento(createMovimientoDto);
   }
 
+  @RutaOwnership({ rutaId: { in: 'query', key: 'rutaId' } })
   @Get('oficina/resumen')
   async getResumenOficina(@Query() query: ResumenOficinaQueryDto) {
     return this.movimientoCajaService.getResumenOficina(query.rutaId, query.fecha);
   }
 
+  @RutaAbierta()
+  @Auth(ValidRoles.admin, ValidRoles.superAdmin, ValidRoles.supervisor, ValidRoles.cobrador)
+  @RutaOwnership({ movimientoId: { in: 'params', key: 'movimientoId' } })
   @Patch('update/:movimientoId')
   async updateMovimiento(
     @Body() updateMovimientoCajaDto: UpdateMovimientoCajaDto,
@@ -77,6 +92,9 @@ export class MovimientoCajaController {
     return this.movimientoCajaService.updateMovimiento(movimientoId, updateMovimientoCajaDto);
   }
 
+  @RutaAbierta()
+  @Auth(ValidRoles.admin, ValidRoles.superAdmin, ValidRoles.supervisor)
+  @RutaOwnership({ creditoId: { in: 'params', key: 'creditoId' } })
   @Patch('update-credito/:creditoId')
   async updateCredito(
     @Body() updateCreditoDto: UpdateCreditoDto,
@@ -85,6 +103,12 @@ export class MovimientoCajaController {
     return this.movimientoCajaService.updateCredito(creditoId, updateCreditoDto);
   }
 
+  @RutaAbierta()
+  @Auth(ValidRoles.admin, ValidRoles.superAdmin, ValidRoles.supervisor)
+  @RutaOwnership({
+    creditoId: { in: 'params', key: 'creditoId' },
+    movimientoId: { in: 'params', key: 'movimientoId' },
+  })
   @Delete('delete-credito/:creditoId/:movimientoId')
   async deleteCredito(
     @Param('creditoId', ParseMongoIdPipe) creditoId: string,

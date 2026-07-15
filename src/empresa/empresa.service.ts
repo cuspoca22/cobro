@@ -1,8 +1,8 @@
-import { Injectable, Logger, BadRequestException, InternalServerErrorException, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException, InternalServerErrorException, NotFoundException, Inject, forwardRef } from '@nestjs/common';
 import { CreateEmpresaDto } from './dto/create-empresa.dto';
 import { UpdateEmpresaDto } from './dto/update-empresa.dto';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { ClientSession, Model, Types } from 'mongoose';
 
 import { Empresa } from './schemas/empresa.schema';
 import { RutaService } from '../ruta/ruta.service';
@@ -13,7 +13,6 @@ import { CreateRutaDto } from '../ruta/dto/create-ruta.dto';
 import { User } from 'src/auth/schemas/user.schema';
 import { EmpresaEntity } from './entities/empresa.entity';
 import { Ruta } from '../ruta/schema/ruta.schema';
-import { Types } from 'mongoose';
 
 @Injectable()
 export class EmpresaService {
@@ -24,10 +23,10 @@ export class EmpresaService {
     @InjectModel(Empresa.name)
     private readonly empresaModel: Model<Empresa>,
 
-    @InjectModel(User.name)
-    private readonly userModel: Model<User>,
+    @Inject(forwardRef(() => RutaService))
     private rutaSvc: RutaService,
 
+    @Inject(forwardRef(() => AuthService))
     private authSvc: AuthService,
     private clienteSrc: ClienteService,
   ) { }
@@ -221,15 +220,17 @@ export class EmpresaService {
 
   async deleteEmpleado(idEmpresa: string, empleado: string) {
 
-    const user = await this.userModel.findById(empleado);
+    const user = await this.authSvc.findByIdLean(empleado);
     if (!user) throw new NotFoundException('No existe el usuario');
     const empresa = await this.empresaModel.findById(idEmpresa);
     if (!empresa) throw new NotFoundException('No existe la empresa');
 
     try {
-      empresa.employes = (empresa.employes as Types.ObjectId[]).filter(empId => !empId.equals(user._id));
+      empresa.employes = (empresa.employes as Types.ObjectId[]).filter(
+        empId => empId.toString() !== user._id,
+      );
       await empresa.save();
-      await this.userModel.findByIdAndDelete(empleado);
+      await this.authSvc.deleteById(empleado);
     } catch (error) {
       this.handleExceptions(error)
     }
@@ -273,16 +274,15 @@ export class EmpresaService {
 
   async addOwner(idEmpresa: string, user: string) {
     const empresa = await this.findOne(idEmpresa);
-    const owner = await this.userModel.findById(user)
+    const owner = await this.authSvc.findByIdLean(user);
 
     if (!owner) throw new NotFoundException('El usuario no existe');
 
     try {
 
-      empresa.owner = owner._id;
-      owner.empresa = empresa._id;
+      empresa.owner = new Types.ObjectId(owner._id);
       await empresa.save();
-      await owner.save();
+      await this.authSvc.setEmpresa(user, empresa._id.toString());
       return true;
 
     } catch (error) {
@@ -309,6 +309,39 @@ export class EmpresaService {
 
   getAllEmpresas() {
     return this.empresaModel.find();
+  }
+
+  /** Reportes / facades: lectura lean sin populate. */
+  async findByIdLean(id: string, select?: string): Promise<any | null> {
+    let query = this.empresaModel.findById(id);
+    if (select) query = query.select(select);
+    return query.lean();
+  }
+
+  /** Cascada delete ruta: $pull Empresa.rutas. */
+  async pullRuta(
+    empresaId: string | Types.ObjectId,
+    rutaId: string | Types.ObjectId,
+    session?: ClientSession,
+  ): Promise<void> {
+    await this.empresaModel.findByIdAndUpdate(
+      empresaId,
+      { $pull: { rutas: rutaId } },
+      { session: session || undefined },
+    );
+  }
+
+  /** Cascada delete user: $pull Empresa.employes. */
+  async pullEmploye(
+    empresaId: string | Types.ObjectId,
+    userId: string | Types.ObjectId,
+    session?: ClientSession,
+  ): Promise<void> {
+    await this.empresaModel.findByIdAndUpdate(
+      empresaId,
+      { $pull: { employes: userId } },
+      { session: session || undefined },
+    );
   }
 
 }

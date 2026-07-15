@@ -5,14 +5,18 @@ import { Auth, GetUser } from '../auth/decorators';
 import { ParseMongoIdPipe } from 'src/common/pipes/parse-mongo-id.pipe';
 import { GetUserDto } from '../auth/dto/get-user.dto';
 import { UpdateCreditoDto } from './dto';
+import { RutaOwnership, RutaOwnershipService } from 'src/common/ownership';
 
 @Auth()
 @Controller('credito')
 export class CreditoController {
 
-  constructor(private readonly creditoService: CreditoService) { }
+  constructor(
+    private readonly creditoService: CreditoService,
+    private readonly ownershipService: RutaOwnershipService,
+  ) { }
 
-  // Este sera el enpoint que se llamara para la parte de rutero en el cliente
+  // Cobrador: su ruta. Admin con ruta asignada también.
   @Get('get-creditos-by-ruta')
   async getCreditosByRuta(
     @GetUser() user: GetUserDto
@@ -20,6 +24,7 @@ export class CreditoController {
     return await this.creditoService.getCreditosByRuta(user.ruta)
   }
 
+  @RutaOwnership({ clienteId: { in: 'query', key: 'clienteId' } })
   @Get('historial')
   async getHistorial(
     @Query('clienteId', ParseMongoIdPipe) clienteId: string,
@@ -27,15 +32,17 @@ export class CreditoController {
     return this.creditoService.getHistorialCreditos(clienteId);
   }
 
-  // Este sera el enpoint para obtener mas detalles de un credito, por ejemplo para saber su historial etc
+  @RutaOwnership({ creditoId: { in: 'params', key: 'creditId' } })
   @Get(':creditId')
   async findOne(
-    @GetUser() user: GetUserDto,
     @Param('creditId', ParseMongoIdPipe) creditId: string,
   ) {
-    return this.creditoService.getCreditoById(creditId, user.ruta);
+    // Usa la ruta real del crédito (admins sin user.ruta también funcionan)
+    const rutaId = await this.ownershipService.resolveRutaId({ creditoId: creditId });
+    return this.creditoService.getCreditoById(creditId, rutaId);
   }
 
+  @RutaOwnership({ creditoId: { in: 'params', key: 'creditoId' } })
   @Patch('turno/:creditoId')
   async updateTurno(
     @Param('creditoId', ParseMongoIdPipe) creditoId: string,

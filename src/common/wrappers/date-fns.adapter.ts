@@ -66,6 +66,20 @@ export class DateFnsAdapter {
     return new Date();
   }
 
+  /**
+   * Hora/minuto de pared en una TZ IANA (para crons multi-zona).
+   */
+  public getLocalTimeParts(
+    timeZone: string,
+    date: Date = this.nowUtc(),
+  ): { hours: number; minutes: number } {
+    const dateInZone = this.convertUtcToZonedTime(date, timeZone);
+    return {
+      hours: dateInZone.getHours(),
+      minutes: dateInZone.getMinutes(),
+    };
+  }
+
   public startOfDayUtc(date: Date): Date {
     return new Date(
       Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),

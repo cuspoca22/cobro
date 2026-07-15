@@ -4,21 +4,18 @@ import { Cron } from '@nestjs/schedule';
 
 import { CreateRutaDto } from './dto/create-ruta.dto';
 import { UpdateRutaDto } from './dto/update-ruta.dto';
-import { Connection, Model, Types } from 'mongoose';
+import { Connection, Model, Types, ClientSession } from 'mongoose';
 import { AuthService } from '../auth/auth.service';
-import { Credito } from '../credito/schemas/credito.schema';
-import { Cliente } from '../cliente/schema/cliente.schema';
-import { GlobalParams } from '../common/dto/global-params.dto';
-import { Caja } from '../caja/schemas/caja.schema';
+import { CreditoService } from '../credito/credito.service';
+import { ClienteService } from '../cliente/cliente.service';
 import { MessageGateway } from 'src/message/message.gateway';
 import { CajaService } from '../caja/caja.service';
 import { DateFnsAdapter } from '../common/wrappers/date-fns.adapter';
 import { Ruta } from './schema/ruta.schema';
-import { User } from '../auth/schemas/user.schema';
-import { MovimientoCaja } from '../movimientoCaja/schemas/caja-movimiento.schemas';
 import { CajaEntity } from '../caja/entities/caja.entity';
-import { SubTipo, TipoMovimiento } from '../movimientoCaja/interfaces';
 import { RutaEntity } from './entities/ruta.entity';
+import { MovimientoCajaService } from '../movimientoCaja/movimiento-caja.service';
+import { EmpresaService } from '../empresa/empresa.service';
 
 @Injectable()
 export class RutaService {
@@ -31,25 +28,26 @@ export class RutaService {
     @InjectModel(Ruta.name)
     private readonly rutaModel: Model<Ruta>,
 
-    @InjectModel(Credito.name)
-    private readonly creditoModel: Model<Credito>,
+    // Vertical 1 P2: Credito/Cliente vía servicios dueños (sin forFeature ajeno)
+    @Inject(forwardRef(() => CreditoService))
+    private readonly creditoService: CreditoService,
 
-    @InjectModel(Cliente.name)
-    private readonly clienteModel: Model<Cliente>,
+    @Inject(forwardRef(() => ClienteService))
+    private readonly clienteService: ClienteService,
 
-    @InjectModel(Caja.name)
-    private readonly cajaModel: Model<Caja>,
-
-    @InjectModel(User.name)
-    private readonly userModel: Model<User>,
-
-    @InjectModel(MovimientoCaja.name)
-    private readonly cajaMovimientoModel: Model<MovimientoCaja>,
+    // Vertical 2: MovimientoCaja vía servicio dueño
+    @Inject(forwardRef(() => MovimientoCajaService))
+    private readonly movimientoCajaService: MovimientoCajaService,
 
     @Inject(forwardRef(() => AuthService))
     private readonly authService: AuthService,
 
+    @Inject(forwardRef(() => CajaService))
     private cajaSvc: CajaService,
+
+    @Inject(forwardRef(() => EmpresaService))
+    private readonly empresaService: EmpresaService,
+
     @InjectConnection() private readonly connection: Connection,
 
     private dateFnsAdapter: DateFnsAdapter,
@@ -81,6 +79,106 @@ export class RutaService {
 
   }
 
+  /**
+   * FIX [P2 interceptor]: lectura mínima para @RutaAbierta.
+   * No populates, counts ni aggregation de cartera — solo estado de apertura.
+   */
+  async getEstadoApertura(id: string): Promise<{
+    _id: string;
+    status: boolean;
+    isLocked: boolean;
+    caja_actual?: string | null;
+  }> {
+    const ruta = await this.rutaModel
+      .findById(id)
+      .select('status isLocked caja_actual')
+      .lean();
+
+    if (!ruta) {
+      throw new NotFoundException(`No existe una ruta con el id ${id}`);
+    }
+
+    return {
+      _id: ruta._id.toString(),
+      status: !!ruta.status,
+      isLocked: !!ruta.isLocked,
+      caja_actual: ruta.caja_actual ? ruta.caja_actual.toString() : null,
+    };
+  }
+
+  /** Contexto mínimo para CreditoService (timeZone/currency) con sesión opcional. */
+  async findContextById(
+    rutaId: string,
+    session?: ClientSession,
+  ): Promise<{ _id: string; timeZone: string; currency: string } | null> {
+    const ruta = await this.rutaModel
+      .findById(rutaId)
+      .select('timeZone currency')
+      .session(session || null)
+      .lean();
+
+    if (!ruta) return null;
+
+    return {
+      _id: ruta._id.toString(),
+      timeZone: ruta.timeZone,
+      currency: ruta.currency,
+    };
+  }
+
+  /**
+   * Hot path MovimientoCaja/Caja: caja_actual + status + timeZone + currency (con session).
+   */
+  async findOperacionContextById(
+    rutaId: string,
+    session?: ClientSession,
+  ): Promise<{
+    _id: string;
+    caja_actual: string | null;
+    status: boolean;
+    timeZone: string;
+    currency: string;
+  } | null> {
+    const ruta = await this.rutaModel
+      .findById(rutaId)
+      .select('caja_actual status timeZone currency')
+      .session(session || null)
+      .lean();
+
+    if (!ruta) return null;
+
+    return {
+      _id: ruta._id.toString(),
+      caja_actual: ruta.caja_actual ? ruta.caja_actual.toString() : null,
+      status: !!ruta.status,
+      timeZone: ruta.timeZone || 'UTC',
+      currency: ruta.currency || 'MXN',
+    };
+  }
+
+  /** Ownership: empresa dueña de la ruta. */
+  async getEmpresaIdByRutaId(
+    rutaId: string,
+  ): Promise<{ exists: false } | { exists: true; empresaId: string | null }> {
+    const ruta = await this.rutaModel.findById(rutaId).select('empresa').lean();
+    if (!ruta) return { exists: false };
+    return {
+      exists: true,
+      empresaId: ruta.empresa ? ruta.empresa.toString() : null,
+    };
+  }
+
+  /** Reportes: find + select + lean genérico. */
+  async findLean(
+    filter: Record<string, any>,
+    options?: { select?: string; sort?: Record<string, 1 | -1> },
+  ): Promise<any[]> {
+    let query = this.rutaModel.find(filter);
+    if (options?.select) query = query.select(options.select);
+    if (options?.sort) query = query.sort(options.sort);
+    return query.lean();
+  }
+
   async findOne(id: string): Promise<any> {
 
     const ruta = await this.rutaModel.findById(id)
@@ -92,64 +190,18 @@ export class RutaService {
       throw new NotFoundException(`No existe una ruta con el id ${id}`);
     }
 
-    const [total_clientes, clientes_activos] = await Promise.all([
-      this.clienteModel.countDocuments({ ruta: ruta._id }),
-      this.clienteModel.countDocuments({ ruta: ruta._id, status: true }),
+    const [total_clientes, clientes_activos, metrics] = await Promise.all([
+      this.clienteService.countByRuta(ruta._id),
+      this.clienteService.countByRuta(ruta._id, true),
+      this.creditoService.getCarteraYGananciaByRuta(ruta._id),
     ]);
-
-    const metrics = await this.creditoModel.aggregate([
-      { $match: { ruta: ruta._id, status: true } },
-      {
-        $lookup: {
-          from: 'movimientoCaja',
-          localField: '_id',
-          foreignField: 'credito',
-          as: 'allPayments',
-          pipeline: [
-            {
-              $match: {
-                tipoMovimiento: TipoMovimiento.INGRESO,
-                subTipo: SubTipo.PAGOCREDITO,
-              }
-            }
-          ]
-        },
-      },
-      {
-        $addFields: {
-          abonos: {
-            $reduce: {
-              input: "$allPayments",
-              initialValue: 0,
-              in: { $add: ["$$value", "$$this.monto"] }
-            }
-          }
-        },
-      },
-      {
-        $project: {
-          saldo: { $subtract: ["$total_pagar", "$abonos"] },
-          ganancia_credito: { $subtract: ["$total_pagar", "$valor_credito"] }
-        }
-      },
-      {
-        $group: {
-          _id: null,
-          cartera: { $sum: "$saldo" },
-          ganancia_total: { $sum: "$ganancia_credito" }
-        }
-      }
-    ]);
-
-    const cartera = metrics.length > 0 ? metrics[0].cartera : 0;
-    const ganancia_total = metrics.length > 0 ? metrics[0].ganancia_total : 0;
 
     return RutaEntity.fromObject({
       ...ruta,
       total_clientes,
       clientes_activos,
-      cartera,
-      ganancia_total
+      cartera: metrics.cartera,
+      ganancia_total: metrics.ganancia_total,
     });
 
   }
@@ -175,26 +227,29 @@ export class RutaService {
         throw new NotFoundException(`La ruta con el id ${id} no existe`);
       }
 
-      const user = await this.userModel.findOne({ ruta: id }).session(session);
+      const user = await this.authService.findOneByRuta(id, session);
 
       this.logger.log(`Iniciando eliminación de la ruta ${id} y sus dependencias...`);
 
-      // 1. Eliminar Movimientos de Caja relacionados a la ruta
-      await this.cajaMovimientoModel.deleteMany({ ruta: id }).session(session);
+      // 1. Eliminar Movimientos de Caja relacionados a la ruta (Vertical 2)
+      await this.movimientoCajaService.deleteManyByRuta(id, session);
 
-      // 2. Eliminar Créditos relacionados a la ruta
-      await this.creditoModel.deleteMany({ ruta: id }).session(session);
-
-      // 3. Eliminar Clientes relacionados a la ruta
-      await this.clienteModel.deleteMany({ ruta: id }).session(session);
+      // 2–3. Créditos y clientes vía servicios dueños (Vertical 1)
+      await this.creditoService.deleteManyByRuta(id, session);
+      await this.clienteService.deleteManyByRuta(id, session);
 
       // 4. Eliminar Cajas relacionadas a la ruta
-      await this.cajaModel.deleteMany({ ruta: id }).session(session);
+      await this.cajaSvc.deleteManyByRuta(id, session);
 
       // 5. Remover la ruta del perfil del usuario si existe
       if (user) {
         this.logger.log(`Limpiando referencia de ruta en el usuario ${user._id}`);
-        await this.userModel.findByIdAndUpdate(user._id, { $unset: { ruta: 1 } }, { session });
+        await this.authService.unsetRuta(user._id, session);
+      }
+
+      // FIX [P1 dual-refs]: $pull del array Empresa.rutas
+      if (ruta.empresa) {
+        await this.empresaService.pullRuta(ruta.empresa, ruta._id, session);
       }
 
       // 6. Eliminar la Ruta
@@ -232,23 +287,19 @@ export class RutaService {
         throw new BadRequestException(`La ruta ya fue cerrada el dia de hoy`);
       }
 
-      const caja = await this.cajaModel.findById(ruta.caja_actual).session(session);
+      const caja = await this.cajaSvc.findByIdLean(ruta.caja_actual, session);
       if (!caja) {
         throw new NotFoundException(`La caja con el id ${ruta.caja_actual} no existe`);
       }
 
-      // cuando la ruta se cierra, actualiza la caja, para que se guarde lo que se trabajo hasta ese preciso momento
-      this.logger.log(`Cerrando ruta ${ruta._id}, actualizando movimientos de caja...`);
-      await this.cajaSvc.getMovimientosResumen(ruta._id.toString(), session)
+      // Snapshot oficial del día: totals desde movimientoCaja + persistidos en Caja
+      this.logger.log(`Cerrando ruta ${ruta._id}, congelando snapshot de caja...`);
+      await this.cajaSvc.congelarSnapshotCierre(ruta._id.toString(), session);
 
       ruta.status = false;
-      ruta.ultima_caja = caja._id;
-      caja.status = false;
-
-      await Promise.all([
-        ruta.save({ session }),
-        caja.save({ session })
-      ]);
+      ruta.ultima_caja = ruta.caja_actual;
+      await this.cajaSvc.markClosed(ruta.caja_actual, session);
+      await ruta.save({ session });
 
       // Confirma la transacción. Si esta línea no se ejecuta, NINGÚN cambio se guardará.
       await session.commitTransaction();
@@ -323,47 +374,82 @@ export class RutaService {
     }
   }
 
-  @Cron('00 00 3 * * *', {
-    name: 'closeAllRutas',
-    timeZone: 'America/Sao_Paulo',
-  })
-  async closeAllRutas() {
-    this.logger.log('Iniciando cierre automático de rutas...');
-    const rutasToClose = await this.rutaModel.find({ status: true }).exec();
+  /**
+   * FIX [P1 cron multi-TZ]:
+   * Antes cerraba/abría todo a las 03:00 / 07:00 America/Sao_Paulo.
+   * Ahora un tick cada 5 min evalúa cada ruta en su `timeZone` local
+   * (Guatemala, México, Colombia, Brasil, etc.).
+   *
+   * Ventana: hora objetivo y minute < 5 (coincide con el intervalo del cron),
+   * close/open son idempotentes (si ya está cerrada/abierta, se registra y sigue).
+   */
+  private static readonly CRON_CLOSE_HOUR = 3;
+  private static readonly CRON_OPEN_HOUR = 7;
+  private static readonly CRON_WINDOW_MINUTES = 5;
+  private static readonly DEFAULT_RUTA_TZ = 'America/Mexico_City';
 
-    for (const ruta of rutasToClose) {
+  @Cron('0 */5 * * * *', {
+    name: 'syncRutasPorZonaHoraria',
+  })
+  async syncRutasPorZonaHoraria() {
+    this.logger.log('Cron multi-TZ: evaluando apertura/cierre por Ruta.timeZone...');
+
+    const rutas = await this.rutaModel
+      .find({})
+      .select('_id status autoOpen timeZone nombre')
+      .lean()
+      .exec();
+
+    for (const ruta of rutas) {
       const rutaId = ruta._id.toString();
+      const timeZone = ruta.timeZone || RutaService.DEFAULT_RUTA_TZ;
+
+      let hours: number;
+      let minutes: number;
       try {
-        const closed = await this.closeRuta(rutaId);
-        if (closed) {
-          this.logger.log(`La ruta ${rutaId} se ha cerrado exitosamente`);
-        }
+        ({ hours, minutes } = this.dateFnsAdapter.getLocalTimeParts(timeZone));
       } catch (error) {
-        this.logger.error(`Error al cerrar la ruta ${rutaId}: ${error.message}`);
+        this.logger.error(
+          `TZ inválida en ruta ${rutaId} (${timeZone}): ${error.message}`,
+        );
+        continue;
       }
-    }
-  }
 
-  @Cron('00 00 7 * * *', {
-    name: 'openAllRutas',
-    timeZone: 'America/Sao_Paulo',
-  })
-  async openAllRutas() {
-    this.logger.log('Iniciando apertura automática de rutas...');
-    const rutasToOpen = await this.rutaModel.find({
-      status: false,
-      autoOpen: true
-    }).exec();
+      const inCloseWindow =
+        hours === RutaService.CRON_CLOSE_HOUR &&
+        minutes < RutaService.CRON_WINDOW_MINUTES;
+      const inOpenWindow =
+        hours === RutaService.CRON_OPEN_HOUR &&
+        minutes < RutaService.CRON_WINDOW_MINUTES;
 
-    for (const ruta of rutasToOpen) {
-      const rutaId = ruta._id.toString();
-      try {
-        const result = await this.openRuta(rutaId);
-        if (result.ok) {
-          this.logger.log(`La ruta ${rutaId} se ha abierto exitosamente`);
+      if (inCloseWindow && ruta.status === true) {
+        try {
+          const closed = await this.closeRuta(rutaId);
+          if (closed) {
+            this.logger.log(
+              `Cierre auto TZ=${timeZone} ruta=${rutaId} (${ruta.nombre || ''})`,
+            );
+          }
+        } catch (error) {
+          this.logger.error(
+            `Error cierre auto ruta ${rutaId}: ${error.message}`,
+          );
         }
-      } catch (error) {
-        this.logger.error(`Error al abrir la ruta ${rutaId}: ${error.message}`);
+      }
+
+      if (inOpenWindow && ruta.status === false && ruta.autoOpen === true) {
+        try {
+          const result = await this.openRuta(rutaId);
+          if (result?.ok) {
+            this.logger.log(
+              `Apertura auto TZ=${timeZone} ruta=${rutaId} (${ruta.nombre || ''})`,
+            );
+          }
+        } catch (error) {
+          this.logger.error(
+            `Error apertura auto ruta ${rutaId}: ${error.message}`,
+          );
+        }
       }
     }
   }
@@ -391,17 +477,14 @@ export class RutaService {
 
     try {
 
-      const [clientes, clientesActivos, creditosActivos, allCreditos] =
+      const [clientes, clientesActivos, allCreditos] =
         await Promise.all([
-          this.clienteModel.countDocuments({ ruta: ruta._id }),
-          this.clienteModel.countDocuments({ ruta: ruta._id, status: true }),
-          this.creditoModel.find({ ruta: ruta._id, status: true }),
-          this.creditoModel.find({ ruta: ruta._id }),
+          this.clienteService.countByRuta(ruta._id),
+          this.clienteService.countByRuta(ruta._id, true),
+          this.creditoService.findIdsAndValorByRuta(ruta._id.toString()),
         ]);
 
       // TODO: CALCULAR EL CARTERA, total_cobrado, total_prestado, clientes, clientes_activos
-      // const cartera = creditosActivos.reduce((sum, credito) => sum + credito.saldo, 0);
-      // const totalCobrado = allCreditos.reduce((sum, credito) => sum + credito.abonos, 0);
       const totalPrestado = allCreditos.reduce((sum, credito) => sum + credito.valor_credito, 0);
 
       await ruta.updateOne({

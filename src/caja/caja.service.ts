@@ -1,16 +1,15 @@
-import { Injectable, Logger, InternalServerErrorException, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, InternalServerErrorException, NotFoundException, BadRequestException, Inject, forwardRef } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import mongoose, { ClientSession, Model, PipelineStage, Types } from 'mongoose';
+import { ClientSession, Model, Types } from 'mongoose';
 
 import { Caja } from './schemas/caja.schema';
-import { Credito } from '../credito/schemas/credito.schema';
 import { DateFnsAdapter } from '../common/wrappers/date-fns.adapter';
-import { SubTipo, TipoMovimiento } from 'src/movimientoCaja/interfaces';
-import { MovimientoCaja } from 'src/movimientoCaja/schemas/caja-movimiento.schemas';
 import { CajaEntity } from './entities/caja.entity';
-import { Ruta } from '../ruta/schema/ruta.schema';
 import { CreateCajaDto } from './dto';
 import { CurrencyService } from '../currency/currency.service';
+import { CreditoService } from '../credito/credito.service';
+import { MovimientoCajaService } from '../movimientoCaja/movimiento-caja.service';
+import { RutaService } from '../ruta/ruta.service';
 
 
 @Injectable()
@@ -22,18 +21,20 @@ export class CajaService {
     @InjectModel(Caja.name)
     private readonly cajaModel: Model<Caja>,
 
-    @InjectModel(Credito.name)
-    private readonly creditoModel: Model<Credito>,
-
-    @InjectModel(Ruta.name)
-    private readonly rutaModel: Model<Ruta>,
-
     private readonly dateFnsAdapter: DateFnsAdapter,
 
-    @InjectModel(MovimientoCaja.name)
-    private readonly cajaMovimientoModel: Model<MovimientoCaja>,
-
     private readonly currencyService: CurrencyService,
+
+    // Vertical 1: consultas de crédito vía CreditoService
+    private readonly creditoService: CreditoService,
+
+    // Vertical 2: ledger vía MovimientoCajaService (sin forFeature ajeno)
+    @Inject(forwardRef(() => MovimientoCajaService))
+    private readonly movimientoCajaService: MovimientoCajaService,
+
+    // V4b: Ruta vía módulo dueño (ciclo Caja ↔ Ruta)
+    @Inject(forwardRef(() => RutaService))
+    private readonly rutaService: RutaService,
   ) { }
 
   /**
@@ -52,6 +53,19 @@ export class CajaService {
       hayUltimaCaja: !!ultimaCaja,
       ultimaCaja: ultimaCaja ? CajaEntity.fromObject(ultimaCaja) : null
     };
+  }
+
+  /** Delega al check liviano usado también por Auth.login. */
+  async isUltimaCajaDeHoy(rutaId: string, timeZone: string): Promise<boolean> {
+    const caja = await this.cajaModel
+      .findOne({ ruta: rutaId })
+      .sort({ fecha: -1 })
+      .lean();
+
+    if (!caja) return false;
+
+    const startOfDayUtc = this.dateFnsAdapter.getStartOfTodayInTimeZone(timeZone);
+    return this.dateFnsAdapter.isEqual(caja.fecha, startOfDayUtc);
   }
 
   /**
@@ -101,56 +115,33 @@ export class CajaService {
    * Calcula el número de clientes pendientes y renovaciones para una ruta y fecha dadas.
    */
   async getClientesPendientesYRenovados(rutaId: string, startOfDayUtc: Date, session?: ClientSession, endOfDayUtc?: Date) {
-    const rutaObjectId = new mongoose.Types.ObjectId(rutaId);
-
     if (!endOfDayUtc) {
       endOfDayUtc = this.dateFnsAdapter.addDays(startOfDayUtc, 1);
     }
 
     // 1. Clientes renovados hoy
-    const clientesRenovados = await this.cajaMovimientoModel.aggregate([
-      {
-        $match: {
-          ruta: rutaObjectId,
-          subTipo: SubTipo.PRESTAMO,
-          fecha: { $gte: startOfDayUtc, $lt: endOfDayUtc }
-        }
-      },
-      { $group: { _id: '$cliente' } }
-    ]).session(session || null);
-
-    const clientesRenovadosIds = clientesRenovados.map(c => c._id.toString());
+    const clientesRenovadosIds = await this.movimientoCajaService.getClienteIdsRenovadosEnRango(
+      rutaId,
+      startOfDayUtc,
+      endOfDayUtc,
+      session,
+    );
     const renovaciones = clientesRenovadosIds.length;
 
     // 2. Clientes con créditos activos al inicio del día (clientes iniciales)
-    const clientesIniciales = await this.creditoModel.aggregate([
-      {
-        $match: {
-          ruta: rutaObjectId,
-          status: true,
-          fecha_inicio: { $lt: startOfDayUtc }
-        }
-      },
-      { $group: { _id: '$cliente' } }
-    ]).session(session || null);
-    const clientesInicialesIds = clientesIniciales.map(c => c._id.toString());
+    const clientesInicialesIds = await this.creditoService.getClienteIdsConCreditoActivoAntesDe(
+      rutaId,
+      startOfDayUtc,
+      session,
+    );
 
     // 3. Clientes que han pagado hoy
-    const clientesQuePagaronHoy = await this.cajaMovimientoModel.aggregate([
-      {
-        $match: {
-          ruta: rutaObjectId,
-          tipoMovimiento: TipoMovimiento.INGRESO,
-          subTipo: SubTipo.PAGOCREDITO,
-          fecha: { $gte: startOfDayUtc, $lt: endOfDayUtc }
-        }
-      },
-      { $group: { _id: '$cliente' } },
-    ]).session(session || null);
-
-    const clientesQuePagaronHoyIds = clientesQuePagaronHoy
-      .filter(c => c._id != null)
-      .map(c => c._id.toString());
+    const clientesQuePagaronHoyIds = await this.movimientoCajaService.getClienteIdsQuePagaronEnRango(
+      rutaId,
+      startOfDayUtc,
+      endOfDayUtc,
+      session,
+    );
 
     // 4. Filtrar renovaciones y pagos que corresponden a clientes iniciales
     const renovacionesIniciales = clientesRenovadosIds.filter(id => clientesInicialesIds.includes(id));
@@ -171,97 +162,118 @@ export class CajaService {
    * Obtiene un resumen de créditos activos.
    */
   async getCreditSummary(rutaId: string) {
-
-    const result = await this.creditoModel.aggregate(
-      [
-        {
-          $match: {
-            status: true,
-            ruta: new Types.ObjectId(rutaId)
-          }
-        },
-        {
-          $group: {
-            _id: null,
-            pretendido: { $sum: '$valor_cuota' },
-            totalClientes: { $sum: 1 }
-          }
-        }
-      ]
-    );
-
-    if (result.length > 0) {
-      return {
-        pretendido: result[0].pretendido,
-        totalClientes: result[0].totalClientes,
-        clientesPendietes: result[0].totalClientes,
-      }
-    }
-
-    return {
-      pretendido: 0,
-      totalClientes: 0,
-      clientesPendietes: 0,
-    }
-
+    return this.creditoService.getCreditSummaryForRuta(rutaId);
   }
 
   /**
-   * Obtiene un resumen de los movimientos de caja para una ruta.
+   * FIX [P0 caja-ledger — modelo final]:
+   * - Día abierto: la verdad es movimientoCaja (recalcular al consultar; NO persistir en cada pago).
+   * - Cierre: se congela un snapshot en el documento Caja para consultas admin históricas.
+   *
+   * @param persistSnapshot si true, escribe aggregates en Caja (solo usar en closeRuta).
    */
-  async getMovimientosResumen(rutaId: string, session?: ClientSession) {
+  async getMovimientosResumen(
+    rutaId: string,
+    session?: ClientSession,
+    options: { persistSnapshot?: boolean } = {},
+  ) {
+    const { persistSnapshot = false } = options;
 
-    const ruta = await this.rutaModel.findById(rutaId).session(session).lean();
+    const ruta = await this.rutaService.findOperacionContextById(rutaId, session);
     if (!ruta) throw new NotFoundException(`Ruta con el id ${rutaId} no existe`);
+    if (!ruta.caja_actual) {
+      throw new NotFoundException(`Ruta ${rutaId} no tiene caja_actual`);
+    }
 
     const caja = await this.cajaModel.findById(ruta.caja_actual).session(session);
     if (!caja) throw new NotFoundException(`Caja con el id ${ruta.caja_actual} no existe`);
 
+    // Caja/ruta ya cerrada: devolver el snapshot oficial sin reescribir
+    if (!persistSnapshot && (!ruta.status || caja.status === false)) {
+      return CajaEntity.fromObject(caja);
+    }
+
     const startOfDayUtc = caja.fecha;
     const endOfDayUtc = this.dateFnsAdapter.addDays(startOfDayUtc, 1);
 
-    const { clientesPendientes, renovaciones } = await this.getClientesPendientesYRenovados(rutaId, startOfDayUtc, session, endOfDayUtc);
-
-    const pipeline = this.getResumenPipeline(rutaId, startOfDayUtc, endOfDayUtc);
-    const result = await this.cajaMovimientoModel.aggregate(pipeline).session(session || null);
+    const { clientesPendientes, renovaciones } = await this.getClientesPendientesYRenovados(
+      rutaId,
+      startOfDayUtc,
+      session,
+      endOfDayUtc,
+    );
 
     const {
       cobro = 0,
       prestamos = 0,
       inversiones = 0,
       gastos = 0,
-      retiros = 0
-    } = result[0] || {};
+      retiros = 0,
+    } = await this.movimientoCajaService.getTotalesLedgerPorRango(
+      rutaId,
+      startOfDayUtc,
+      endOfDayUtc,
+      session,
+    );
 
-    caja.cobro = cobro;
-    caja.prestamo = prestamos;
-    caja.inversion = inversiones;
-    caja.gasto = gastos;
-    caja.retiro = retiros;
-    caja.clientes_pendientes = clientesPendientes;
-    caja.renovaciones = renovaciones;
-    caja.caja_final = this.currencyService.round(
-      caja.base + caja.cobro + caja.inversion - caja.prestamo - caja.gasto - caja.retiro,
+    const cobroR = cobro;
+    const prestamoR = prestamos;
+    const inversionR = inversiones;
+    const gastoR = gastos;
+    const retiroR = retiros;
+    const cajaFinal = this.currencyService.round(
+      caja.base + cobroR + inversionR - prestamoR - gastoR - retiroR,
       ruta.currency,
     );
 
-    await caja.save({ session });
+    if (persistSnapshot) {
+      // Snapshot de cierre: única escritura intencional de aggregates en Caja
+      caja.cobro = cobroR;
+      caja.prestamo = prestamoR;
+      caja.inversion = inversionR;
+      caja.gasto = gastoR;
+      caja.retiro = retiroR;
+      caja.clientes_pendientes = clientesPendientes;
+      caja.renovaciones = renovaciones;
+      caja.caja_final = cajaFinal;
+      await caja.save({ session });
+      return CajaEntity.fromObject(caja);
+    }
 
-    return CajaEntity.fromObject(caja);
+    // Día abierto: devolver cálculo en vivo sin persistir (evita doble fuente de verdad)
+    return CajaEntity.fromObject({
+      ...caja.toObject(),
+      cobro: cobroR,
+      prestamo: prestamoR,
+      inversion: inversionR,
+      gasto: gastoR,
+      retiro: retiroR,
+      clientes_pendientes: clientesPendientes,
+      renovaciones,
+      caja_final: cajaFinal,
+    });
   }
 
   /**
-   * Obtiene la caja actual (resumen de movimientos) para una ruta.
+   * Caja del día en curso: siempre desde movimientoCaja (sin save).
    */
   async currentCaja(rutaId: string) {
-    return await this.getMovimientosResumen(rutaId);
+    return await this.getMovimientosResumen(rutaId, undefined, { persistSnapshot: false });
+  }
+
+  /**
+   * Congela el snapshot oficial al cerrar la ruta (persistir aggregates en Caja).
+   */
+  async congelarSnapshotCierre(rutaId: string, session: ClientSession) {
+    return await this.getMovimientosResumen(rutaId, session, { persistSnapshot: true });
   }
 
   /**
    * Busca cajas históricas para una ruta en una fecha específica (uso de administración).
+   * Lee el snapshot persistido en Caja (no recalcula el ledger).
    */
   async findAll(rutaId: string, fecha: string) {
-    const ruta = await this.rutaModel.findById(rutaId);
+    const ruta = await this.rutaService.findOperacionContextById(rutaId);
     if (!ruta) throw new NotFoundException(`Ruta con el id ${rutaId} no existe`);
 
     const baseDate = new Date(fecha);
@@ -287,6 +299,54 @@ export class CajaService {
     return caja[0];
   }
 
+  /** Reportes: lectura lean de cajas históricas. */
+  async findLean(
+    filter: Record<string, any>,
+    options?: { select?: string; sort?: Record<string, 1 | -1> },
+  ): Promise<any[]> {
+    let query = this.cajaModel.find(filter);
+    if (options?.select) query = query.select(options.select);
+    if (options?.sort) query = query.sort(options.sort);
+    return query.lean();
+  }
+
+  /** Hot path MovimientoCaja: caja por id (ruta + _id) con session. */
+  async findByIdLean(
+    cajaId: string | Types.ObjectId,
+    session?: ClientSession,
+  ): Promise<{ _id: string; ruta: string } | null> {
+    const caja = await this.cajaModel
+      .findById(cajaId)
+      .select('ruta')
+      .session(session || null)
+      .lean();
+
+    if (!caja) return null;
+
+    return {
+      _id: caja._id.toString(),
+      ruta: caja.ruta ? caja.ruta.toString() : '',
+    };
+  }
+
+  /** Cascada delete ruta: borra todas las cajas de la ruta. */
+  async deleteManyByRuta(rutaId: string, session: ClientSession): Promise<void> {
+    await this.cajaModel.deleteMany({ ruta: rutaId }).session(session);
+  }
+
+  /** closeRuta: marca caja del día como cerrada. */
+  async markClosed(
+    cajaId: string | Types.ObjectId,
+    session: ClientSession,
+  ): Promise<void> {
+    const caja = await this.cajaModel.findById(cajaId).session(session);
+    if (!caja) {
+      throw new NotFoundException(`Caja con el id ${cajaId} no existe`);
+    }
+    caja.status = false;
+    await caja.save({ session });
+  }
+
   /**
    * Manejador centralizado de excepciones para el servicio.
    */
@@ -301,94 +361,5 @@ export class CajaService {
 
     this.logger.error(`Error no controlado en CajaService: ${error.message}`, error.stack);
     throw new InternalServerErrorException("Error interno en el servidor, por favor revise los logs");
-  }
-
-  /**
-   * Genera el pipeline de agregación para el resumen de movimientos.
-   */
-  private getResumenPipeline(rutaId: string, startOfDayUtc: Date, endOfDayUtc: Date): PipelineStage[] {
-    return [
-      {
-        $match: {
-          ruta: new Types.ObjectId(rutaId),
-          fecha: { $gte: startOfDayUtc, $lt: endOfDayUtc }
-        },
-      },
-      {
-        $group: {
-          _id: null,
-          cobro: {
-            $sum: {
-              $cond: [
-                {
-                  $and: [
-                    { $eq: ['$tipoMovimiento', TipoMovimiento.INGRESO] },
-                    { $eq: ['$subTipo', SubTipo.PAGOCREDITO] },
-                  ],
-                },
-                '$monto',
-                0,
-              ],
-            },
-          },
-          prestamos: {
-            $sum: {
-              $cond: [
-                {
-                  $and: [
-                    { $eq: ['$tipoMovimiento', TipoMovimiento.EGRESO] },
-                    { $eq: ['$subTipo', SubTipo.PRESTAMO] },
-                  ],
-                },
-                '$monto',
-                0,
-              ],
-            },
-          },
-          inversiones: {
-            $sum: {
-              $cond: [
-                {
-                  $and: [
-                    { $eq: ['$tipoMovimiento', TipoMovimiento.INGRESO] },
-                    { $eq: ['$subTipo', SubTipo.INVERSION] },
-                  ],
-                },
-                '$monto',
-                0,
-              ],
-            },
-          },
-          gastos: {
-            $sum: {
-              $cond: [
-                {
-                  $and: [
-                    { $eq: ['$tipoMovimiento', TipoMovimiento.EGRESO] },
-                    { $eq: ['$subTipo', SubTipo.GASTO] },
-                  ],
-                },
-                '$monto',
-                0,
-              ],
-            },
-          },
-          retiros: {
-            $sum: {
-              $cond: [
-                {
-                  $and: [
-                    { $eq: ['$tipoMovimiento', TipoMovimiento.EGRESO] },
-                    { $eq: ['$subTipo', SubTipo.RETIRO] },
-                  ],
-                },
-                '$monto',
-                0,
-              ],
-            },
-          },
-        },
-      },
-    ];
   }
 }

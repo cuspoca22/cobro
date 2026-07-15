@@ -1,25 +1,19 @@
 import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, PipelineStage, Types } from 'mongoose';
-import { MovimientoCaja } from '../movimientoCaja/schemas/caja-movimiento.schemas';
+import { PipelineStage, Types } from 'mongoose';
 import { SubTipo } from '../movimientoCaja/interfaces/sub-tipo.enum';
 import { GetRenovacionesDto } from './dto/get-renovaciones.dto';
 import { DateFnsAdapter } from '../common/wrappers/date-fns.adapter';
 import { EmpresaReport } from './interfaces';
-import { Empresa } from '../empresa/schemas/empresa.schema';
-import { Ruta } from '../ruta/schema/ruta.schema';
+import { MovimientoCajaService } from '../movimientoCaja/movimiento-caja.service';
+import { EmpresaService } from '../empresa/empresa.service';
 
 @Injectable()
 export class RenovacionService {
   private readonly logger = new Logger(RenovacionService.name);
 
   constructor(
-    @InjectModel(MovimientoCaja.name)
-    private readonly movimientoModel: Model<MovimientoCaja>,
-    @InjectModel(Empresa.name)
-    private readonly empresaModel: Model<Empresa>,
-    @InjectModel(Ruta.name)
-    private readonly rutaModel: Model<Ruta>,
+    private readonly movimientoCajaService: MovimientoCajaService,
+    private readonly empresaService: EmpresaService,
     private readonly dateFnsAdapter: DateFnsAdapter,
   ) { }
 
@@ -28,7 +22,7 @@ export class RenovacionService {
     const startOfDay = this.dateFnsAdapter.startOfDayUtc(new Date(fecha));
     const endOfDay = this.dateFnsAdapter.addDays(startOfDay, 1);
 
-    const empresa = await this.empresaModel.findById(empresaId).select('rutas name').lean();
+    const empresa = await this.empresaService.findByIdLean(empresaId, 'rutas name');
     if (!empresa) {
       throw new NotFoundException(`Empresa con ID ${empresaId} no encontrada`);
     }
@@ -163,7 +157,7 @@ export class RenovacionService {
     ];
 
     try {
-      const results = await this.movimientoModel.aggregate<EmpresaReport>(pipeline);
+      const results = await this.movimientoCajaService.aggregatePipeline<EmpresaReport>(pipeline);
       return results[0] || {
         empresaId: new Types.ObjectId(empresaId),
         nombre: empresaNombre,

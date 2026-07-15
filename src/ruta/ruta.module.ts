@@ -6,45 +6,33 @@ import { RutaService } from './ruta.service';
 import { RutaController } from './ruta.controller';
 import { Ruta, RutaSchema } from './schema/ruta.schema';
 import { AuthModule } from 'src/auth/auth.module';
-import { Credito, CreditoSchema } from '../credito/schemas/credito.schema';
-import { Cliente, ClienteSchema } from '../cliente/schema/cliente.schema';
-import { Caja, CajaSchema } from '../caja/schemas/caja.schema';
 import { MessageModule } from 'src/message/message.module';
 import { CajaModule } from '../caja/caja.module';
 import { DateFnsAdapter } from '../common/wrappers/date-fns.adapter';
-import { User, UserSchema } from 'src/auth/schemas/user.schema';
-import { MovimientoCaja, MovimientoCajaSchema } from 'src/movimientoCaja/schemas/caja-movimiento.schemas';
+import { OwnershipModule } from 'src/common/ownership';
+import { CreditoModule } from '../credito/credito.module';
+import { ClienteModule } from '../cliente/cliente.module';
+import { MovimientoCajaModule } from '../movimientoCaja/movimiento-caja.module';
+import { EmpresaModule } from '../empresa/empresa.module';
 
+/**
+ * V4b: solo registra Ruta. Caja/User/Empresa vía módulos dueños.
+ */
 @Module({
   imports: [
     ConfigModule,
     forwardRef(() => CajaModule),
     forwardRef(() => AuthModule),
+    forwardRef(() => EmpresaModule),
+    forwardRef(() => CreditoModule),
+    forwardRef(() => ClienteModule),
+    forwardRef(() => MovimientoCajaModule),
+    forwardRef(() => OwnershipModule),
     MongooseModule.forFeature([
       {
         name: Ruta.name,
         schema: RutaSchema
       },
-      {
-        name: Credito.name,
-        schema: CreditoSchema
-      },
-      {
-        name: Cliente.name,
-        schema: ClienteSchema
-      },
-      {
-        name: Caja.name,
-        schema: CajaSchema
-      },
-      {
-        name: User.name,
-        schema: UserSchema
-      },
-      {
-        name: MovimientoCaja.name,
-        schema: MovimientoCajaSchema
-      }
     ]),
     MessageModule,
   ],
