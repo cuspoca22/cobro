@@ -23,7 +23,11 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
-    "reporte:mejores-clientes": "cross-env NODE_ENV=development ts-node scripts/mejor-clientes-ruta.ts"
+    "reporte:mejores-clientes": "cross-env NODE_ENV=development ts-node scripts/mejor-clientes-ruta.ts",
+    "db:diagnostico-duplicados": "cross-env NODE_ENV=development ts-node scripts/diagnostico-duplicados-indices.ts",
+    "db:diagnostico-duplicados:reporte": "cross-env NODE_ENV=development ts-node scripts/diagnostico-duplicados-indices.ts exports/duplicados.json",
+    "db:limpiar-duplicados": "cross-env NODE_ENV=development ts-node scripts/diagnostico-duplicados-indices.ts --aplicar exports/duplicados-post-limpieza.json",
+    "db:limpiar-duplicados:con-indices": "cross-env NODE_ENV=development ts-node scripts/diagnostico-duplicados-indices.ts --aplicar --crear-indices exports/duplicados-post-limpieza.json"
   },
   "dependencies": {
     "@nestjs/common": "^11.1.13",

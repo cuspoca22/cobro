@@ -1,9 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { CreatePruebaDto } from './dto/create-prueba.dto';
 import { UpdatePruebaDto } from './dto/update-prueba.dto';
-import { InjectModel } from '@nestjs/mongoose';
-import { Credito } from 'src/credito/schemas/credito.schema';
-import { Model } from 'mongoose';
 import { RutaService } from '../ruta/ruta.service';
 import { CreditCalculatorService } from 'src/credito/helpers/credit.calculator.service';
 
@@ -13,11 +10,7 @@ export class PruebasService {
   private logger = new Logger("Migration:AddDueDate");
 
   constructor(
-    @InjectModel(Credito.name)
-    private readonly creditoModel: Model<Credito>,
-
     private readonly rutaSvc: RutaService,
-
     private creditCalculatorService: CreditCalculatorService
   ) { }
 

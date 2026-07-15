@@ -20,18 +20,17 @@ export class UserEntity {
       const { _id, id } = object;
       const userId = (id || _id)?.toString() || null;
 
-      if (object.rol === ValidRoles.cobrador && object.ruta) {
-         object.ruta = object.ruta._id;
-      }
+      const rutaRaw = object.ruta?._id ?? object.ruta;
+      const empresaRaw = object.empresa?._id ?? object.empresa;
 
       return new UserEntity({
          id: userId,
          nombre: object.nombre,
          username: object.username,
          rol: object.rol,
-         empresa: object.empresa,
+         empresa: empresaRaw ? empresaRaw.toString() : undefined,
          estado: object.estado,
-         ruta: object.ruta,
+         ruta: rutaRaw ? rutaRaw.toString() : undefined,
          puedeActualizarUbicacion: object.puedeActualizarUbicacion
       });
 

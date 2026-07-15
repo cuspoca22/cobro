@@ -110,3 +110,18 @@ MovimientoCajaSchema.index({ caja: 1, createdAt: 1 }); // Para obtener movimient
 MovimientoCajaSchema.index({ caja: 1, tipoMovimiento: 1, subTipo: 1 }); // Para filtrar rápidamente por tipo y subtipo
 MovimientoCajaSchema.index({ credito: 1, tipoMovimiento: 1, subTipo: 1, createdAt: -1 })
 MovimientoCajaSchema.index({ subTipo: 1, fecha: 1, ruta: 1 });
+
+// FIX [P0 doble-pago]: índice único parcial — un solo pago_credito por crédito y día calendario
+// (fecha ya se normaliza a start-of-day en timeZone de la ruta). Evita race conditions
+// donde dos requests concurrentes pasan el findOne y ambos insertan.
+MovimientoCajaSchema.index(
+  { credito: 1, subTipo: 1, fecha: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      subTipo: 'pago_credito',
+      credito: { $type: 'objectId' },
+    },
+    name: 'unique_pago_credito_por_dia',
+  },
+);

@@ -15,8 +15,12 @@ export class UserRolGuard implements CanActivate {
       context: ExecutionContext,
    ): boolean | Promise<boolean> | Observable<boolean> {
 
-
-      const validRoles: string[] = this.reflector.get(META_ROLES, context.getHandler());
+      // FIX [P0 seguridad]: getAllAndOverride lee roles del handler Y de la clase.
+      // Antes solo leía el handler, así que @Auth(roles) en el controller se ignoraba.
+      const validRoles: string[] = this.reflector.getAllAndOverride(META_ROLES, [
+         context.getHandler(),
+         context.getClass(),
+      ]);
 
       if (!validRoles) return true;
       if (validRoles.length === 0) return true;
@@ -31,6 +35,6 @@ export class UserRolGuard implements CanActivate {
          return true
       }
 
-      throw new ForbiddenException('El usuario no tiene ul rol valido')
+      throw new ForbiddenException('El usuario no tiene un rol válido')
    }
 }

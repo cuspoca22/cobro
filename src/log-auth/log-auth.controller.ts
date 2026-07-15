@@ -2,7 +2,12 @@ import { Controller, Get, Post, Body, Patch, Param, Delete } from '@nestjs/commo
 import { LogAuthService } from './log-auth.service';
 import { CreateLogAuthDto } from './dto/create-log-auth.dto';
 import { UpdateLogAuthDto } from './dto/update-log-auth.dto';
+import { Auth } from 'src/auth/decorators';
+import { ValidRoles } from 'src/auth/interfaces';
 
+// FIX [P0 seguridad]: CRUD de auditoría de login estaba 100% público.
+// Ahora requiere JWT + rol admin/superAdmin.
+@Auth(ValidRoles.admin, ValidRoles.superAdmin)
 @Controller('log-auth')
 export class LogAuthController {
   constructor(private readonly logAuthService: LogAuthService) {}

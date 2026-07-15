@@ -128,9 +128,18 @@ export class Credito {
 
 export const CreditoSchema = SchemaFactory.createForClass(Credito);
 
-/** Índice compuesto para buscar créditos activos de un cliente */
-CreditoSchema.index({ cliente: 1, status: 1 });
 /** Índice compuesto para consultas de ruta ordenadas por fecha límite */
 CreditoSchema.index({ ruta: 1, dueDate: 1 });
 /** Índice compuesto para filtrar créditos activos por ruta */
 CreditoSchema.index({ ruta: 1, status: 1 });
+
+// FIX [P0 renovación]: como máximo un crédito activo (status:true) por cliente.
+// Reemplaza el índice no-único {cliente, status} que no enforceaba la invariante de negocio.
+CreditoSchema.index(
+  { cliente: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { status: true },
+    name: 'unique_credito_activo_por_cliente',
+  },
+);
