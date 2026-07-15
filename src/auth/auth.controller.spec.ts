@@ -60,7 +60,6 @@ describe('AuthController', () => {
         password: 'password123',
         nombre: 'New User',
         rol: 'ADMIN',
-        close_ruta: false
       };
 
       const result = { ...mockUserEntity, ...createUserDto };

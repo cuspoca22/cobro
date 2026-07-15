@@ -19,7 +19,6 @@ describe('AuthController (e2e)', () => {
     password: 'Password123!',
     nombre: 'Admin User E2E',
     rol: 'ADMIN',
-    close_ruta: false,
     estado: true
   };
 
@@ -28,7 +27,6 @@ describe('AuthController (e2e)', () => {
     password: 'Password123!',
     nombre: 'Test User E2E',
     rol: 'CLIENTE',
-    close_ruta: false,
     estado: true
   };
 

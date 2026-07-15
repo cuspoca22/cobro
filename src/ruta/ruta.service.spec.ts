@@ -2,11 +2,12 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { RutaService } from './ruta.service';
 import { getModelToken } from '@nestjs/mongoose';
 import { Ruta } from './schema/ruta.schema';
-import { Credito } from '../credito/schemas/credito.schema';
-import { Cliente } from '../cliente/schema/cliente.schema';
-import { Caja } from '../caja/schemas/caja.schema';
 import { AuthService } from '../auth/auth.service';
 import { CajaService } from '../caja/caja.service';
+import { CreditoService } from '../credito/credito.service';
+import { ClienteService } from '../cliente/cliente.service';
+import { MovimientoCajaService } from '../movimientoCaja/movimiento-caja.service';
+import { EmpresaService } from '../empresa/empresa.service';
 import { MessageGateway } from '../message/message.gateway';
 import { DateFnsAdapter } from '../common/wrappers/date-fns.adapter';
 import { getConnectionToken } from '@nestjs/mongoose';
@@ -18,11 +19,12 @@ import { UpdateRutaDto } from './dto/update-ruta.dto';
 describe('RutaService', () => {
   let service: RutaService;
   let mockRutaModel: any;
-  let mockCajaModel: any;
   let mockCajaService: any;
-  let mockCreditoModel: any;
-  let mockClienteModel: any;
+  let mockCreditoService: any;
+  let mockClienteService: any;
+  let mockMovimientoCajaService: any;
   let mockAuthService: any;
+  let mockEmpresaService: any;
   let mockConnection: any;
   let mockSession: any;
 
@@ -43,30 +45,42 @@ describe('RutaService', () => {
       create: jest.fn(),
       find: jest.fn(),
       findByIdAndUpdate: jest.fn(),
-    };
-
-    mockCajaModel = {
-      findById: jest.fn(),
-      create: jest.fn(),
-      save: jest.fn(),
+      findByIdAndDelete: jest.fn(),
     };
 
     mockCajaService = {
       getUltimaCaja: jest.fn(),
       create: jest.fn(),
       getMovimientosResumen: jest.fn().mockResolvedValue(undefined),
+      congelarSnapshotCierre: jest.fn().mockResolvedValue(undefined),
+      deleteManyByRuta: jest.fn(),
+      markClosed: jest.fn().mockResolvedValue(undefined),
+      findByIdLean: jest.fn().mockResolvedValue(null),
     };
 
-    mockCreditoModel = {
-      find: jest.fn(),
+    mockCreditoService = {
+      deleteManyByRuta: jest.fn(),
+      findIdsAndValorByRuta: jest.fn().mockResolvedValue([]),
+      getCarteraYGananciaByRuta: jest.fn().mockResolvedValue({ cartera: 0, ganancia_total: 0 }),
     };
 
-    mockClienteModel = {
-      countDocuments: jest.fn(),
+    mockClienteService = {
+      countByRuta: jest.fn().mockResolvedValue(0),
+      deleteManyByRuta: jest.fn(),
+    };
+
+    mockMovimientoCajaService = {
+      deleteManyByRuta: jest.fn(),
     };
 
     mockAuthService = {
       findOne: jest.fn(),
+      findOneByRuta: jest.fn().mockResolvedValue(null),
+      unsetRuta: jest.fn(),
+    };
+
+    mockEmpresaService = {
+      pullRuta: jest.fn(),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -77,24 +91,28 @@ describe('RutaService', () => {
           useValue: mockRutaModel,
         },
         {
-          provide: getModelToken(Credito.name),
-          useValue: mockCreditoModel,
-        },
-        {
-          provide: getModelToken(Cliente.name),
-          useValue: mockClienteModel,
-        },
-        {
-          provide: getModelToken(Caja.name),
-          useValue: mockCajaModel,
-        },
-        {
           provide: AuthService,
           useValue: mockAuthService,
         },
         {
           provide: CajaService,
           useValue: mockCajaService,
+        },
+        {
+          provide: CreditoService,
+          useValue: mockCreditoService,
+        },
+        {
+          provide: ClienteService,
+          useValue: mockClienteService,
+        },
+        {
+          provide: MovimientoCajaService,
+          useValue: mockMovimientoCajaService,
+        },
+        {
+          provide: EmpresaService,
+          useValue: mockEmpresaService,
         },
         {
           provide: MessageGateway,
@@ -104,6 +122,7 @@ describe('RutaService', () => {
           provide: DateFnsAdapter,
           useValue: {
             getStartOfTodayInTimeZone: jest.fn().mockReturnValue(new Date()),
+            getLocalTimeParts: jest.fn().mockReturnValue({ hour: 10, minute: 0 }),
           },
         },
         {
@@ -230,15 +249,14 @@ describe('RutaService', () => {
 
     it('should throw NotFoundException if caja does not exist', async () => {
       const rutaId = new Types.ObjectId().toHexString();
-      const mockRuta = { caja_actual: new Types.ObjectId().toHexString(), status: true };
+      const cajaId = new Types.ObjectId().toHexString();
+      const mockRuta = { _id: rutaId, caja_actual: cajaId, status: true };
 
       mockRutaModel.findById.mockReturnValue({
         session: jest.fn().mockResolvedValue(mockRuta),
       });
 
-      mockCajaModel.findById.mockReturnValue({
-        session: jest.fn().mockResolvedValue(null),
-      });
+      mockCajaService.findByIdLean.mockResolvedValue(null);
 
       await expect(service.closeRuta(rutaId)).rejects.toThrow(NotFoundException);
       expect(mockSession.abortTransaction).toHaveBeenCalled();
@@ -254,31 +272,23 @@ describe('RutaService', () => {
         save: jest.fn(),
         ultima_caja: null
       };
-      const mockCaja = {
-        _id: cajaId,
-        status: true,
-        save: jest.fn()
-      };
 
       mockRutaModel.findById.mockReturnValue({
         session: jest.fn().mockResolvedValue(mockRuta),
       });
 
-      mockCajaModel.findById.mockReturnValue({
-        session: jest.fn().mockResolvedValue(mockCaja),
-      });
-
-      mockCajaService.getMovimientosResumen.mockResolvedValue(undefined);
+      mockCajaService.findByIdLean.mockResolvedValue({ _id: cajaId, ruta: rutaId });
+      mockCajaService.congelarSnapshotCierre.mockResolvedValue(undefined);
+      mockCajaService.markClosed.mockResolvedValue(undefined);
 
       const result = await service.closeRuta(rutaId);
 
       expect(result).toBe(true);
       expect(mockRuta.status).toBe(false);
       expect(mockRuta.ultima_caja).toBe(cajaId);
-      expect(mockCaja.status).toBe(false);
       expect(mockRuta.save).toHaveBeenCalled();
-      expect(mockCaja.save).toHaveBeenCalled();
-      expect(mockCajaService.getMovimientosResumen).toHaveBeenCalledWith(rutaId, expect.anything());
+      expect(mockCajaService.markClosed).toHaveBeenCalledWith(cajaId, expect.anything());
+      expect(mockCajaService.congelarSnapshotCierre).toHaveBeenCalledWith(rutaId, expect.anything());
       expect(mockSession.commitTransaction).toHaveBeenCalled();
       expect(mockSession.endSession).toHaveBeenCalled();
     });
@@ -311,19 +321,32 @@ describe('RutaService', () => {
       const mockRuta = { _id: rutaId, nombre: 'Ruta 1' };
       mockRutaModel.findById.mockReturnValue({
         populate: jest.fn().mockReturnValue({
-          populate: jest.fn().mockResolvedValue(mockRuta),
+          populate: jest.fn().mockReturnValue({
+            lean: jest.fn().mockResolvedValue(mockRuta),
+          }),
         }),
+      });
+      mockClienteService.countByRuta
+        .mockResolvedValueOnce(0)
+        .mockResolvedValueOnce(0);
+      mockCreditoService.getCarteraYGananciaByRuta.mockResolvedValue({
+        cartera: 0,
+        ganancia_total: 0,
       });
 
       const result = await service.findOne(rutaId);
-      expect(result).toEqual(mockRuta);
+      expect(result).toBeDefined();
+      expect(mockClienteService.countByRuta).toHaveBeenCalledTimes(2);
+      expect(mockCreditoService.getCarteraYGananciaByRuta).toHaveBeenCalled();
     });
 
     it('should throw NotFoundException if ruta not found', async () => {
       const rutaId = 'someId';
       mockRutaModel.findById.mockReturnValue({
         populate: jest.fn().mockReturnValue({
-          populate: jest.fn().mockResolvedValue(null),
+          populate: jest.fn().mockReturnValue({
+            lean: jest.fn().mockResolvedValue(null),
+          }),
         }),
       });
 
@@ -353,23 +376,19 @@ describe('RutaService', () => {
       };
 
       mockRutaModel.findById.mockResolvedValue(mockRuta);
-      mockClienteModel.countDocuments.mockImplementation((filter) => {
-        if (filter.status === true) return Promise.resolve(5); // clientes activos
-        return Promise.resolve(10); // total clientes
-      });
-      mockCreditoModel.find.mockImplementation((filter) => {
-        if (filter.status === true) return Promise.resolve([]); // creditos activos
-        return Promise.resolve([
-          { valor_credito: 1000 },
-          { valor_credito: 2000 }
-        ]); // todos los creditos for totalPrestado calculation
-      });
+      mockClienteService.countByRuta
+        .mockResolvedValueOnce(10)
+        .mockResolvedValueOnce(5);
+      mockCreditoService.findIdsAndValorByRuta.mockResolvedValue([
+        { valor_credito: 1000 },
+        { valor_credito: 2000 },
+      ]);
 
       await service.actualizarRuta(rutaId);
 
       expect(mockRutaModel.findById).toHaveBeenCalledWith(rutaId);
-      expect(mockClienteModel.countDocuments).toHaveBeenCalledTimes(2);
-      expect(mockCreditoModel.find).toHaveBeenCalledTimes(2);
+      expect(mockClienteService.countByRuta).toHaveBeenCalledTimes(2);
+      expect(mockCreditoService.findIdsAndValorByRuta).toHaveBeenCalledTimes(1);
 
       // Total prestado = 1000 + 2000 = 3000
       expect(mockRuta.updateOne).toHaveBeenCalledWith({

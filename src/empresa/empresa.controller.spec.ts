@@ -123,7 +123,6 @@ describe('EmpresaController', () => {
         password: 'pwd',
         nombre: 'User',
         rol: 'COBRADOR',
-        close_ruta: false
       };
       const result = true;
       mockEmpresaService.addEmploye.mockResolvedValue(result);

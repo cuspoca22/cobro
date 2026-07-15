@@ -2,22 +2,21 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { CajaService } from './caja.service';
 import { getModelToken } from '@nestjs/mongoose';
 import { Caja } from './schemas/caja.schema';
-import { Credito } from '../credito/schemas/credito.schema';
-import { Ruta } from '../ruta/schema/ruta.schema';
-import { MovimientoCaja } from '../movimientoCaja/schemas/caja-movimiento.schemas';
 import { DateFnsAdapter } from '../common/wrappers/date-fns.adapter';
 import { CurrencyService } from '../currency/currency.service';
+import { CreditoService } from '../credito/credito.service';
+import { MovimientoCajaService } from '../movimientoCaja/movimiento-caja.service';
+import { RutaService } from '../ruta/ruta.service';
 import { Types } from 'mongoose';
 import { NotFoundException, BadRequestException } from '@nestjs/common';
 import { CreateCajaDto } from './dto';
-import { SubTipo, TipoMovimiento } from '../movimientoCaja/interfaces';
 
 describe('CajaService', () => {
   let service: CajaService;
   let cajaModel: any;
-  let creditoModel: any;
-  let rutaModel: any;
-  let cajaMovimientoModel: any;
+  let creditoService: any;
+  let movimientoCajaService: any;
+  let rutaService: any;
   let dateFnsAdapter: any;
 
   // Mock data helpers
@@ -52,23 +51,29 @@ describe('CajaService', () => {
       session: jest.fn().mockReturnThis(),
     });
 
-    const mockCreditoModel = {
-      aggregate: jest.fn().mockReturnValue({
-        session: jest.fn().mockResolvedValue([]),
+    const mockCreditoService = {
+      getClienteIdsConCreditoActivoAntesDe: jest.fn().mockResolvedValue([]),
+      getCreditSummaryForRuta: jest.fn().mockResolvedValue({
+        pretendido: 0,
+        totalClientes: 0,
+        clientesPendietes: 0,
       }),
     };
 
-    const mockRutaModel = {
-      findById: jest.fn().mockReturnValue({
-        session: jest.fn().mockReturnThis(),
-        lean: jest.fn().mockResolvedValue(null),
+    const mockMovimientoCajaService = {
+      getClienteIdsRenovadosEnRango: jest.fn().mockResolvedValue([]),
+      getClienteIdsQuePagaronEnRango: jest.fn().mockResolvedValue([]),
+      getTotalesLedgerPorRango: jest.fn().mockResolvedValue({
+        cobro: 0,
+        prestamos: 0,
+        inversiones: 0,
+        gastos: 0,
+        retiros: 0,
       }),
     };
 
-    const mockCajaMovimientoModel = {
-      aggregate: jest.fn().mockReturnValue({
-        session: jest.fn().mockResolvedValue([]),
-      }),
+    const mockRutaService = {
+      findOperacionContextById: jest.fn().mockResolvedValue(null),
     };
 
     const mockDateFnsAdapter = {
@@ -85,19 +90,19 @@ describe('CajaService', () => {
       providers: [
         CajaService,
         { provide: getModelToken(Caja.name), useValue: mockCajaModel },
-        { provide: getModelToken(Credito.name), useValue: mockCreditoModel },
-        { provide: getModelToken(Ruta.name), useValue: mockRutaModel },
-        { provide: getModelToken(MovimientoCaja.name), useValue: mockCajaMovimientoModel },
         { provide: DateFnsAdapter, useValue: mockDateFnsAdapter },
         { provide: CurrencyService, useValue: mockCurrencyService },
+        { provide: CreditoService, useValue: mockCreditoService },
+        { provide: MovimientoCajaService, useValue: mockMovimientoCajaService },
+        { provide: RutaService, useValue: mockRutaService },
       ],
     }).compile();
 
     service = module.get<CajaService>(CajaService);
     cajaModel = module.get(getModelToken(Caja.name));
-    creditoModel = module.get(getModelToken(Credito.name));
-    rutaModel = module.get(getModelToken(Ruta.name));
-    cajaMovimientoModel = module.get(getModelToken(MovimientoCaja.name));
+    creditoService = module.get(CreditoService);
+    movimientoCajaService = module.get(MovimientoCajaService);
+    rutaService = module.get(RutaService);
     dateFnsAdapter = module.get(DateFnsAdapter);
   });
 
@@ -205,20 +210,13 @@ describe('CajaService', () => {
 
   describe('getClientesPendientesYRenovados', () => {
     it('debe calcular correctamente los clientes pendientes y renovados', async () => {
-      // Mock para clientes renovados
-      cajaMovimientoModel.aggregate.mockReturnValueOnce({
-        session: jest.fn().mockResolvedValue([{ _id: 'cliente1' }])
-      });
-
-      // Mock para clientes iniciales (créditos activos antes de startOfDayUtc)
-      creditoModel.aggregate.mockReturnValueOnce({
-        session: jest.fn().mockResolvedValue([{ _id: 'cliente1' }, { _id: 'cliente2' }, { _id: 'cliente3' }])
-      });
-
-      // Mock para clientes que pagaron hoy
-      cajaMovimientoModel.aggregate.mockReturnValueOnce({
-        session: jest.fn().mockResolvedValue([{ _id: 'cliente2' }])
-      });
+      movimientoCajaService.getClienteIdsRenovadosEnRango.mockResolvedValueOnce(['cliente1']);
+      creditoService.getClienteIdsConCreditoActivoAntesDe.mockResolvedValueOnce([
+        'cliente1',
+        'cliente2',
+        'cliente3',
+      ]);
+      movimientoCajaService.getClienteIdsQuePagaronEnRango.mockResolvedValueOnce(['cliente2']);
 
       const result = await service.getClientesPendientesYRenovados(mockRutaId, mockDate);
 
@@ -230,25 +228,34 @@ describe('CajaService', () => {
       expect(result.renovaciones).toBe(1);
       expect(result.clientesPendientes).toBe(1);
 
-      expect(cajaMovimientoModel.aggregate).toHaveBeenCalledTimes(2);
-      expect(creditoModel.aggregate).toHaveBeenCalledTimes(1);
+      expect(movimientoCajaService.getClienteIdsRenovadosEnRango).toHaveBeenCalledTimes(1);
+      expect(movimientoCajaService.getClienteIdsQuePagaronEnRango).toHaveBeenCalledTimes(1);
+      expect(creditoService.getClienteIdsConCreditoActivoAntesDe).toHaveBeenCalledTimes(1);
     });
   });
 
   describe('getCreditSummary', () => {
     it('debe devolver el resumen correcto cuando hay créditos', async () => {
-      const mockSummary = { pretendido: 1000, totalClientes: 20 };
-      creditoModel.aggregate.mockResolvedValue([mockSummary]);
+      creditoService.getCreditSummaryForRuta.mockResolvedValue({
+        pretendido: 1000,
+        totalClientes: 20,
+        clientesPendietes: 20,
+      });
 
       const result = await service.getCreditSummary(mockRutaId);
 
       expect(result.pretendido).toBe(1000);
       expect(result.totalClientes).toBe(20);
       expect(result.clientesPendietes).toBe(20);
+      expect(creditoService.getCreditSummaryForRuta).toHaveBeenCalledWith(mockRutaId);
     });
 
     it('debe devolver ceros si no hay créditos', async () => {
-      creditoModel.aggregate.mockResolvedValue([]);
+      creditoService.getCreditSummaryForRuta.mockResolvedValue({
+        pretendido: 0,
+        totalClientes: 0,
+        clientesPendietes: 0,
+      });
 
       const result = await service.getCreditSummary(mockRutaId);
 
@@ -260,18 +267,16 @@ describe('CajaService', () => {
 
   describe('getMovimientosResumen', () => {
     it('debe lanzar NotFoundException si la ruta no existe', async () => {
-      rutaModel.findById.mockReturnValue({
-        session: jest.fn().mockReturnThis(),
-        lean: jest.fn().mockResolvedValue(null),
-      });
+      rutaService.findOperacionContextById.mockResolvedValue(null);
       await expect(service.getMovimientosResumen(mockRutaId)).rejects.toThrow(NotFoundException);
     });
 
     it('debe lanzar NotFoundException si la caja no existe', async () => {
-      const mockRuta = { caja_actual: mockCajaId, timeZone: 'UTC' };
-      rutaModel.findById.mockReturnValue({
-        session: jest.fn().mockReturnThis(),
-        lean: jest.fn().mockResolvedValue(mockRuta),
+      rutaService.findOperacionContextById.mockResolvedValue({
+        _id: mockRutaId,
+        caja_actual: mockCajaId,
+        status: true,
+        timeZone: 'UTC',
       });
       cajaModel.findById.mockReturnValue({
         session: jest.fn().mockResolvedValue(null),
@@ -280,66 +285,122 @@ describe('CajaService', () => {
       await expect(service.getMovimientosResumen(mockRutaId)).rejects.toThrow(NotFoundException);
     });
 
-    it('debe actualizar y devolver la caja con el resumen de movimientos', async () => {
-      const mockRuta = { caja_actual: mockCajaId, timeZone: 'UTC' };
+    it('debe devolver resumen en vivo sin persistir (día abierto / ledger-first)', async () => {
       const mockCaja = {
         base: 100,
+        status: true,
+        fecha: new Date(),
         save: jest.fn(),
-        toObject: jest.fn().mockReturnValue({ _id: mockCajaId, base: 100 })
+        toObject: jest.fn().mockReturnValue({ _id: mockCajaId, base: 100, status: true })
       };
-      const mockResumenMovimientos = [{
-        cobro: 50,
-        prestamos: 20,
-        inversiones: 10,
-        gastos: 5,
-        retiros: 5
-      }];
 
-      rutaModel.findById.mockReturnValue({
-        session: jest.fn().mockReturnThis(),
-        lean: jest.fn().mockResolvedValue(mockRuta),
+      rutaService.findOperacionContextById.mockResolvedValue({
+        _id: mockRutaId,
+        caja_actual: mockCajaId,
+        status: true,
+        timeZone: 'UTC',
       });
       cajaModel.findById.mockReturnValue({
         session: jest.fn().mockResolvedValue(mockCaja),
       });
 
-      // Mock getClientesPendientesYRenovados logic inside or mock the private method call if possible,
-      // but since it's private/internal logic we mocked the dependencies.
-      // The service calls this.getClientesPendientesYRenovados internally.
-      // We can spyOn it if we want to isolate, but let's trust the mocks of the models it uses.
-      // We already mocked the models for getClientesPendientesYRenovados in previous test,
-      // we need to set them up for this flow too.
-
-      // Mocking responses for getClientesPendientesYRenovados internal calls
-      cajaMovimientoModel.aggregate
-        .mockReturnValueOnce({ session: jest.fn().mockResolvedValue([]) }) // Renovados
-        .mockReturnValueOnce({ session: jest.fn().mockResolvedValue([]) }) // Pagaron
-        .mockReturnValueOnce({ // Resumen pipeline result
-          session: jest.fn().mockReturnThis(),
-          then: (resolve: any) => resolve(mockResumenMovimientos)
-        });
-
-      creditoModel.aggregate.mockReturnValueOnce({ session: jest.fn().mockResolvedValue([]) }); // Activos
+      movimientoCajaService.getClienteIdsRenovadosEnRango.mockResolvedValue([]);
+      movimientoCajaService.getClienteIdsQuePagaronEnRango.mockResolvedValue([]);
+      creditoService.getClienteIdsConCreditoActivoAntesDe.mockResolvedValue([]);
+      movimientoCajaService.getTotalesLedgerPorRango.mockResolvedValue({
+        cobro: 50,
+        prestamos: 20,
+        inversiones: 10,
+        gastos: 5,
+        retiros: 5,
+      });
 
       const result = await service.getMovimientosResumen(mockRutaId);
 
-      expect(rutaModel.findById).toHaveBeenCalledWith(mockRutaId);
+      expect(rutaService.findOperacionContextById).toHaveBeenCalledWith(mockRutaId, undefined);
       expect(cajaModel.findById).toHaveBeenCalledWith(mockCajaId);
-      // Caja final calculation: 100 (base) + 50 (cobro) + 10 (inversion) - 20 (prestamo) - 5 (gasto) - 5 (retiro) = 130
-      // But checkout the code: caja.caja_final = caja.base + caja.cobro + caja.inversion - caja.prestamo - caja.gasto - caja.retiro;
-      // 100 + 50 + 10 - 20 - 5 - 5 = 130.
-      // Note: we can't easily check the 'caja' object mutation unless we trust the mockCaja reference or the return value.
-      // The return value comes from CajaEntity.fromObject(caja).
-
-      expect(mockCaja.save).toHaveBeenCalled();
+      expect(mockCaja.save).not.toHaveBeenCalled();
+      expect(movimientoCajaService.getTotalesLedgerPorRango).toHaveBeenCalled();
       expect(result).toBeDefined();
+    });
+
+    it('día cerrado: devuelve snapshot oficial sin recalcular ledger', async () => {
+      const mockCaja = {
+        base: 100,
+        status: false,
+        cobro: 50,
+        fecha: new Date(),
+        save: jest.fn(),
+        toObject: jest.fn().mockReturnValue({
+          _id: mockCajaId,
+          base: 100,
+          cobro: 50,
+          status: false,
+        }),
+      };
+
+      rutaService.findOperacionContextById.mockResolvedValue({
+        _id: mockRutaId,
+        caja_actual: mockCajaId,
+        status: false,
+        timeZone: 'UTC',
+        currency: 'MXN',
+      });
+      cajaModel.findById.mockReturnValue({
+        session: jest.fn().mockResolvedValue(mockCaja),
+      });
+
+      const result = await service.getMovimientosResumen(mockRutaId);
+
+      expect(movimientoCajaService.getTotalesLedgerPorRango).not.toHaveBeenCalled();
+      expect(mockCaja.save).not.toHaveBeenCalled();
+      expect(result).toBeDefined();
+    });
+
+    it('debe persistir snapshot al cerrar (persistSnapshot: true)', async () => {
+      const mockCaja = {
+        base: 100,
+        status: true,
+        fecha: new Date(),
+        save: jest.fn(),
+        toObject: jest.fn().mockReturnValue({ _id: mockCajaId, base: 100 })
+      };
+
+      rutaService.findOperacionContextById.mockResolvedValue({
+        _id: mockRutaId,
+        caja_actual: mockCajaId,
+        status: true,
+        timeZone: 'UTC',
+      });
+      cajaModel.findById.mockReturnValue({
+        session: jest.fn().mockResolvedValue(mockCaja),
+      });
+
+      movimientoCajaService.getClienteIdsRenovadosEnRango.mockResolvedValue([]);
+      movimientoCajaService.getClienteIdsQuePagaronEnRango.mockResolvedValue([]);
+      creditoService.getClienteIdsConCreditoActivoAntesDe.mockResolvedValue([]);
+      movimientoCajaService.getTotalesLedgerPorRango.mockResolvedValue({
+        cobro: 50,
+        prestamos: 20,
+        inversiones: 10,
+        gastos: 5,
+        retiros: 5,
+      });
+
+      await service.getMovimientosResumen(mockRutaId, undefined, { persistSnapshot: true });
+      expect(mockCaja.save).toHaveBeenCalled();
     });
   });
 
   describe('findAll', () => {
     it('debe devolver la caja del día si existe', async () => {
       const fechaStr = '2023-10-27';
-      rutaModel.findById.mockResolvedValue({});
+      rutaService.findOperacionContextById.mockResolvedValue({
+        _id: mockRutaId,
+        caja_actual: mockCajaId,
+        status: true,
+        timeZone: 'UTC',
+      });
       const mockCajaEncontrada = { _id: mockCajaId };
       cajaModel.aggregate.mockResolvedValue([mockCajaEncontrada]);
 
@@ -350,14 +411,19 @@ describe('CajaService', () => {
 
     it('debe lanzar NotFoundException si no encuentra caja', async () => {
       const fechaStr = '2023-10-27';
-      rutaModel.findById.mockResolvedValue({});
+      rutaService.findOperacionContextById.mockResolvedValue({
+        _id: mockRutaId,
+        caja_actual: mockCajaId,
+        status: true,
+        timeZone: 'UTC',
+      });
       cajaModel.aggregate.mockResolvedValue([]);
 
       await expect(service.findAll(mockRutaId, fechaStr)).rejects.toThrow(NotFoundException);
     });
 
     it('debe lanzar NotFoundException si la ruta no existe', async () => {
-      rutaModel.findById.mockResolvedValue(null);
+      rutaService.findOperacionContextById.mockResolvedValue(null);
       await expect(service.findAll(mockRutaId, '2023-10-27')).rejects.toThrow(NotFoundException);
     });
   });

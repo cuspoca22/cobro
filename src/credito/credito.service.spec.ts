@@ -1,17 +1,16 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getModelToken, getConnectionToken } from '@nestjs/mongoose';
-import { Connection, ClientSession } from 'mongoose';
-import { NotFoundException, BadRequestException } from '@nestjs/common';
+import { ClientSession } from 'mongoose';
+import { NotFoundException } from '@nestjs/common';
 import { CreditoService } from './credito.service';
 import { Credito } from './schemas/credito.schema';
-import { Cliente } from '../cliente/schema/cliente.schema';
-import { Ruta } from '../ruta/schema/ruta.schema';
 import { DateFnsAdapter } from '../common/wrappers/date-fns.adapter';
 import { CreditCalculatorService } from './helpers/credit.calculator.service';
 import { CurrencyService } from '../currency/currency.service';
+import { ClienteService } from '../cliente/cliente.service';
+import { RutaService } from '../ruta/ruta.service';
 import { FrecuenciaCobro } from './interfaces/frecuencia-cobro.enum';
 
-// Mock de ClientSession
 const createMockSession = (): Partial<ClientSession> => ({
   startTransaction: jest.fn(),
   commitTransaction: jest.fn(),
@@ -21,77 +20,36 @@ const createMockSession = (): Partial<ClientSession> => ({
   hasEnded: false,
 });
 
-// Helper para mockear chain de Mongoose (findById().session())
-const createMockMongooseQuery = (mockData: any) => {
-  const query = {
-    session: jest.fn().mockReturnThis(),
-    lean: jest.fn().mockReturnThis(),
-    exec: jest.fn().mockResolvedValue(mockData),
-    then: jest.fn().mockImplementation(function (onFulfilled, onRejected) {
-      return Promise.resolve(mockData).then(onFulfilled, onRejected);
-    }),
-    catch: jest.fn(),
-    finally: jest.fn(),
-  };
-  // Hacer el objeto thenable (simular una Promise)
-  const thenable = Object.assign(
-    Promise.resolve(mockData),
-    query
-  );
-  return thenable;
-};
-
 describe('CreditoService', () => {
   let service: CreditoService;
   let mockCreditoModel: any;
-  let mockClienteModel: any;
-  let mockRutaModel: any;
-  let mockConnection: any;
-  let mockDateFnsAdapter: any;
+  let mockClienteService: any;
+  let mockRutaService: any;
   let mockCreditCalculatorSvc: any;
-  let mockCurrencyService: any;
 
   beforeEach(async () => {
-    // Mock de modelos
     mockCreditoModel = {
       countDocuments: jest.fn(),
       updateOne: jest.fn(),
       findById: jest.fn(),
+      findOne: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue(null),
+      }),
       create: jest.fn(),
       find: jest.fn(),
       findByIdAndUpdate: jest.fn(),
       aggregate: jest.fn(),
+      exists: jest.fn(),
     };
 
-    mockClienteModel = {
-      findById: jest.fn(() => ({
-        session: jest.fn().mockReturnThis(),
-        lean: jest.fn(),
-      })),
-      updateOne: jest.fn(),
-      findByIdAndUpdate: jest.fn(),
+    mockClienteService = {
+      findByIdLean: jest.fn(),
+      setStatus: jest.fn().mockResolvedValue(undefined),
+      setTurno: jest.fn().mockResolvedValue(undefined),
     };
 
-    mockRutaModel = {
-      findById: jest.fn(() => ({
-        session: jest.fn().mockReturnThis(),
-        lean: jest.fn(),
-      })),
-    };
-
-    mockConnection = {
-      startSession: jest.fn(() => createMockSession()),
-    };
-
-    mockDateFnsAdapter = {
-      getStartOfTodayInTimeZone: jest.fn(() => new Date('2024-01-01')),
-      getEndOfTodayInTimeZone: jest.fn(() => new Date('2024-01-01T23:59:59.999')),
-      differenceInDays: jest.fn(() => 0),
-      isBefore: jest.fn(() => false),
-    };
-
-    mockCurrencyService = {
-      round: jest.fn((value) => value),
+    mockRutaService = {
+      findContextById: jest.fn(),
     };
 
     mockCreditCalculatorSvc = {
@@ -105,33 +63,23 @@ describe('CreditoService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         CreditoService,
-        {
-          provide: getModelToken(Credito.name),
-          useValue: mockCreditoModel,
-        },
-        {
-          provide: getModelToken(Cliente.name),
-          useValue: mockClienteModel,
-        },
-        {
-          provide: getModelToken(Ruta.name),
-          useValue: mockRutaModel,
-        },
+        { provide: getModelToken(Credito.name), useValue: mockCreditoModel },
+        { provide: ClienteService, useValue: mockClienteService },
+        { provide: RutaService, useValue: mockRutaService },
         {
           provide: DateFnsAdapter,
-          useValue: mockDateFnsAdapter,
+          useValue: {
+            getStartOfTodayInTimeZone: jest.fn(() => new Date('2024-01-01')),
+            getEndOfTodayInTimeZone: jest.fn(() => new Date('2024-01-01T23:59:59.999')),
+            differenceInDays: jest.fn(() => 0),
+            isBefore: jest.fn(() => false),
+          },
         },
-        {
-          provide: CreditCalculatorService,
-          useValue: mockCreditCalculatorSvc,
-        },
-        {
-          provide: CurrencyService,
-          useValue: mockCurrencyService,
-        },
+        { provide: CreditCalculatorService, useValue: mockCreditCalculatorSvc },
+        { provide: CurrencyService, useValue: { round: jest.fn((value) => value) } },
         {
           provide: getConnectionToken(),
-          useValue: mockConnection,
+          useValue: { startSession: jest.fn(() => createMockSession()) },
         },
       ],
     }).compile();
@@ -141,13 +89,11 @@ describe('CreditoService', () => {
 
   describe('handlePaymentMade', () => {
     it('debe marcar cliente como inactivo cuando paga crédito completamente (saldo = 0)', async () => {
-      // Arrange
       const mockSession = createMockSession();
       const creditoId = 'credito123';
       const clienteId = 'cliente456';
       const rutaId = 'ruta789';
 
-      // Mock getCreditoById para retornar crédito con saldo 0
       jest.spyOn(service, 'getCreditoById').mockResolvedValue({
         _id: creditoId,
         saldo: 0,
@@ -162,52 +108,43 @@ describe('CreditoService', () => {
         cliente: { _id: clienteId, nombre: 'Cliente Test' },
       } as any);
 
-      mockClienteModel.findById.mockResolvedValue({
+      mockClienteService.findByIdLean.mockResolvedValue({
         _id: clienteId,
         status: true,
         nombre: 'Cliente Test',
       });
 
-      // Act
       const result = await service.handlePaymentMade(
-        creditoId, rutaId, clienteId, mockSession as ClientSession
+        creditoId, rutaId, clienteId, mockSession as ClientSession,
       );
 
-      // Assert
       expect(mockCreditoModel.updateOne).toHaveBeenCalledWith(
         { _id: creditoId },
         {
           $set: {
-            status: false, // Crédito marcado como inactivo
-            state: 'BUENO', // Estado cambia a BUENO cuando se paga
+            status: false,
+            state: 'BUENO',
             ultimo_pago: expect.any(Date),
-          }
+          },
         },
-        { session: mockSession }
+        { session: mockSession },
       );
 
-      expect(mockClienteModel.updateOne).toHaveBeenCalledWith(
-        { _id: clienteId },
-        { $set: { status: false } }, // Cliente marcado como inactivo
-        { session: mockSession }
-      );
-
+      expect(mockClienteService.setStatus).toHaveBeenCalledWith(clienteId, false, mockSession);
       expect(result.creditPaid).toBe(true);
       expect(result.clientStatus).toBe(false);
       expect(result.ok).toBe(true);
     });
 
     it('debe mantener cliente activo cuando crédito NO está pagado completamente (saldo > 0)', async () => {
-      // Arrange
       const mockSession = createMockSession();
       const creditoId = 'credito123';
       const clienteId = 'cliente456';
       const rutaId = 'ruta789';
 
-      // Mock getCreditoById para retornar crédito con saldo pendiente
       jest.spyOn(service, 'getCreditoById').mockResolvedValue({
         _id: creditoId,
-        saldo: 500, // Saldo pendiente
+        saldo: 500,
         status: true,
         state: 'REGULAR',
         abonos: 500,
@@ -219,52 +156,42 @@ describe('CreditoService', () => {
         cliente: { _id: clienteId, nombre: 'Cliente Test' },
       } as any);
 
-      const mockQuery = createMockMongooseQuery({
+      mockClienteService.findByIdLean.mockResolvedValue({
         _id: clienteId,
         status: true,
         nombre: 'Cliente Test',
       });
-      mockClienteModel.findById.mockReturnValue(mockQuery);
 
-      // Act
       const result = await service.handlePaymentMade(
-        creditoId, rutaId, clienteId, mockSession as ClientSession
+        creditoId, rutaId, clienteId, mockSession as ClientSession,
       );
 
-      // Assert
       expect(mockCreditoModel.updateOne).toHaveBeenCalledWith(
         { _id: creditoId },
         {
           $set: {
-            status: true, // Crédito sigue activo
-            state: 'REGULAR', // Mantiene estado actual
+            status: true,
+            state: 'REGULAR',
             ultimo_pago: expect.any(Date),
-          }
+          },
         },
-        { session: mockSession }
+        { session: mockSession },
       );
 
-      expect(mockClienteModel.updateOne).toHaveBeenCalledWith(
-        { _id: clienteId },
-        { $set: { status: true } }, // Cliente sigue activo
-        { session: mockSession }
-      );
-
+      expect(mockClienteService.setStatus).toHaveBeenCalledWith(clienteId, true, mockSession);
       expect(result.creditPaid).toBe(false);
       expect(result.clientStatus).toBe(true);
     });
 
     it('debe manejar precisión decimal considerando crédito pagado con saldo mínimo (0.001)', async () => {
-      // Arrange
       const mockSession = createMockSession();
       const creditoId = 'credito123';
       const clienteId = 'cliente456';
       const rutaId = 'ruta789';
 
-      // Mock getCreditoById para retornar crédito con saldo muy pequeño
       jest.spyOn(service, 'getCreditoById').mockResolvedValue({
         _id: creditoId,
-        saldo: 0.001, // Menor que tolerancia (0.01)
+        saldo: 0.001,
         status: true,
         state: 'REGULAR',
         abonos: 999.999,
@@ -276,24 +203,21 @@ describe('CreditoService', () => {
         cliente: { _id: clienteId, nombre: 'Cliente Test' },
       } as any);
 
-      mockClienteModel.findById.mockResolvedValue({
+      mockClienteService.findByIdLean.mockResolvedValue({
         _id: clienteId,
         status: true,
         nombre: 'Cliente Test',
       });
 
-      // Act
       const result = await service.handlePaymentMade(
-        creditoId, rutaId, clienteId, mockSession as ClientSession
+        creditoId, rutaId, clienteId, mockSession as ClientSession,
       );
 
-      // Assert - Debe considerar pagado (0.001 redondeado a 0.00)
       expect(result.creditPaid).toBe(true);
-      expect(result.clientStatus).toBe(false); // Cliente inactivo
+      expect(result.clientStatus).toBe(false);
     });
 
     it('debe lanzar NotFoundException cuando cliente no existe', async () => {
-      // Arrange
       const mockSession = createMockSession();
       const creditoId = 'credito123';
       const clienteId = 'cliente456';
@@ -304,28 +228,25 @@ describe('CreditoService', () => {
         status: true,
       } as any);
 
-      mockClienteModel.findById.mockResolvedValue(null); // Cliente no encontrado
+      mockClienteService.findByIdLean.mockResolvedValue(null);
 
-      // Act & Assert
       await expect(
-        service.handlePaymentMade(creditoId, rutaId, clienteId, mockSession as ClientSession)
+        service.handlePaymentMade(creditoId, rutaId, clienteId, mockSession as ClientSession),
       ).rejects.toThrow(NotFoundException);
 
-      expect(mockClienteModel.findById).toHaveBeenCalledWith(clienteId, null, { session: mockSession });
+      expect(mockClienteService.findByIdLean).toHaveBeenCalledWith(clienteId, mockSession);
     });
 
     it('debe mantener estado BUENO cuando crédito ya estaba pagado', async () => {
-      // Arrange
       const mockSession = createMockSession();
       const creditoId = 'credito123';
       const clienteId = 'cliente456';
       const rutaId = 'ruta789';
 
-      // Mock crédito ya pagado (status: false)
       jest.spyOn(service, 'getCreditoById').mockResolvedValue({
         _id: creditoId,
         saldo: 0,
-        status: false, // Ya estaba inactivo
+        status: false,
         state: 'BUENO',
         abonos: 1000,
         total_pagar: 1000,
@@ -336,36 +257,29 @@ describe('CreditoService', () => {
         cliente: { _id: clienteId, nombre: 'Cliente Test' },
       } as any);
 
-      mockClienteModel.findById.mockResolvedValue({
+      mockClienteService.findByIdLean.mockResolvedValue({
         _id: clienteId,
-        status: false, // Cliente ya inactivo
+        status: false,
         nombre: 'Cliente Test',
       });
 
-      // Act
       const result = await service.handlePaymentMade(
-        creditoId, rutaId, clienteId, mockSession as ClientSession
+        creditoId, rutaId, clienteId, mockSession as ClientSession,
       );
 
-      // Assert - No debe cambiar estados ya correctos
       expect(mockCreditoModel.updateOne).toHaveBeenCalledWith(
         { _id: creditoId },
         {
           $set: {
-            status: false, // Mantiene inactivo
-            state: 'BUENO', // Mantiene BUENO
+            status: false,
+            state: 'BUENO',
             ultimo_pago: expect.any(Date),
-          }
+          },
         },
-        { session: mockSession }
+        { session: mockSession },
       );
 
-      expect(mockClienteModel.updateOne).toHaveBeenCalledWith(
-        { _id: clienteId },
-        { $set: { status: false } }, // Mantiene inactivo
-        { session: mockSession }
-      );
-
+      expect(mockClienteService.setStatus).toHaveBeenCalledWith(clienteId, false, mockSession);
       expect(result.creditPaid).toBe(true);
       expect(result.clientStatus).toBe(false);
     });
@@ -373,7 +287,6 @@ describe('CreditoService', () => {
 
   describe('create', () => {
     it('debe crear crédito y marcar cliente como activo', async () => {
-      // Arrange
       const mockSession = createMockSession();
       const createCreditoDto = {
         clienteId: 'cliente123',
@@ -384,7 +297,7 @@ describe('CreditoService', () => {
         interes: 10,
       };
 
-      mockRutaModel.findById.mockResolvedValue({
+      mockRutaService.findContextById.mockResolvedValue({
         _id: 'ruta456',
         timeZone: 'America/Guatemala',
         currency: 'GTQ',
@@ -413,17 +326,77 @@ describe('CreditoService', () => {
         }),
       }]);
 
-      // Act
       const result = await service.create(createCreditoDto as any, mockSession as ClientSession);
 
-      // Assert
       expect(mockCreditoModel.create).toHaveBeenCalled();
-      expect(mockClienteModel.findByIdAndUpdate).toHaveBeenCalledWith(
-        'cliente123',
-        { $set: { status: true } }, // Cliente marcado como activo
-        { returnDocument: 'after', session: mockSession }
-      );
+      expect(mockClienteService.setStatus).toHaveBeenCalledWith('cliente123', true, mockSession);
       expect(result.status).toBe(true);
+    });
+
+    it('rechaza si el cliente ya tiene un crédito activo', async () => {
+      const mockSession = createMockSession();
+      mockRutaService.findContextById.mockResolvedValue({
+        _id: 'ruta456',
+        timeZone: 'America/Guatemala',
+        currency: 'GTQ',
+      });
+      mockCreditCalculatorSvc.calculateFromInterest.mockReturnValue({
+        totalPagar: 1100,
+        valorCuota: 110,
+      });
+      mockCreditoModel.findOne.mockReturnValue({
+        lean: jest.fn().mockResolvedValue({ _id: 'creditoActivoPrevio', status: true }),
+      });
+
+      await expect(
+        service.create(
+          {
+            clienteId: 'cliente123',
+            rutaId: 'ruta456',
+            valor_credito: 1000,
+            total_cuotas: 10,
+            frecuencia_cobro: FrecuenciaCobro.DIARIO,
+            interes: 10,
+          } as any,
+          mockSession as ClientSession,
+        ),
+      ).rejects.toThrow(/crédito activo/);
+
+      expect(mockCreditoModel.create).not.toHaveBeenCalled();
+      expect(mockClienteService.setStatus).not.toHaveBeenCalled();
+    });
+
+    it('carrera: create con código 11000 se mapea a BadRequest de crédito activo', async () => {
+      const mockSession = createMockSession();
+      mockRutaService.findContextById.mockResolvedValue({
+        _id: 'ruta456',
+        timeZone: 'America/Guatemala',
+        currency: 'GTQ',
+      });
+      mockCreditCalculatorSvc.calculateFromInterest.mockReturnValue({
+        totalPagar: 1100,
+        valorCuota: 110,
+      });
+      mockCreditoModel.findOne.mockReturnValue({
+        lean: jest.fn().mockResolvedValue(null),
+      });
+      mockCreditoModel.create.mockRejectedValue({ code: 11000 });
+
+      await expect(
+        service.create(
+          {
+            clienteId: 'cliente123',
+            rutaId: 'ruta456',
+            valor_credito: 1000,
+            total_cuotas: 10,
+            frecuencia_cobro: FrecuenciaCobro.DIARIO,
+            interes: 10,
+          } as any,
+          mockSession as ClientSession,
+        ),
+      ).rejects.toThrow(/crédito activo/);
+
+      expect(mockClienteService.setStatus).not.toHaveBeenCalled();
     });
   });
 });
