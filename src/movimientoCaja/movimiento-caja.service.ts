@@ -241,6 +241,9 @@ export class MovimientoCajaService {
       const caja = await this.cajaService.findByIdLean(movimiento.caja, session);
       if (!caja) throw new NotFoundException(`Caja con el id ${movimiento.caja} no existe`);
 
+      const rutaId = (movimiento.ruta ?? caja.ruta).toString();
+      await this.assertPagoEsDeHoy(movimiento.fecha, rutaId, session);
+
       const credito = await this.creditoService.getCreditoById(movimiento.credito.toString(), caja.ruta, session);
 
       // Restauramos el saldo del credito (simulando que el pago anterior no existió)
@@ -258,7 +261,7 @@ export class MovimientoCajaService {
       movimiento.monto = updateMovimientoCajaDto.monto;
       await movimiento.save({ session });
 
-      const result = await this.creditoService.handlePaymentMade(
+      await this.creditoService.handlePaymentMade(
         movimiento.credito.toString(),
         caja.ruta,
         movimiento.cliente.toString(),
@@ -277,6 +280,64 @@ export class MovimientoCajaService {
 
     } finally {
       await session.endSession();
+    }
+  }
+
+  async deletePago(movimientoId: string) {
+    return this.transactionHelper.withTransaction(async (session) => {
+      const movimiento = await this.cajaMovimientoModel.findById(movimientoId).session(session);
+      if (!movimiento) {
+        throw new NotFoundException(`Movimiento con el id ${movimientoId} no existe`);
+      }
+
+      if (movimiento.subTipo !== SubTipo.PAGOCREDITO) {
+        throw new BadRequestException('El movimiento no es un pago de crédito');
+      }
+
+      if (!movimiento.credito || !movimiento.cliente) {
+        throw new BadRequestException('El pago no tiene crédito o cliente asociado');
+      }
+
+      const caja = await this.cajaService.findByIdLean(movimiento.caja, session);
+      if (!caja) {
+        throw new NotFoundException(`Caja con el id ${movimiento.caja} no existe`);
+      }
+
+      const rutaId = (movimiento.ruta ?? caja.ruta).toString();
+      await this.assertPagoEsDeHoy(movimiento.fecha, rutaId, session);
+
+      const creditoId = movimiento.credito.toString();
+      const clienteId = movimiento.cliente.toString();
+
+      await this.cajaMovimientoModel.findByIdAndDelete(movimientoId, { session });
+
+      // Recalcula saldo/estado del crédito y del cliente con los pagos restantes
+      await this.creditoService.handlePaymentMade(creditoId, rutaId, clienteId, session);
+
+      return { success: true };
+    }, 'MovimientoCajaService.deletePago');
+  }
+
+  /** Solo se pueden mutar pagos cuya fecha es el día actual en la TZ de la ruta. */
+  private async assertPagoEsDeHoy(
+    fechaPago: Date,
+    rutaId: string,
+    session?: ClientSession,
+  ): Promise<void> {
+    const ruta = await this.rutaService.findContextById(rutaId, session);
+    if (!ruta) {
+      throw new NotFoundException(`La ruta con el id ${rutaId} no existe`);
+    }
+
+    const timeZone = ruta.timeZone || 'UTC';
+    const inicioHoy = this.dateFnsAdapter.getStartOfTodayInTimeZone(timeZone);
+    const finHoy = this.dateFnsAdapter.getEndOfTodayInTimeZone(timeZone);
+    const fecha = new Date(fechaPago);
+
+    if (fecha < inicioHoy || fecha > finHoy) {
+      throw new BadRequestException(
+        'Solo se pueden modificar o eliminar pagos del día de hoy',
+      );
     }
   }
 

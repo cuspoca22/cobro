@@ -67,6 +67,16 @@ export class MovimientoCajaController {
   }
 
   @RutaAbierta()
+  @Auth(ValidRoles.admin, ValidRoles.superAdmin)
+  @RutaOwnership({ movimientoId: { in: 'params', key: 'movimientoId' } })
+  @Delete('delete-pago/:movimientoId')
+  async deletePago(
+    @Param('movimientoId', ParseMongoIdPipe) movimientoId: string,
+  ) {
+    return this.movimientoCajaService.deletePago(movimientoId);
+  }
+
+  @RutaAbierta()
   @RutaOwnership({ rutaId: { in: 'body', key: 'rutaId' } })
   @Post('oficina')
   async createGasto(
