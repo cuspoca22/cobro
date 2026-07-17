@@ -855,10 +855,18 @@ export class CreditoService {
         timeZone
       );
 
-      if (this.dateFnsAdapter.isBefore(paidUntilDate, today)) {
-        daysOverdue = this.dateFnsAdapter.countBusinessDays(paidUntilDate, today, timeZone);
-        if (daysOverdue < 0) daysOverdue = 0;
-      }
+      // No pago = movimiento de pago con monto 0; el día aún no concluyó pero ya se visitó.
+      const includeToday =
+        credit.paymentsToday != null &&
+        Number(credit.paymentsToday.monto) === 0;
+
+      daysOverdue = this.creditCalculatorSvc.calculateDaysOverdue(
+        paidUntilDate,
+        credit.frecuencia_cobro,
+        today,
+        timeZone,
+        includeToday,
+      );
     }
 
     const clientState = this.creditCalculatorSvc.classifyClient(daysOverdue);

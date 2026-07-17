@@ -57,6 +57,7 @@ describe('CreditoService', () => {
       calculateFromCuota: jest.fn(),
       getDueDate: jest.fn(() => new Date('2024-02-01')),
       calculatePaidUntilDate: jest.fn(() => new Date('2024-01-01')),
+      calculateDaysOverdue: jest.fn(() => 0),
       classifyClient: jest.fn(() => 'BUENO'),
     };
 

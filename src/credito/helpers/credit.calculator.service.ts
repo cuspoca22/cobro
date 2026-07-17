@@ -149,14 +149,78 @@ export class CreditCalculatorService {
 
   /**
    * Clasifica al cliente según sus días de atraso.
-   * - 0 días → BUENO
-   * - 1 a 7 días → REGULAR
-   * - Más de 7 días → MALO
+   * - 0 a 3 días → BUENO
+   * - 4 a 6 días → REGULAR
+   * - 7 o más días → MALO
    */
   classifyClient(daysOverdue: number): ClasificacionCliente {
-    if (daysOverdue === 0) return ClasificacionCliente.BUENO;
-    if (daysOverdue <= 7) return ClasificacionCliente.REGULAR;
+    if (daysOverdue <= 3) return ClasificacionCliente.BUENO;
+    if (daysOverdue < 7) return ClasificacionCliente.REGULAR;
     return ClasificacionCliente.MALO;
+  }
+
+  /**
+   * Obtiene la fecha de vencimiento de la siguiente cuota
+   * a partir de la fecha hasta la cual el crédito está cubierto.
+   */
+  getNextDueDate(
+    paidUntilDate: Date,
+    frecuenciaCobro: string,
+    timeZone: string,
+  ): Date {
+    if (this.normalizeFrecuenciaCobro(frecuenciaCobro) === FrecuenciaCobro.DIARIO) {
+      let nextDue = this.dateFnsAdapter.addDays(paidUntilDate, 1);
+      while (this.dateFnsAdapter.isSunday(nextDue, timeZone)) {
+        nextDue = this.dateFnsAdapter.addDays(nextDue, 1);
+      }
+      return nextDue;
+    }
+
+    return this.addPeriod(paidUntilDate, frecuenciaCobro);
+  }
+
+  /**
+   * Calcula los días de atraso respecto a la siguiente cuota vencida.
+   * Por defecto el día de vencimiento cuenta como 0 y hoy no se incluye
+   * (el día aún no concluyó). Con `includeToday` (p. ej. tras un no pago)
+   * se cuenta también el día actual si la cuota ya venció o vence hoy.
+   */
+  calculateDaysOverdue(
+    paidUntilDate: Date,
+    frecuenciaCobro: string,
+    today: Date,
+    timeZone: string,
+    includeToday = false,
+  ): number {
+    const nextDueDate = this.getNextDueDate(paidUntilDate, frecuenciaCobro, timeZone);
+
+    // Aún no llega el vencimiento
+    if (this.dateFnsAdapter.isBefore(today, nextDueDate)) {
+      return 0;
+    }
+
+    // Día de vencimiento sin no pago: no cuenta atraso todavía
+    if (
+      this.dateFnsAdapter.isEqual(today, nextDueDate) &&
+      !includeToday
+    ) {
+      return 0;
+    }
+
+    // countBusinessDays trata dateLeft como último día cubierto y empieza al día siguiente.
+    // Usamos el día previo al vencimiento. Si includeToday, endDate = today+1 para incluir hoy.
+    const lastCoveredBeforeDue = this.dateFnsAdapter.addDays(nextDueDate, -1);
+    const endDate = includeToday
+      ? this.dateFnsAdapter.addDays(today, 1)
+      : today;
+
+    const daysOverdue = this.dateFnsAdapter.countBusinessDays(
+      lastCoveredBeforeDue,
+      endDate,
+      timeZone,
+    );
+
+    return daysOverdue < 0 ? 0 : daysOverdue;
   }
 
   // ──────────────────────────────────────────────
