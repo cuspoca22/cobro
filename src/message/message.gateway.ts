@@ -53,6 +53,11 @@ export class MessageGateway implements OnGatewayConnection, OnGatewayDisconnect 
     this.wss.emit('close-caja', { ruta: rutaId });
   }
 
+  /** Emite apertura de ruta/caja al frontend tras persistir en DB. */
+  emitOpenCaja(rutaId: string): void {
+    this.wss.emit('open-caja', { ruta: rutaId });
+  }
+
   @SubscribeMessage('admin-close-caja')
   async handleCloseRuta(
     client: Socket,

@@ -334,6 +334,22 @@ export class CajaService {
     await this.cajaModel.deleteMany({ ruta: rutaId }).session(session);
   }
 
+  /** Busca la caja de una ruta en una fecha exacta (inicio de día UTC/TZ). */
+  async findByRutaAndFecha(
+    rutaId: string,
+    fecha: Date,
+    session?: ClientSession,
+  ): Promise<CajaEntity | null> {
+    const caja = await this.cajaModel
+      .findOne({
+        ruta: new Types.ObjectId(rutaId),
+        fecha,
+      })
+      .session(session || null);
+
+    return caja ? CajaEntity.fromObject(caja) : null;
+  }
+
   /** closeRuta: marca caja del día como cerrada. */
   async markClosed(
     cajaId: string | Types.ObjectId,
@@ -345,6 +361,23 @@ export class CajaService {
     }
     caja.status = false;
     await caja.save({ session });
+  }
+
+  /**
+   * Reapertura same-day: reactiva la caja existente sin recrearla ni tocar `base`.
+   * Los aggregates del snapshot se recalculan en vivo al consultar (ruta/caja abiertas).
+   */
+  async markOpen(
+    cajaId: string | Types.ObjectId,
+    session: ClientSession,
+  ): Promise<CajaEntity> {
+    const caja = await this.cajaModel.findById(cajaId).session(session);
+    if (!caja) {
+      throw new NotFoundException(`Caja con el id ${cajaId} no existe`);
+    }
+    caja.status = true;
+    await caja.save({ session });
+    return CajaEntity.fromObject(caja);
   }
 
   /**

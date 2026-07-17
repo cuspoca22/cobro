@@ -408,8 +408,6 @@ export class RutaService {
         throw new BadRequestException(`La ruta ya se encuentra abierta.`);
       }
 
-      const { hayUltimaCaja, ultimaCaja } = await this.cajaSvc.getUltimaCaja(rutaId, session);
-
       // Asegurar timezone valido
       const timeZone = ruta.timeZone || 'America/Mexico_City';
       let startOfDayUtc = this.dateFnsAdapter.getStartOfTodayInTimeZone(timeZone);
@@ -421,26 +419,49 @@ export class RutaService {
         startOfDayUtc.setUTCHours(0, 0, 0, 0);
       }
 
-      const baseCaja = (hayUltimaCaja && ultimaCaja) ? ultimaCaja.caja_final : 0;
+      // Same-day: reutilizar la caja del día (índice único {ruta, fecha}).
+      // Día nuevo: crear caja con base = caja_final de la última.
+      const cajaDelDia = await this.cajaSvc.findByRutaAndFecha(
+        rutaId,
+        startOfDayUtc,
+        session,
+      );
 
-      // Unifica la creación de la nueva caja
-      const newCaja = await this.cajaSvc.create({
-        rutaId: rutaId,
-        fecha: startOfDayUtc,
-        base: baseCaja,
-      }, session);
+      let caja: CajaEntity;
+      if (cajaDelDia?.id) {
+        this.logger.log(
+          `Reabriendo caja del día ${cajaDelDia.id} para ruta ${rutaId}`,
+        );
+        caja = await this.cajaSvc.markOpen(cajaDelDia.id, session);
+      } else {
+        const { hayUltimaCaja, ultimaCaja } = await this.cajaSvc.getUltimaCaja(
+          rutaId,
+          session,
+        );
+        const baseCaja =
+          hayUltimaCaja && ultimaCaja ? ultimaCaja.caja_final : 0;
 
-      // Actualiza la ruta dentro de la transacción
-      ruta.caja_actual = new Types.ObjectId(newCaja.id);
+        caja = await this.cajaSvc.create(
+          {
+            rutaId: rutaId,
+            fecha: startOfDayUtc,
+            base: baseCaja,
+          },
+          session,
+        );
+      }
+
+      ruta.caja_actual = new Types.ObjectId(caja.id);
       ruta.status = true;
       await ruta.save({ session });
 
-      // Confirma la transacción. Si esta línea no se ejecuta, NINGÚN cambio se guardará.
       await session.commitTransaction();
+
+      this.socketRuta.emitOpenCaja(ruta._id.toString());
 
       return {
         ok: true,
-        caja: newCaja,
+        caja,
       };
 
     } catch (error) {

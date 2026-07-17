@@ -427,4 +427,69 @@ describe('CajaService', () => {
       await expect(service.findAll(mockRutaId, '2023-10-27')).rejects.toThrow(NotFoundException);
     });
   });
+
+  describe('findByRutaAndFecha', () => {
+    it('debe devolver la caja si existe para ruta y fecha', async () => {
+      const mockCaja = {
+        _id: mockCajaId,
+        ruta: mockRutaId,
+        fecha: mockDate,
+        base: 100,
+        status: false,
+      };
+
+      cajaModel.findOne.mockReturnValue({
+        session: jest.fn().mockResolvedValue(mockCaja),
+      });
+
+      const result = await service.findByRutaAndFecha(mockRutaId, mockDate, null);
+
+      expect(result).toBeDefined();
+      expect(result.id).toBe(mockCajaId);
+      expect(cajaModel.findOne).toHaveBeenCalledWith({
+        ruta: new Types.ObjectId(mockRutaId),
+        fecha: mockDate,
+      });
+    });
+
+    it('debe devolver null si no hay caja ese día', async () => {
+      cajaModel.findOne.mockReturnValue({
+        session: jest.fn().mockResolvedValue(null),
+      });
+
+      const result = await service.findByRutaAndFecha(mockRutaId, mockDate, null);
+
+      expect(result).toBeNull();
+    });
+  });
+
+  describe('markOpen', () => {
+    it('debe marcar la caja como abierta y devolver la entidad', async () => {
+      const mockCaja = {
+        _id: mockCajaId,
+        status: false,
+        base: 500,
+        save: jest.fn().mockResolvedValue(undefined),
+      };
+
+      cajaModel.findById.mockReturnValue({
+        session: jest.fn().mockResolvedValue(mockCaja),
+      });
+
+      const result = await service.markOpen(mockCajaId, {} as any);
+
+      expect(mockCaja.status).toBe(true);
+      expect(mockCaja.save).toHaveBeenCalled();
+      expect(result.id).toBe(mockCajaId);
+      expect(result.status).toBe(true);
+    });
+
+    it('debe lanzar NotFoundException si la caja no existe', async () => {
+      cajaModel.findById.mockReturnValue({
+        session: jest.fn().mockResolvedValue(null),
+      });
+
+      await expect(service.markOpen(mockCajaId, {} as any)).rejects.toThrow(NotFoundException);
+    });
+  });
 });

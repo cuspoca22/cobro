@@ -30,6 +30,7 @@ describe('RutaService', () => {
   let mockSocketGateway: {
     emitRutaLockState: jest.Mock;
     emitCloseCaja: jest.Mock;
+    emitOpenCaja: jest.Mock;
   };
 
   beforeEach(async () => {
@@ -54,11 +55,13 @@ describe('RutaService', () => {
 
     mockCajaService = {
       getUltimaCaja: jest.fn(),
+      findByRutaAndFecha: jest.fn().mockResolvedValue(null),
       create: jest.fn(),
       getMovimientosResumen: jest.fn().mockResolvedValue(undefined),
       congelarSnapshotCierre: jest.fn().mockResolvedValue(undefined),
       deleteManyByRuta: jest.fn(),
       markClosed: jest.fn().mockResolvedValue(undefined),
+      markOpen: jest.fn(),
       findByIdLean: jest.fn().mockResolvedValue(null),
     };
 
@@ -123,6 +126,7 @@ describe('RutaService', () => {
           useValue: {
             emitRutaLockState: jest.fn(),
             emitCloseCaja: jest.fn(),
+            emitOpenCaja: jest.fn(),
           },
         },
         {
@@ -164,6 +168,7 @@ describe('RutaService', () => {
     it('should open ruta successfully if not open', async () => {
       const rutaId = new Types.ObjectId().toHexString();
       const mockRuta = {
+        _id: new Types.ObjectId(rutaId),
         status: false,
         timeZone: 'UTC',
         save: jest.fn(),
@@ -175,6 +180,7 @@ describe('RutaService', () => {
         session: jest.fn().mockResolvedValue(mockRuta),
       });
 
+      mockCajaService.findByRutaAndFecha.mockResolvedValue(null);
       mockCajaService.getUltimaCaja.mockResolvedValue({
         hayUltimaCaja: false,
         ultimaCaja: null,
@@ -188,12 +194,14 @@ describe('RutaService', () => {
       expect(mockRuta.status).toBe(true);
       expect(mockRuta.save).toHaveBeenCalledWith({ session: expect.anything() });
       expect(mockSession.commitTransaction).toHaveBeenCalled();
+      expect(mockSocketGateway.emitOpenCaja).toHaveBeenCalledWith(rutaId);
       expect(mockSession.endSession).toHaveBeenCalled();
     });
 
     it('should use previous box final value as base if available', async () => {
       const rutaId = new Types.ObjectId().toHexString();
       const mockRuta = {
+        _id: new Types.ObjectId(rutaId),
         status: false,
         timeZone: 'UTC',
         save: jest.fn(),
@@ -206,6 +214,7 @@ describe('RutaService', () => {
         session: jest.fn().mockResolvedValue(mockRuta),
       });
 
+      mockCajaService.findByRutaAndFecha.mockResolvedValue(null);
       mockCajaService.getUltimaCaja.mockResolvedValue({
         hayUltimaCaja: true,
         ultimaCaja: mockUltimaCaja,
@@ -218,6 +227,44 @@ describe('RutaService', () => {
       expect(mockCajaService.create).toHaveBeenCalledWith(expect.objectContaining({
         base: 1000
       }), expect.anything());
+      expect(mockCajaService.markOpen).not.toHaveBeenCalled();
+    });
+
+    it('should reopen existing same-day caja without creating a new one', async () => {
+      const rutaId = new Types.ObjectId().toHexString();
+      const cajaId = new Types.ObjectId().toHexString();
+      const mockRuta = {
+        _id: new Types.ObjectId(rutaId),
+        status: false,
+        timeZone: 'UTC',
+        save: jest.fn(),
+        caja_actual: cajaId,
+      };
+      const cajaDelDia = {
+        id: cajaId,
+        base: 500,
+        caja_final: 800,
+        status: false,
+      };
+      const cajaReabierta = { ...cajaDelDia, status: true };
+
+      mockRutaModel.findById.mockReturnValue({
+        session: jest.fn().mockResolvedValue(mockRuta),
+      });
+
+      mockCajaService.findByRutaAndFecha.mockResolvedValue(cajaDelDia);
+      mockCajaService.markOpen.mockResolvedValue(cajaReabierta);
+
+      const result = await service.openRuta(rutaId);
+
+      expect(result).toEqual({ ok: true, caja: cajaReabierta });
+      expect(mockRuta.status).toBe(true);
+      expect(mockRuta.caja_actual).toEqual(new Types.ObjectId(cajaId));
+      expect(mockCajaService.markOpen).toHaveBeenCalledWith(cajaId, expect.anything());
+      expect(mockCajaService.create).not.toHaveBeenCalled();
+      expect(mockCajaService.getUltimaCaja).not.toHaveBeenCalled();
+      expect(mockSocketGateway.emitOpenCaja).toHaveBeenCalledWith(rutaId);
+      expect(mockSession.commitTransaction).toHaveBeenCalled();
     });
   });
 
