@@ -258,7 +258,14 @@ export class MovimientoCajaService {
         throw new BadRequestException(`El monto del pago (${montoRedondeado}) excede el saldo pendiente del crédito (${saldoRedondeado}).`);
       }
 
+      const montoAnterior = Number(movimiento.monto);
       movimiento.monto = updateMovimientoCajaDto.monto;
+
+      // Si se registra un pago real tras un no pago, se elimina el motivo del no pago
+      if (montoAnterior === 0 && montoRedondeado > 0) {
+        movimiento.set('comentario', undefined);
+      }
+
       await movimiento.save({ session });
 
       await this.creditoService.handlePaymentMade(
