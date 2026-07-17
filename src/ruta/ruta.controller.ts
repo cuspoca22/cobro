@@ -48,6 +48,24 @@ export class RutaController {
     return this.rutaService.closeRuta(id)
   }
 
+  @Auth(ValidRoles.admin, ValidRoles.superAdmin, ValidRoles.supervisor)
+  @RutaOwnership({ rutaId: { in: 'params', key: 'id' } })
+  @Patch('lock/:id')
+  async lockRuta(
+    @Param('id', ParseMongoIdPipe) id: string,
+  ) {
+    return this.rutaService.lockRuta(id);
+  }
+
+  @Auth(ValidRoles.admin, ValidRoles.superAdmin, ValidRoles.supervisor)
+  @RutaOwnership({ rutaId: { in: 'params', key: 'id' } })
+  @Patch('unlock/:id')
+  async unlockRuta(
+    @Param('id', ParseMongoIdPipe) id: string,
+  ) {
+    return this.rutaService.unlockRuta(id);
+  }
+
   @RutaOwnership({ rutaId: { in: 'params', key: 'id' } })
   @Get(':id')
   async findOne(

@@ -27,6 +27,10 @@ describe('RutaService', () => {
   let mockEmpresaService: any;
   let mockConnection: any;
   let mockSession: any;
+  let mockSocketGateway: {
+    emitRutaLockState: jest.Mock;
+    emitCloseCaja: jest.Mock;
+  };
 
   beforeEach(async () => {
     mockSession = {
@@ -116,7 +120,10 @@ describe('RutaService', () => {
         },
         {
           provide: MessageGateway,
-          useValue: {},
+          useValue: {
+            emitRutaLockState: jest.fn(),
+            emitCloseCaja: jest.fn(),
+          },
         },
         {
           provide: DateFnsAdapter,
@@ -133,6 +140,7 @@ describe('RutaService', () => {
     }).compile();
 
     service = module.get<RutaService>(RutaService);
+    mockSocketGateway = module.get(MessageGateway);
   });
 
   it('should be defined', () => {
@@ -290,9 +298,114 @@ describe('RutaService', () => {
       expect(mockCajaService.markClosed).toHaveBeenCalledWith(cajaId, expect.anything());
       expect(mockCajaService.congelarSnapshotCierre).toHaveBeenCalledWith(rutaId, expect.anything());
       expect(mockSession.commitTransaction).toHaveBeenCalled();
+      expect(mockSocketGateway.emitCloseCaja).toHaveBeenCalledWith(rutaId);
       expect(mockSession.endSession).toHaveBeenCalled();
     });
 
+  });
+
+  describe('lockRuta', () => {
+    it('should throw NotFoundException if ruta does not exist', async () => {
+      const rutaId = new Types.ObjectId().toHexString();
+      mockRutaModel.findById.mockResolvedValue(null);
+
+      await expect(service.lockRuta(rutaId)).rejects.toThrow(NotFoundException);
+    });
+
+    it('should throw BadRequestException if ruta is closed', async () => {
+      const rutaId = new Types.ObjectId().toHexString();
+      mockRutaModel.findById.mockResolvedValue({
+        _id: new Types.ObjectId(rutaId),
+        status: false,
+        isLocked: false,
+        save: jest.fn(),
+      });
+
+      await expect(service.lockRuta(rutaId)).rejects.toThrow(BadRequestException);
+    });
+
+    it('should throw BadRequestException if ruta is already locked', async () => {
+      const rutaId = new Types.ObjectId().toHexString();
+      mockRutaModel.findById.mockResolvedValue({
+        _id: new Types.ObjectId(rutaId),
+        status: true,
+        isLocked: true,
+        save: jest.fn(),
+      });
+
+      await expect(service.lockRuta(rutaId)).rejects.toThrow(BadRequestException);
+    });
+
+    it('should lock ruta and emit block-caja payload', async () => {
+      const rutaId = new Types.ObjectId().toHexString();
+      const mockRuta = {
+        _id: new Types.ObjectId(rutaId),
+        status: true,
+        isLocked: false,
+        save: jest.fn().mockResolvedValue(undefined),
+      };
+      mockRutaModel.findById.mockResolvedValue(mockRuta);
+
+      const result = await service.lockRuta(rutaId);
+
+      expect(mockRuta.isLocked).toBe(true);
+      expect(mockRuta.save).toHaveBeenCalled();
+      expect(result).toEqual({
+        ok: true,
+        ruta: rutaId,
+        isLocked: true,
+      });
+      expect(mockSocketGateway.emitRutaLockState).toHaveBeenCalledWith({
+        ruta: rutaId,
+        isLocked: true,
+      });
+    });
+  });
+
+  describe('unlockRuta', () => {
+    it('should throw NotFoundException if ruta does not exist', async () => {
+      const rutaId = new Types.ObjectId().toHexString();
+      mockRutaModel.findById.mockResolvedValue(null);
+
+      await expect(service.unlockRuta(rutaId)).rejects.toThrow(NotFoundException);
+    });
+
+    it('should throw BadRequestException if ruta is not locked', async () => {
+      const rutaId = new Types.ObjectId().toHexString();
+      mockRutaModel.findById.mockResolvedValue({
+        _id: new Types.ObjectId(rutaId),
+        status: true,
+        isLocked: false,
+        save: jest.fn(),
+      });
+
+      await expect(service.unlockRuta(rutaId)).rejects.toThrow(BadRequestException);
+    });
+
+    it('should unlock ruta and emit unblock-caja payload', async () => {
+      const rutaId = new Types.ObjectId().toHexString();
+      const mockRuta = {
+        _id: new Types.ObjectId(rutaId),
+        status: true,
+        isLocked: true,
+        save: jest.fn().mockResolvedValue(undefined),
+      };
+      mockRutaModel.findById.mockResolvedValue(mockRuta);
+
+      const result = await service.unlockRuta(rutaId);
+
+      expect(mockRuta.isLocked).toBe(false);
+      expect(mockRuta.save).toHaveBeenCalled();
+      expect(result).toEqual({
+        ok: true,
+        ruta: rutaId,
+        isLocked: false,
+      });
+      expect(mockSocketGateway.emitRutaLockState).toHaveBeenCalledWith({
+        ruta: rutaId,
+        isLocked: false,
+      });
+    });
   });
 
   describe('create', () => {

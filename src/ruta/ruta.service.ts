@@ -23,6 +23,7 @@ export class RutaService {
   private logger = new Logger("RutaService");
 
   constructor(
+    @Inject(forwardRef(() => MessageGateway))
     private socketRuta: MessageGateway,
 
     @InjectModel(Ruta.name)
@@ -304,6 +305,8 @@ export class RutaService {
       // Confirma la transacción. Si esta línea no se ejecuta, NINGÚN cambio se guardará.
       await session.commitTransaction();
 
+      this.socketRuta.emitCloseCaja(ruta._id.toString());
+
       return true;
 
     } catch (error) {
@@ -312,6 +315,82 @@ export class RutaService {
       this.handleExceptions(error);
     } finally {
       session.endSession();
+    }
+  }
+
+  /**
+   * Bloqueo temporal: isLocked=true sin cerrar la ruta (status sigue true).
+   * Emite `block-caja` al frontend tras persistir.
+   */
+  async lockRuta(rutaId: string): Promise<{
+    ok: boolean;
+    ruta: string;
+    isLocked: true;
+  }> {
+    try {
+      const ruta = await this.rutaModel.findById(rutaId);
+      if (!ruta) {
+        throw new NotFoundException(`La ruta con el id ${rutaId} no existe`);
+      }
+
+      if (!ruta.status) {
+        throw new BadRequestException(
+          'No se puede bloquear una ruta cerrada. Ábrela primero.',
+        );
+      }
+
+      if (ruta.isLocked) {
+        throw new BadRequestException('La ruta ya se encuentra bloqueada');
+      }
+
+      ruta.isLocked = true;
+      await ruta.save();
+
+      const payload = {
+        ruta: ruta._id.toString(),
+        isLocked: true as const,
+      };
+
+      this.socketRuta.emitRutaLockState(payload);
+
+      return { ok: true, ...payload };
+    } catch (error) {
+      this.handleExceptions(error);
+    }
+  }
+
+  /**
+   * Desbloquea la ruta (isLocked=false) sin alterar status/caja.
+   * Emite `unblock-caja` al frontend tras persistir.
+   */
+  async unlockRuta(rutaId: string): Promise<{
+    ok: boolean;
+    ruta: string;
+    isLocked: false;
+  }> {
+    try {
+      const ruta = await this.rutaModel.findById(rutaId);
+      if (!ruta) {
+        throw new NotFoundException(`La ruta con el id ${rutaId} no existe`);
+      }
+
+      if (!ruta.isLocked) {
+        throw new BadRequestException('La ruta no se encuentra bloqueada');
+      }
+
+      ruta.isLocked = false;
+      await ruta.save();
+
+      const payload = {
+        ruta: ruta._id.toString(),
+        isLocked: false as const,
+      };
+
+      this.socketRuta.emitRutaLockState(payload);
+
+      return { ok: true, ...payload };
+    } catch (error) {
+      this.handleExceptions(error);
     }
   }
 

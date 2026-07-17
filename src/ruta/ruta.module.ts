@@ -34,7 +34,7 @@ import { EmpresaModule } from '../empresa/empresa.module';
         schema: RutaSchema
       },
     ]),
-    MessageModule,
+    forwardRef(() => MessageModule),
   ],
   controllers: [RutaController],
   providers: [RutaService, DateFnsAdapter],
