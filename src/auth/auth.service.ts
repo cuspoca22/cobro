@@ -130,6 +130,33 @@ export class AuthService {
    }
 
    async checkStatus(user: GetUserDto) {
+      if (user.rol === 'COBRADOR' && user.ruta) {
+         const fullUser = await this.userModel.findById(user.id)
+            .populate({
+               path: 'ruta',
+               select: 'status isLocked',
+            })
+            .lean();
+
+         const ruta = fullUser?.ruta as
+            | { status?: boolean; isLocked?: boolean }
+            | undefined;
+
+         if (ruta) {
+            if (ruta.status === false) {
+               throw new UnauthorizedException(
+                  'Ruta cerrada hable con su administrador',
+               );
+            }
+
+            if (ruta.isLocked) {
+               throw new UnauthorizedException(
+                  'Su ruta se encuentra bloqueada, por favor ponganse en contacto con su supervisor',
+               );
+            }
+         }
+      }
+
       return {
          user: UserEntity.fromObject(user),
          token: this.getJwtToken({ id: user.id })

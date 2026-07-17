@@ -38,6 +38,19 @@ export class JWTStrategy extends PassportStrategy(Strategy, 'jwt') {
     if (!user.estado)
       throw new UnauthorizedException('usuario no esta activo');
 
+    if (user.rol === 'COBRADOR' && user.ruta) {
+      const ruta = user.ruta as { status?: boolean; isLocked?: boolean };
+
+      if (ruta.status === false) {
+        throw new UnauthorizedException('Ruta cerrada hable con su administrador');
+      }
+
+      if (ruta.isLocked) {
+        throw new UnauthorizedException(
+          'Su ruta se encuentra bloqueada, por favor ponganse en contacto con su supervisor',
+        );
+      }
+    }
 
     return UserEntity.fromObject(user.toObject());
   }
