@@ -1,5 +1,6 @@
 import { UserEntity } from "src/auth/entities/user.entity";
 import { RutaEntity } from "src/ruta/entities/ruta.entity";
+import { BaseCalculoMora } from "../interfaces";
 
 export class EmpresaEntity {
 
@@ -10,6 +11,10 @@ export class EmpresaEntity {
    dayOfPay: string;
    country: string;
    isSubscriptionPaid: boolean;
+   cobraMora: boolean;
+   permiteMoraVoluntaria: boolean;
+   porcentajeMora: number;
+   baseCalculoMora: BaseCalculoMora;
    owner: UserEntity;
    employes: UserEntity[];
    rutas: RutaEntity[];
@@ -33,9 +38,17 @@ export class EmpresaEntity {
          dayOfPay: object.dayOfPay,
          country: object.country,
          isSubscriptionPaid: object.isSubscriptionPaid,
-         owner: UserEntity.fromObject(object.owner),
-         employes: object.employes.map(employe => UserEntity.fromObject(employe)),
-         rutas: object.rutas.map(ruta => RutaEntity.fromObject(ruta))
+         cobraMora: object.cobraMora ?? false,
+         permiteMoraVoluntaria: object.permiteMoraVoluntaria ?? false,
+         porcentajeMora: object.porcentajeMora ?? 0,
+         baseCalculoMora: object.baseCalculoMora ?? BaseCalculoMora.VALOR_CUOTA,
+         owner: object.owner ? UserEntity.fromObject(object.owner) : null,
+         employes: Array.isArray(object.employes)
+            ? object.employes.map(employe => UserEntity.fromObject(employe))
+            : [],
+         rutas: Array.isArray(object.rutas)
+            ? object.rutas.map(ruta => RutaEntity.fromObject(ruta))
+            : [],
       });
 
       return empresa;

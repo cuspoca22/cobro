@@ -7,6 +7,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { Empresa, EmpresaSchema } from './schemas/empresa.schema';
 import { RutaModule } from '../ruta/ruta.module';
 import { ClienteModule } from '../cliente/cliente.module';
+import { MessageModule } from '../message/message.module';
 
 /**
  * V4b: solo registra Empresa. User vía AuthService (forwardRef Auth↔Empresa).
@@ -17,6 +18,7 @@ import { ClienteModule } from '../cliente/cliente.module';
     forwardRef(() => AuthModule),
     forwardRef(() => RutaModule),
     ClienteModule,
+    forwardRef(() => MessageModule),
     MongooseModule.forFeature([
       {
         name: Empresa.name,

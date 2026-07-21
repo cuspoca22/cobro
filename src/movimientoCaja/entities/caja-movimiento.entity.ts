@@ -14,6 +14,8 @@ export class CajaMovimientoEntity {
   cliente?: string;
   credito?: string;
   categoriaGasto?: CategoriaGasto;
+  montoAbono?: number;
+  montoMora?: number;
   _id?: string;
 
   constructor(data?: Partial<CajaMovimientoEntity>) {
@@ -42,6 +44,8 @@ export class CajaMovimientoEntity {
       cliente: object.cliente,
       credito: object.credito,
       categoriaGasto: object.categoriaGasto,
+      montoAbono: object.montoAbono,
+      montoMora: object.montoMora ?? 0,
     })
     
     return cajaMovimiento;

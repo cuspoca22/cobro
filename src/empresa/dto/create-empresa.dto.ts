@@ -1,4 +1,5 @@
-import { IsArray, IsBoolean, IsEmail, IsMongoId, IsNumber, IsOptional, IsString } from "class-validator";
+import { IsArray, IsBoolean, IsEmail, IsEnum, IsMongoId, IsNumber, IsOptional, IsString, Min } from "class-validator";
+import { BaseCalculoMora } from "../interfaces";
 
 export class CreateEmpresaDto {
 
@@ -41,5 +42,22 @@ export class CreateEmpresaDto {
    @IsBoolean()
    @IsOptional()
    isSubscriptionPaid: boolean;
+
+   @IsBoolean()
+   @IsOptional()
+   cobraMora?: boolean;
+
+   @IsBoolean()
+   @IsOptional()
+   permiteMoraVoluntaria?: boolean;
+
+   @IsNumber()
+   @IsOptional()
+   @Min(0)
+   porcentajeMora?: number;
+
+   @IsEnum(BaseCalculoMora)
+   @IsOptional()
+   baseCalculoMora?: BaseCalculoMora;
 
 }

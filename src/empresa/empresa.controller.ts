@@ -2,6 +2,7 @@ import { Controller, Get, Post, Body, Patch, Param, Delete, Query } from '@nestj
 import { EmpresaService } from './empresa.service';
 import { CreateEmpresaDto } from './dto/create-empresa.dto';
 import { UpdateEmpresaDto } from './dto/update-empresa.dto';
+import { UpdateMoraConfigDto } from './dto/update-mora-config.dto';
 import { ParseMongoIdPipe } from 'src/common/pipes/parse-mongo-id.pipe';
 import { Auth, GetUser } from 'src/auth/decorators';
 import { ValidRoles } from 'src/auth/interfaces';
@@ -52,6 +53,15 @@ export class EmpresaController {
   @Get('all')
   findAllEmpresas(){
     return this.empresaService.getAllEmpresas();
+  }
+
+  @Auth(ValidRoles.admin, ValidRoles.superAdmin)
+  @Patch(':id/mora-config')
+  updateMoraConfig(
+    @Param('id', ParseMongoIdPipe) id: string,
+    @Body() dto: UpdateMoraConfigDto,
+  ) {
+    return this.empresaService.updateMoraConfig(id, dto);
   }
 
   @Auth()

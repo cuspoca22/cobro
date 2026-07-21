@@ -91,6 +91,22 @@ export class Caja {
    })
    pretendido: number;
 
+   /** Mora cobrada en el día (desglose; no forma parte del pretendido). */
+   @Prop({
+      type: Number,
+      default: 0,
+      min: 0,
+   })
+   moraCobrada: number;
+
+   /** Mora pendiente de cobro en créditos activos de la ruta (snapshot). */
+   @Prop({
+      type: Number,
+      default: 0,
+      min: 0,
+   })
+   moraPorCobrar: number;
+
    @Prop({
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Ruta',

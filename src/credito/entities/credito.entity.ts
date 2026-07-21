@@ -24,6 +24,13 @@ export class CreditoEntity {
   paidToday: boolean;
   daysOverdue: number;
   paymentsToday: CajaMovimientoEntity | null;
+  mora_adeudada: number;
+  mora_cobrada: number;
+  moraSugerida?: number;
+  cobraMora?: boolean;
+  permiteMoraVoluntaria?: boolean;
+  porcentajeMora?: number;
+  baseCalculoMora?: string;
   _id?: string;
   id?: string;
 
@@ -41,7 +48,7 @@ export class CreditoEntity {
 
     let paymentsToday = null;
     
-    if(object.paymentsToday.length > 0){
+    if(object.paymentsToday && object.paymentsToday.length > 0){
       paymentsToday = CajaMovimientoEntity.fromObject(object.paymentsToday[0]);
     }
 
@@ -67,6 +74,13 @@ export class CreditoEntity {
       paymentsToday,
       paidToday: object.paidToday,
       daysOverdue: object.daysOverdue,
+      mora_adeudada: object.mora_adeudada ?? 0,
+      mora_cobrada: object.mora_cobrada ?? 0,
+      moraSugerida: object.moraSugerida,
+      cobraMora: object.cobraMora,
+      permiteMoraVoluntaria: object.permiteMoraVoluntaria,
+      porcentajeMora: object.porcentajeMora,
+      baseCalculoMora: object.baseCalculoMora,
     });
 
     return credito;

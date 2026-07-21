@@ -13,6 +13,7 @@ import { CreateRutaDto } from '../ruta/dto/create-ruta.dto';
 import { User } from 'src/auth/schemas/user.schema';
 import { EmpresaEntity } from './entities/empresa.entity';
 import { Ruta } from '../ruta/schema/ruta.schema';
+import { MessageGateway } from '../message/message.gateway';
 
 @Injectable()
 export class EmpresaService {
@@ -29,6 +30,9 @@ export class EmpresaService {
     @Inject(forwardRef(() => AuthService))
     private authSvc: AuthService,
     private clienteSrc: ClienteService,
+
+    @Inject(forwardRef(() => MessageGateway))
+    private readonly messageGateway: MessageGateway,
   ) { }
 
   async create(createEmpresaDto: CreateEmpresaDto) {
@@ -186,6 +190,69 @@ export class EmpresaService {
     }
 
 
+  }
+
+  async updateMoraConfig(id: string, dto: {
+    cobraMora?: boolean;
+    permiteMoraVoluntaria?: boolean;
+    porcentajeMora?: number;
+    baseCalculoMora?: string;
+  }) {
+    const empresa = await this.empresaModel.findById(id);
+    if (!empresa) {
+      throw new NotFoundException(`Empresa con el id ${id} no existe`);
+    }
+
+    if (dto.cobraMora !== undefined) empresa.cobraMora = dto.cobraMora;
+    if (dto.permiteMoraVoluntaria !== undefined) {
+      empresa.permiteMoraVoluntaria = dto.permiteMoraVoluntaria;
+    }
+    if (dto.porcentajeMora !== undefined) empresa.porcentajeMora = dto.porcentajeMora;
+    if (dto.baseCalculoMora !== undefined) {
+      empresa.baseCalculoMora = dto.baseCalculoMora as any;
+    }
+
+    await empresa.save();
+
+    const result = {
+      id: empresa._id.toString(),
+      cobraMora: empresa.cobraMora ?? false,
+      permiteMoraVoluntaria: empresa.permiteMoraVoluntaria ?? false,
+      porcentajeMora: empresa.porcentajeMora ?? 0,
+      baseCalculoMora: empresa.baseCalculoMora ?? 'VALOR_CUOTA',
+    };
+
+    this.messageGateway.emitMoraConfigActualizada({
+      empresa: result.id,
+      cobraMora: result.cobraMora,
+      permiteMoraVoluntaria: result.permiteMoraVoluntaria,
+      porcentajeMora: result.porcentajeMora,
+      baseCalculoMora: String(result.baseCalculoMora),
+    });
+
+    return result;
+  }
+
+  /** Config de mora lean para cobros / listados. */
+  async getMoraConfigById(id: string): Promise<{
+    cobraMora: boolean;
+    permiteMoraVoluntaria: boolean;
+    porcentajeMora: number;
+    baseCalculoMora: string;
+  } | null> {
+    const empresa = await this.empresaModel
+      .findById(id)
+      .select('cobraMora permiteMoraVoluntaria porcentajeMora baseCalculoMora')
+      .lean();
+
+    if (!empresa) return null;
+
+    return {
+      cobraMora: empresa.cobraMora ?? false,
+      permiteMoraVoluntaria: empresa.permiteMoraVoluntaria ?? false,
+      porcentajeMora: empresa.porcentajeMora ?? 0,
+      baseCalculoMora: empresa.baseCalculoMora ?? 'VALOR_CUOTA',
+    };
   }
 
   async addEmploye(userDto: CreateUserDto) {

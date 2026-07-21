@@ -20,6 +20,10 @@ export class CajaEntity {
   cobro: number;
   clientes_pendientes: number;
   pretendido: number;
+  moraCobrada: number;
+  moraPorCobrar: number;
+  /** Flag de empresa (solo response; no se persiste en schema caja). */
+  cobraMora?: boolean;
   status: boolean;
 
   /**
@@ -60,6 +64,9 @@ export class CajaEntity {
       cobro: Number(object.cobro) || 0,
       clientes_pendientes: Number(object.clientes_pendientes) || 0,
       pretendido: Number(object.pretendido) || 0,
+      moraCobrada: Number(object.moraCobrada) || 0,
+      moraPorCobrar: Number(object.moraPorCobrar) || 0,
+      cobraMora: object.cobraMora !== undefined ? !!object.cobraMora : undefined,
       status: object.status !== undefined ? object.status : true, // Por defecto true si no viene definido
     });
 

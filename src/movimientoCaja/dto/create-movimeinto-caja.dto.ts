@@ -1,4 +1,4 @@
-import { IsDate, IsEnum, IsMongoId, IsNumber, IsOptional, IsString } from "class-validator";
+import { IsDate, IsEnum, IsMongoId, IsNumber, IsOptional, IsString, Min } from "class-validator";
 import { CategoriaGasto, SubTipo, TipoMovimiento } from "../interfaces";
 
 export class CreateMovimientoCajaDto {
@@ -20,6 +20,12 @@ export class CreateMovimientoCajaDto {
 
   @IsNumber()
   monto: number;
+
+  /** Monto de mora a cobrar dentro del mismo pago (desglose). */
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  montoMora?: number;
 
   @IsOptional()
   @IsEnum(CategoriaGasto)

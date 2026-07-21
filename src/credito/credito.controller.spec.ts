@@ -2,20 +2,33 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { CreditoController } from './credito.controller';
 import { CreditoService } from './credito.service';
 import { GetUserDto } from '../auth/dto/get-user.dto';
+import { RutaOwnershipService } from 'src/common/ownership';
 
 jest.mock('../auth/decorators', () => ({
   Auth: () => jest.fn(),
   GetUser: () => jest.fn(),
 }));
 
+jest.mock('src/common/ownership', () => ({
+  RutaOwnership: () => jest.fn(),
+  RutaOwnershipService: jest.fn().mockImplementation(() => ({
+    resolveRutaId: jest.fn().mockResolvedValue('rutaId'),
+  })),
+}));
+
 describe('CreditoController', () => {
   let controller: CreditoController;
-  let creditoService: CreditoService;
 
   const mockCreditoService = {
     getCreditosByRuta: jest.fn(),
     getHistorialCreditos: jest.fn(),
     getCreditoById: jest.fn(),
+    aplicarMora: jest.fn(),
+    perdonarMora: jest.fn(),
+  };
+
+  const mockOwnershipService = {
+    resolveRutaId: jest.fn().mockResolvedValue('rutaId'),
   };
 
   const mockUser: GetUserDto = {
@@ -36,11 +49,14 @@ describe('CreditoController', () => {
           provide: CreditoService,
           useValue: mockCreditoService,
         },
+        {
+          provide: RutaOwnershipService,
+          useValue: mockOwnershipService,
+        },
       ],
     }).compile();
 
     controller = module.get<CreditoController>(CreditoController);
-    creditoService = module.get<CreditoService>(CreditoService);
   });
 
   it('should be defined', () => {
@@ -74,8 +90,47 @@ describe('CreditoController', () => {
       const result = { id: 'credit1' };
       mockCreditoService.getCreditoById.mockResolvedValue(result);
 
-      expect(await controller.findOne(mockUser, creditId)).toBe(result);
-      expect(mockCreditoService.getCreditoById).toHaveBeenCalledWith(creditId, mockUser.ruta);
+      expect(await controller.findOne(creditId)).toBe(result);
+      expect(mockOwnershipService.resolveRutaId).toHaveBeenCalledWith({ creditoId: creditId });
+      expect(mockCreditoService.getCreditoById).toHaveBeenCalledWith(creditId, 'rutaId');
+    });
+  });
+
+  describe('aplicarMora', () => {
+    it('delega al service con creditoId, dto.monto, user.id y dto.motivo', async () => {
+      const creditoId = 'credito123';
+      const dto = { monto: 25, motivo: 'atraso' };
+      const expected = { creditoId, mora_adeudada: 35, montoAplicado: 25 };
+      mockCreditoService.aplicarMora.mockResolvedValue(expected);
+
+      const result = await controller.aplicarMora(creditoId, dto, mockUser);
+
+      expect(result).toBe(expected);
+      expect(mockCreditoService.aplicarMora).toHaveBeenCalledWith(
+        creditoId,
+        dto.monto,
+        mockUser.id,
+        dto.motivo,
+      );
+    });
+  });
+
+  describe('perdonarMora', () => {
+    it('delega al service con creditoId, dto.monto, user.id y dto.motivo', async () => {
+      const creditoId = 'credito123';
+      const dto = { monto: 20, motivo: 'buen historial' };
+      const expected = { creditoId, mora_adeudada: 30, montoPerdonado: 20 };
+      mockCreditoService.perdonarMora.mockResolvedValue(expected);
+
+      const result = await controller.perdonarMora(creditoId, dto, mockUser);
+
+      expect(result).toBe(expected);
+      expect(mockCreditoService.perdonarMora).toHaveBeenCalledWith(
+        creditoId,
+        dto.monto,
+        mockUser.id,
+        dto.motivo,
+      );
     });
   });
 });

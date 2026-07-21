@@ -223,4 +223,198 @@ describe('CreditCalculatorService', () => {
       expect(service.classifyClient(8)).toBe('MALO');
     });
   });
+
+  describe('calcularMoraSugerida', () => {
+    it('retorna 0 si la empresa no cobra mora', () => {
+      expect(
+        service.calcularMoraSugerida({
+          cobraMora: false,
+          porcentajeMora: 10,
+          baseCalculoMora: 'VALOR_CUOTA',
+          valorCuota: 100,
+          saldo: 500,
+          valorCredito: 1000,
+        }),
+      ).toBe(0);
+    });
+
+    it('calcula sobre valor cuota', () => {
+      expect(
+        service.calcularMoraSugerida({
+          cobraMora: true,
+          porcentajeMora: 10,
+          baseCalculoMora: 'VALOR_CUOTA',
+          valorCuota: 100,
+          saldo: 500,
+          valorCredito: 1000,
+        }),
+      ).toBe(10);
+    });
+
+    it('calcula sobre saldo', () => {
+      expect(
+        service.calcularMoraSugerida({
+          cobraMora: true,
+          porcentajeMora: 5,
+          baseCalculoMora: 'SALDO',
+          valorCuota: 100,
+          saldo: 200,
+          valorCredito: 1000,
+        }),
+      ).toBe(10);
+    });
+
+    it('calcula sobre valor crédito', () => {
+      expect(
+        service.calcularMoraSugerida({
+          cobraMora: true,
+          porcentajeMora: 2,
+          baseCalculoMora: 'VALOR_CREDITO',
+          valorCuota: 100,
+          saldo: 500,
+          valorCredito: 1000,
+        }),
+      ).toBe(20);
+    });
+  });
+
+  describe('repartirPago (abono primero)', () => {
+    it('con montoMora explícito reparte abono y mora', () => {
+      expect(
+        service.repartirPago({
+          monto: 120,
+          montoMora: 20,
+          saldo: 100,
+          moraAdeudada: 20,
+          maxMoraPermitida: 50,
+        }),
+      ).toEqual({ montoAbono: 100, montoMora: 20, moraAAplicar: 0 });
+    });
+
+    it('auto: abono primero y resto a mora', () => {
+      expect(
+        service.repartirPago({
+          monto: 120,
+          saldo: 100,
+          moraAdeudada: 50,
+          maxMoraPermitida: 50,
+        }),
+      ).toEqual({ montoAbono: 100, montoMora: 20, moraAAplicar: 0 });
+    });
+
+    it('aplica mora extra si se cobra más de la adeudada', () => {
+      expect(
+        service.repartirPago({
+          monto: 110,
+          montoMora: 10,
+          saldo: 100,
+          moraAdeudada: 0,
+          maxMoraPermitida: 20,
+        }),
+      ).toEqual({ montoAbono: 100, montoMora: 10, moraAAplicar: 10 });
+    });
+
+    it('rechaza si abono excede saldo', () => {
+      expect(() =>
+        service.repartirPago({
+          monto: 150,
+          montoMora: 10,
+          saldo: 100,
+          moraAdeudada: 0,
+          maxMoraPermitida: 50,
+        }),
+      ).toThrow(/excede el saldo/);
+    });
+
+    it('rechaza si montoMora excede maxMoraPermitida', () => {
+      expect(() =>
+        service.repartirPago({
+          monto: 120,
+          montoMora: 60,
+          saldo: 100,
+          moraAdeudada: 0,
+          maxMoraPermitida: 50,
+        }),
+      ).toThrow(/excede el máximo permitido/);
+    });
+
+    it('rechaza si montoMora supera monto total', () => {
+      expect(() =>
+        service.repartirPago({
+          monto: 100,
+          montoMora: 110,
+          saldo: 100,
+          moraAdeudada: 0,
+          maxMoraPermitida: 50,
+        }),
+      ).toThrow(/no puede superar el monto total/);
+    });
+
+    it('rechaza montos negativos', () => {
+      expect(() =>
+        service.repartirPago({
+          monto: -10,
+          saldo: 100,
+          moraAdeudada: 0,
+          maxMoraPermitida: 50,
+        }),
+      ).toThrow(/no puede ser negativo/);
+
+      expect(() =>
+        service.repartirPago({
+          monto: 100,
+          montoMora: -5,
+          saldo: 100,
+          moraAdeudada: 0,
+          maxMoraPermitida: 50,
+        }),
+      ).toThrow(/no puede ser negativo/);
+    });
+
+    it('rechaza en modo auto si monto excede saldo + mora permitida', () => {
+      expect(() =>
+        service.repartirPago({
+          monto: 200,
+          saldo: 100,
+          moraAdeudada: 0,
+          maxMoraPermitida: 50,
+        }),
+      ).toThrow(/excede el saldo.*mora permitida/);
+    });
+  });
+
+  describe('maxMoraPermitida', () => {
+    it('0 si no cobra mora', () => {
+      expect(
+        service.maxMoraPermitida({
+          cobraMora: false,
+          permiteMoraVoluntaria: true,
+          moraAdeudada: 10,
+          moraSugerida: 5,
+        }),
+      ).toBe(0);
+    });
+
+    it('Infinity si permite voluntad', () => {
+      expect(
+        service.maxMoraPermitida({
+          cobraMora: true,
+          permiteMoraVoluntaria: true,
+          moraAdeudada: 10,
+          moraSugerida: 5,
+        }),
+      ).toBe(Number.POSITIVE_INFINITY);
+    });
+
+    it('max entre adeudada y sugerida sin voluntad', () => {
+      expect(
+        service.maxMoraPermitida({
+          cobraMora: true,
+          permiteMoraVoluntaria: false,
+          moraAdeudada: 10,
+          moraSugerida: 15,
+        }),
+      ).toBe(15);
+    });
+  });
 });

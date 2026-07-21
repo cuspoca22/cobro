@@ -84,6 +84,21 @@ export class MovimientoCaja {
     })
     numeroCuota?: number;
 
+    /** Porción del monto aplicada al abono del crédito (desglose mora). */
+    @Prop({
+        type: Number,
+        min: 0,
+    })
+    montoAbono?: number;
+
+    /** Porción del monto aplicada a mora (desglose; 1 pago/día). */
+    @Prop({
+        type: Number,
+        min: 0,
+        default: 0,
+    })
+    montoMora?: number;
+
     // Campos específicos para 'gasto'
     @Prop({
         type: String,

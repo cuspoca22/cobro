@@ -6,6 +6,7 @@ import { MovimientoCaja } from "./schemas/caja-movimiento.schemas";
 import { CreateMovimientoCajaDto, UpdateMovimientoCajaDto } from "./dto";
 import { DateFnsAdapter } from '../common/wrappers/date-fns.adapter';
 import { CreditoService } from "src/credito/credito.service";
+import { CreditCalculatorService } from "src/credito/helpers/credit.calculator.service";
 import { SubTipo, TipoMovimiento, ResumenOficinaResponse, GrupoMovimiento, MovimientoResumen } from "./interfaces";
 import { CreateCreditoDto, UpdateCreditoDto } from "src/credito/dto";
 import { CajaMovimientoEntity } from "./entities/caja-movimiento.entity";
@@ -32,6 +33,7 @@ export class MovimientoCajaService {
 
     private readonly dateFnsAdapter: DateFnsAdapter,
     private readonly creditoService: CreditoService,
+    private readonly creditCalculatorSvc: CreditCalculatorService,
     // Ledger-first: durante el día NO se reescribe Caja; el snapshot se congela al cerrar.
     @InjectConnection() private readonly connection: Connection
   ) {
@@ -41,7 +43,7 @@ export class MovimientoCajaService {
 
   async addPago(createPagoDto: CreateMovimientoCajaDto) {
     return this.transactionHelper.withTransaction(async (session) => {
-      const { rutaId, monto, creditoId, clienteId, ...rest } = createPagoDto;
+      const { rutaId, monto, creditoId, clienteId, montoMora, ...rest } = createPagoDto;
 
       const ruta = await this.rutaService.findOperacionContextById(rutaId, session);
       if (!ruta) throw new NotFoundException(`La ruta con el id ${rutaId} no existe`);
@@ -59,15 +61,40 @@ export class MovimientoCajaService {
       const credito = await this.creditoService.getCreditoById(creditoId, rutaId, session);
       if (!credito) throw new NotFoundException(`Credito con el id ${creditoId} no existe`);
 
-      // Usar precisión de 2 decimales para validación
+      const moraConfig = await this.creditoService.resolveMoraConfigForRuta(rutaId);
+
       const saldoRedondeado = Math.round(credito.saldo * 100) / 100;
       const montoRedondeado = Math.round(monto * 100) / 100;
+      const moraAdeudada = Math.round((credito.mora_adeudada ?? 0) * 100) / 100;
 
-      if (montoRedondeado > saldoRedondeado) {
-        throw new BadRequestException(
-          `El monto del pago (${montoRedondeado}) excede el saldo pendiente del crédito (${saldoRedondeado}).`
-        );
+      if (!moraConfig.cobraMora && montoMora != null && montoMora > 0) {
+        throw new BadRequestException('La empresa no tiene habilitado el cobro de mora');
       }
+
+      const sugerida = credito.moraSugerida ?? this.creditCalculatorSvc.calcularMoraSugerida({
+        cobraMora: moraConfig.cobraMora,
+        porcentajeMora: moraConfig.porcentajeMora,
+        baseCalculoMora: moraConfig.baseCalculoMora,
+        valorCuota: credito.valor_cuota,
+        saldo: saldoRedondeado,
+        valorCredito: credito.valor_credito,
+      });
+
+      const maxMora = this.creditCalculatorSvc.maxMoraPermitida({
+        cobraMora: moraConfig.cobraMora,
+        permiteMoraVoluntaria: moraConfig.permiteMoraVoluntaria,
+        moraAdeudada,
+        moraSugerida: sugerida,
+      });
+
+      const { montoAbono, montoMora: moraCobrar, moraAAplicar } =
+        this.creditCalculatorSvc.repartirPago({
+          monto: montoRedondeado,
+          montoMora,
+          saldo: saldoRedondeado,
+          moraAdeudada,
+          maxMoraPermitida: maxMora,
+        });
 
       // Verificar si ya existe un pago hoy (manteniendo restricción de un pago por día)
       const pagoExistente = await this.cajaMovimientoModel.findOne({
@@ -84,7 +111,9 @@ export class MovimientoCajaService {
       try {
         await this.cajaMovimientoModel.create([{
           caja: caja._id,
-          monto,
+          monto: montoRedondeado,
+          montoAbono,
+          montoMora: moraCobrar,
           tipoMovimiento: TipoMovimiento.INGRESO,
           subTipo: SubTipo.PAGOCREDITO,
           fecha,
@@ -100,6 +129,13 @@ export class MovimientoCajaService {
         }
         throw error;
       }
+
+      await this.creditoService.applyMoraCobroOnCredito(
+        creditoId,
+        moraCobrar,
+        moraAAplicar,
+        session,
+      );
 
       // llamamos el handlePaymentMade del credito
       const result = await this.creditoService.handlePaymentMade(creditoId, rutaId, clienteId, session);
@@ -244,22 +280,60 @@ export class MovimientoCajaService {
       const rutaId = (movimiento.ruta ?? caja.ruta).toString();
       await this.assertPagoEsDeHoy(movimiento.fecha, rutaId, session);
 
-      const credito = await this.creditoService.getCreditoById(movimiento.credito.toString(), caja.ruta, session);
+      const creditoId = movimiento.credito.toString();
+      const montoMoraAnterior = Number(movimiento.montoMora ?? 0);
+      const montoAbonoAnterior = Number(
+        movimiento.montoAbono ??
+        (Number(movimiento.monto) - montoMoraAnterior),
+      );
 
-      // Restauramos el saldo del credito (simulando que el pago anterior no existió)
-      const saldoCreditoRestaurado = credito.saldo + movimiento.monto;
+      // Revertir mora del pago anterior antes de recalcular
+      await this.creditoService.revertMoraCobroOnCredito(creditoId, montoMoraAnterior, session);
 
-      // Usar precisión de 2 decimales para validación
+      const credito = await this.creditoService.getCreditoById(creditoId, caja.ruta, session);
+
+      // Saldo restaurado (sin el abono anterior)
+      const saldoCreditoRestaurado = credito.saldo + montoAbonoAnterior;
       const saldoRedondeado = Math.round(saldoCreditoRestaurado * 100) / 100;
       const montoRedondeado = Math.round(updateMovimientoCajaDto.monto * 100) / 100;
+      const moraAdeudada = Math.round((credito.mora_adeudada ?? 0) * 100) / 100;
 
-      // volver a verificar si el monto es menor al saldo del credito
-      if (montoRedondeado > saldoRedondeado) {
-        throw new BadRequestException(`El monto del pago (${montoRedondeado}) excede el saldo pendiente del crédito (${saldoRedondeado}).`);
+      const moraConfig = await this.creditoService.resolveMoraConfigForRuta(rutaId);
+      const montoMoraNuevo = updateMovimientoCajaDto.montoMora;
+
+      if (!moraConfig.cobraMora && montoMoraNuevo != null && montoMoraNuevo > 0) {
+        throw new BadRequestException('La empresa no tiene habilitado el cobro de mora');
       }
 
+      const sugerida = credito.moraSugerida ?? this.creditCalculatorSvc.calcularMoraSugerida({
+        cobraMora: moraConfig.cobraMora,
+        porcentajeMora: moraConfig.porcentajeMora,
+        baseCalculoMora: moraConfig.baseCalculoMora,
+        valorCuota: credito.valor_cuota,
+        saldo: saldoRedondeado,
+        valorCredito: credito.valor_credito,
+      });
+
+      const maxMora = this.creditCalculatorSvc.maxMoraPermitida({
+        cobraMora: moraConfig.cobraMora,
+        permiteMoraVoluntaria: moraConfig.permiteMoraVoluntaria,
+        moraAdeudada,
+        moraSugerida: sugerida,
+      });
+
+      const { montoAbono, montoMora: moraCobrar, moraAAplicar } =
+        this.creditCalculatorSvc.repartirPago({
+          monto: montoRedondeado,
+          montoMora: montoMoraNuevo,
+          saldo: saldoRedondeado,
+          moraAdeudada,
+          maxMoraPermitida: maxMora,
+        });
+
       const montoAnterior = Number(movimiento.monto);
-      movimiento.monto = updateMovimientoCajaDto.monto;
+      movimiento.monto = montoRedondeado;
+      movimiento.montoAbono = montoAbono;
+      movimiento.montoMora = moraCobrar;
 
       // Si se registra un pago real tras un no pago, se elimina el motivo del no pago
       if (montoAnterior === 0 && montoRedondeado > 0) {
@@ -268,8 +342,15 @@ export class MovimientoCajaService {
 
       await movimiento.save({ session });
 
+      await this.creditoService.applyMoraCobroOnCredito(
+        creditoId,
+        moraCobrar,
+        moraAAplicar,
+        session,
+      );
+
       await this.creditoService.handlePaymentMade(
-        movimiento.credito.toString(),
+        creditoId,
         caja.ruta,
         movimiento.cliente.toString(),
         session
@@ -315,8 +396,15 @@ export class MovimientoCajaService {
 
       const creditoId = movimiento.credito.toString();
       const clienteId = movimiento.cliente.toString();
+      const montoMoraAnterior = Number(movimiento.montoMora ?? 0);
 
       await this.cajaMovimientoModel.findByIdAndDelete(movimientoId, { session });
+
+      await this.creditoService.revertMoraCobroOnCredito(
+        creditoId,
+        montoMoraAnterior,
+        session,
+      );
 
       // Recalcula saldo/estado del crédito y del cliente con los pagos restantes
       await this.creditoService.handlePaymentMade(creditoId, rutaId, clienteId, session);
@@ -638,6 +726,7 @@ export class MovimientoCajaService {
     inversiones: number;
     gastos: number;
     retiros: number;
+    moraCobrada: number;
   }> {
     const result = await this.cajaMovimientoModel
       .aggregate([
@@ -660,6 +749,20 @@ export class MovimientoCajaService {
                     ],
                   },
                   '$monto',
+                  0,
+                ],
+              },
+            },
+            moraCobrada: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $eq: ['$tipoMovimiento', TipoMovimiento.INGRESO] },
+                      { $eq: ['$subTipo', SubTipo.PAGOCREDITO] },
+                    ],
+                  },
+                  { $ifNull: ['$montoMora', 0] },
                   0,
                 ],
               },
@@ -732,6 +835,7 @@ export class MovimientoCajaService {
       inversiones: row.inversiones ?? 0,
       gastos: row.gastos ?? 0,
       retiros: row.retiros ?? 0,
+      moraCobrada: row.moraCobrada ?? 0,
     };
   }
 

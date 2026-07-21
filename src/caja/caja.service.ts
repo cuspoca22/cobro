@@ -190,7 +190,11 @@ export class CajaService {
 
     // Caja/ruta ya cerrada: devolver el snapshot oficial sin reescribir
     if (!persistSnapshot && (!ruta.status || caja.status === false)) {
-      return CajaEntity.fromObject(caja);
+      const moraConfigCerrada = await this.creditoService.resolveMoraConfigForRuta(rutaId);
+      return CajaEntity.fromObject({
+        ...caja.toObject(),
+        cobraMora: !!moraConfigCerrada?.cobraMora,
+      });
     }
 
     const startOfDayUtc = caja.fecha;
@@ -209,12 +213,17 @@ export class CajaService {
       inversiones = 0,
       gastos = 0,
       retiros = 0,
+      moraCobrada = 0,
     } = await this.movimientoCajaService.getTotalesLedgerPorRango(
       rutaId,
       startOfDayUtc,
       endOfDayUtc,
       session,
     );
+
+    const { moraPorCobrar = 0 } = await this.creditoService.getCreditSummaryForRuta(rutaId);
+    const moraConfig = await this.creditoService.resolveMoraConfigForRuta(rutaId);
+    const cobraMora = !!moraConfig?.cobraMora;
 
     const cobroR = cobro;
     const prestamoR = prestamos;
@@ -236,8 +245,13 @@ export class CajaService {
       caja.clientes_pendientes = clientesPendientes;
       caja.renovaciones = renovaciones;
       caja.caja_final = cajaFinal;
+      caja.moraCobrada = moraCobrada;
+      caja.moraPorCobrar = moraPorCobrar;
       await caja.save({ session });
-      return CajaEntity.fromObject(caja);
+      return CajaEntity.fromObject({
+        ...caja.toObject(),
+        cobraMora,
+      });
     }
 
     // Día abierto: devolver cálculo en vivo sin persistir (evita doble fuente de verdad)
@@ -251,6 +265,9 @@ export class CajaService {
       clientes_pendientes: clientesPendientes,
       renovaciones,
       caja_final: cajaFinal,
+      moraCobrada,
+      moraPorCobrar,
+      cobraMora,
     });
   }
 

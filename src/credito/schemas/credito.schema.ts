@@ -124,6 +124,22 @@ export class Credito {
       index: true
    })
    dueDate: Date;
+
+   /** Mora pendiente de cobro (bucket separado de total_pagar). */
+   @Prop({
+      type: Number,
+      default: 0,
+      min: 0,
+   })
+   mora_adeudada: number;
+
+   /** Mora cobrada acumulada históricamente. */
+   @Prop({
+      type: Number,
+      default: 0,
+      min: 0,
+   })
+   mora_cobrada: number;
 }
 
 export const CreditoSchema = SchemaFactory.createForClass(Credito);

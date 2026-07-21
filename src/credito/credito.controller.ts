@@ -1,11 +1,12 @@
-import { Body, Controller, Get, Param, Patch, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
 
 import { CreditoService } from './credito.service';
 import { Auth, GetUser } from '../auth/decorators';
 import { ParseMongoIdPipe } from 'src/common/pipes/parse-mongo-id.pipe';
 import { GetUserDto } from '../auth/dto/get-user.dto';
-import { UpdateCreditoDto } from './dto';
+import { AplicarMoraDto, PerdonarMoraDto, UpdateCreditoDto } from './dto';
 import { RutaOwnership, RutaOwnershipService } from 'src/common/ownership';
+import { ValidRoles } from 'src/auth/interfaces';
 
 @Auth()
 @Controller('credito')
@@ -30,6 +31,38 @@ export class CreditoController {
     @Query('clienteId', ParseMongoIdPipe) clienteId: string,
   ) {
     return this.creditoService.getHistorialCreditos(clienteId);
+  }
+
+  @Auth(ValidRoles.admin, ValidRoles.superAdmin, ValidRoles.supervisor)
+  @RutaOwnership({ creditoId: { in: 'params', key: 'creditoId' } })
+  @Post(':creditoId/aplicar-mora')
+  async aplicarMora(
+    @Param('creditoId', ParseMongoIdPipe) creditoId: string,
+    @Body() dto: AplicarMoraDto,
+    @GetUser() user: GetUserDto,
+  ) {
+    return this.creditoService.aplicarMora(
+      creditoId,
+      dto.monto,
+      user.id || (user as any)._id,
+      dto.motivo,
+    );
+  }
+
+  @Auth(ValidRoles.admin, ValidRoles.superAdmin, ValidRoles.supervisor)
+  @RutaOwnership({ creditoId: { in: 'params', key: 'creditoId' } })
+  @Post(':creditoId/perdonar-mora')
+  async perdonarMora(
+    @Param('creditoId', ParseMongoIdPipe) creditoId: string,
+    @Body() dto: PerdonarMoraDto,
+    @GetUser() user: GetUserDto,
+  ) {
+    return this.creditoService.perdonarMora(
+      creditoId,
+      dto.monto,
+      user.id || (user as any)._id,
+      dto.motivo,
+    );
   }
 
   @RutaOwnership({ creditoId: { in: 'params', key: 'creditId' } })

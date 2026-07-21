@@ -2,6 +2,7 @@ import { Schema, Prop, SchemaFactory } from '@nestjs/mongoose';
 import mongoose, { Document, Types } from 'mongoose';
 import { User } from 'src/auth/schemas/user.schema';
 import { Ruta } from '../../ruta/schema/ruta.schema';
+import { BaseCalculoMora } from '../interfaces';
 
 @Schema({
    versionKey: false,
@@ -44,6 +45,36 @@ export class Empresa extends Document {
       default: true
    })
    isSubscriptionPaid: boolean;
+
+   /** Master switch: si false, la empresa no opera con mora. */
+   @Prop({
+      type: Boolean,
+      default: false,
+   })
+   cobraMora: boolean;
+
+   /** Si true, el cobrador puede decidir un monto de mora a voluntad. */
+   @Prop({
+      type: Boolean,
+      default: false,
+   })
+   permiteMoraVoluntaria: boolean;
+
+   /** Porcentaje de mora sobre la base configurada. */
+   @Prop({
+      type: Number,
+      default: 0,
+      min: 0,
+   })
+   porcentajeMora: number;
+
+   /** Base sobre la cual se calcula el % de mora. */
+   @Prop({
+      type: String,
+      enum: BaseCalculoMora,
+      default: BaseCalculoMora.VALOR_CUOTA,
+   })
+   baseCalculoMora: BaseCalculoMora;
 
    @Prop({
       type: mongoose.Schema.Types.ObjectId,

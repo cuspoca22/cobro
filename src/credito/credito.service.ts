@@ -1,6 +1,7 @@
 import { BadRequestException, forwardRef, Inject, Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Credito } from './schemas/credito.schema';
+import { MoraAplicacion, TipoMoraAplicacion } from './schemas/mora-aplicacion.schema';
 import { ClientSession, Connection, Model, PipelineStage, Types } from 'mongoose';
 import mongoose from 'mongoose';
 
@@ -13,6 +14,8 @@ import { HistorialCredito } from './interfaces';
 import { TransactionHelper } from 'src/common/helpers';
 import { ClienteService } from '../cliente/cliente.service';
 import { RutaService } from '../ruta/ruta.service';
+import { EmpresaService } from '../empresa/empresa.service';
+import { MessageGateway } from '../message/message.gateway';
 
 @Injectable()
 export class CreditoService {
@@ -24,11 +27,20 @@ export class CreditoService {
     @InjectModel(Credito.name)
     private readonly creditoModel: Model<Credito>,
 
+    @InjectModel(MoraAplicacion.name)
+    private readonly moraAplicacionModel: Model<MoraAplicacion>,
+
     @Inject(forwardRef(() => ClienteService))
     private readonly clienteService: ClienteService,
 
     @Inject(forwardRef(() => RutaService))
     private readonly rutaService: RutaService,
+
+    @Inject(forwardRef(() => EmpresaService))
+    private readonly empresaService: EmpresaService,
+
+    @Inject(forwardRef(() => MessageGateway))
+    private readonly messageGateway: MessageGateway,
 
     private dateFnsAdapter: DateFnsAdapter,
     private creditCalculatorSvc: CreditCalculatorService,
@@ -368,7 +380,8 @@ export class CreditoService {
 
     const creditsWithDetails = await this.creditoModel.aggregate(pipeline).exec();
 
-    return this.mapToCreditoEntity(creditsWithDetails, ruta.timeZone);
+    const credits = this.mapToCreditoEntity(creditsWithDetails, ruta.timeZone);
+    return this.enrichCreditsWithMoraConfig(credits, rutaId);
   }
 
   /**
@@ -409,7 +422,9 @@ export class CreditoService {
     const creditPlain = creditsWithDetails[0];
     const creditEntity = CreditoEntity.fromObject(creditPlain);
 
-    return this.calculateOverdueAndState(creditEntity, ruta.timeZone);
+    const withOverdue = this.calculateOverdueAndState(creditEntity, ruta.timeZone);
+    const [enriched] = await this.enrichCreditsWithMoraConfig([withOverdue], rutaId);
+    return enriched;
   }
 
   // Este método es invocado después de un pago para actualizar el estado persistente del crédito.
@@ -423,7 +438,10 @@ export class CreditoService {
 
     // Determinar si el crédito está pagado con tolerancia para errores de redondeo
     const EPSILON = 0.005; // medio centavo
-    const isCreditPaid = Math.abs(creditDetails.saldo) < EPSILON;
+    const moraAdeudada = creditDetails.mora_adeudada ?? 0;
+    const isCreditPaid =
+      Math.abs(creditDetails.saldo) < EPSILON &&
+      Math.abs(moraAdeudada) < EPSILON;
 
     // LÓGICA SIMPLIFICADA: Un cliente solo puede tener un crédito activo
     // - Si el crédito está pagado: cliente inactivo (false)
@@ -458,22 +476,87 @@ export class CreditoService {
 
     // Construir mensaje informativo, manejando el caso donde paymentsToday es null
     const fechaPago = creditDetails.paymentsToday
-      ? new Date(creditDetails.paymentsToday.createdAt).toLocaleDateString()
+      ? new Date(creditDetails.paymentsToday.createdAt).toLocaleDateString('es-GT')
       : 'No registrada';
-    const montoAbonado = creditDetails.paymentsToday
-      ? `$${creditDetails.paymentsToday.monto}`
-      : '$0.00';
 
-    let txtMessage: string = `
-      Cliente: ${cliente.nombre}
-      Fecha de inicio: ${new Date(creditDetails.fecha_inicio).toLocaleDateString()}
-      Abonos: $${creditDetails.abonos}
-      Saldo: $${creditDetails.saldo}
-      Cuotas Pendientes: ${(creditDetails.saldo / creditDetails.valor_cuota).toFixed(2)}
-      =====================
-      Fecha de pago: ${fechaPago}
-      cuota Abonada: ${montoAbonado}
-    `
+    const pagoHoy = creditDetails.paymentsToday;
+    const montoTotalHoy = pagoHoy ? Number(pagoHoy.monto) || 0 : 0;
+    const montoMoraHoy = pagoHoy
+      ? Number(pagoHoy.montoMora ?? 0) || 0
+      : 0;
+    const montoAbonoHoy = pagoHoy
+      ? Number(
+          pagoHoy.montoAbono ??
+          (montoTotalHoy - montoMoraHoy),
+        ) || 0
+      : 0;
+
+    const moraAdeudadaFmt = Math.round((creditDetails.mora_adeudada ?? 0) * 100) / 100;
+    const moraCobradaFmt = Math.round((creditDetails.mora_cobrada ?? 0) * 100) / 100;
+    const mostrarMora =
+      !!creditDetails.cobraMora ||
+      moraAdeudadaFmt > 0 ||
+      moraCobradaFmt > 0 ||
+      montoMoraHoy > 0;
+
+    const cuotasPendientes = creditDetails.valor_cuota
+      ? (creditDetails.saldo / creditDetails.valor_cuota).toFixed(2)
+      : '0.00';
+
+    const fmt = (n: number) => {
+      const v = Math.round((Number(n) || 0) * 100) / 100;
+      return `$${v.toLocaleString('es-GT', {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 2,
+      })}`;
+    };
+
+    const fechaHoy = new Date().toLocaleDateString('es-GT');
+    const fechaInicio = new Date(creditDetails.fecha_inicio).toLocaleDateString('es-GT');
+
+    let txtMessage = [
+      `Comprobante de pago`,
+      `Cliente: ${cliente.nombre}`,
+      `Fecha: ${fechaHoy}`,
+      `------------`,
+      `Información del pago`,
+      `Fecha de pago: ${fechaPago}`,
+    ].join('\n');
+
+    if (mostrarMora && montoMoraHoy > 0) {
+      txtMessage += `\nAbono: ${fmt(montoAbonoHoy)}`;
+      txtMessage += `\nMora cobrada: ${fmt(montoMoraHoy)}`;
+      txtMessage += `\nTotal pagado: ${fmt(montoTotalHoy)}`;
+    } else {
+      txtMessage += `\nMonto pagado: ${fmt(montoTotalHoy)}`;
+    }
+
+    txtMessage += [
+      ``,
+      `------------`,
+      `Estado del crédito`,
+      `Fecha inicio: ${fechaInicio}`,
+      `Valor prestado: ${fmt(creditDetails.valor_credito)}`,
+      `Total a pagar: ${fmt(creditDetails.total_pagar)}`,
+      `Abonos: ${fmt(creditDetails.abonos)}`,
+      `Saldo: ${fmt(creditDetails.saldo)}`,
+      `Cuota: ${fmt(creditDetails.valor_cuota)}`,
+      `Cuotas pendientes: ${cuotasPendientes} / ${creditDetails.total_cuotas}`,
+      `Frecuencia: ${creditDetails.frecuencia_cobro}`,
+      `Días de atraso: ${creditDetails.daysOverdue ?? 0}`,
+    ].join('\n');
+
+    if (mostrarMora) {
+      const totalLiquidar =
+        Math.round(
+          ((creditDetails.saldo ?? 0) + (creditDetails.mora_adeudada ?? 0)) * 100,
+        ) / 100;
+      txtMessage += `\n------------`;
+      txtMessage += `\nMora adeudada: ${fmt(moraAdeudadaFmt)}`;
+      txtMessage += `\nMora cobrada: ${fmt(moraCobradaFmt)}`;
+      txtMessage += `\nTotal a liquidar: ${fmt(totalLiquidar)}`;
+    }
+
     return {
       ok: true,
       message: txtMessage,
@@ -550,6 +633,251 @@ export class CreditoService {
 
   }
 
+  async aplicarMora(
+    creditoId: string,
+    monto: number,
+    usuarioId: string,
+    motivo?: string,
+    session?: ClientSession,
+  ) {
+    const run = async (sess: ClientSession) => {
+      const credito = await this.creditoModel.findById(creditoId).session(sess);
+      if (!credito) throw new NotFoundException(`Credito con el id ${creditoId} no existe`);
+      if (!credito.status) {
+        throw new BadRequestException('No se puede aplicar mora a un crédito saldado');
+      }
+
+      const moraConfig = await this.resolveMoraConfigForRuta(credito.ruta.toString());
+      if (!moraConfig?.cobraMora) {
+        throw new BadRequestException('La empresa no tiene habilitado el cobro de mora');
+      }
+
+      const montoRedondeado = Math.round(monto * 100) / 100;
+      if (montoRedondeado <= 0) {
+        throw new BadRequestException('El monto de mora debe ser mayor a 0');
+      }
+
+      const antes = credito.mora_adeudada ?? 0;
+      const despues = Math.round((antes + montoRedondeado) * 100) / 100;
+
+      // updateOne evita revalidar campos legacy (p.ej. frecuencia_cobro: 'DIARIO').
+      await this.creditoModel.updateOne(
+        { _id: credito._id },
+        { $set: { mora_adeudada: despues } },
+        { session: sess },
+      );
+
+      await this.moraAplicacionModel.create([{
+        credito: credito._id,
+        usuario: new Types.ObjectId(usuarioId),
+        tipo: TipoMoraAplicacion.APLICAR,
+        monto: montoRedondeado,
+        motivo,
+        mora_adeudada_antes: antes,
+        mora_adeudada_despues: despues,
+      }], { session: sess });
+
+      return {
+        creditoId: credito._id.toString(),
+        rutaId: credito.ruta.toString(),
+        mora_adeudada: despues,
+        montoAplicado: montoRedondeado,
+      };
+    };
+
+    const result = session
+      ? await run(session)
+      : await this.transactionHelper.withTransaction(run, 'CreditoService.aplicarMora');
+
+    this.messageGateway.emitMoraActualizada({
+      ruta: result.rutaId,
+      creditoId: result.creditoId,
+      tipo: 'APLICAR',
+      monto: result.montoAplicado,
+      mora_adeudada: result.mora_adeudada,
+    });
+
+    return {
+      creditoId: result.creditoId,
+      mora_adeudada: result.mora_adeudada,
+      montoAplicado: result.montoAplicado,
+    };
+  }
+
+  async perdonarMora(
+    creditoId: string,
+    monto: number,
+    usuarioId: string,
+    motivo?: string,
+    session?: ClientSession,
+  ) {
+    const run = async (sess: ClientSession) => {
+      const credito = await this.creditoModel.findById(creditoId).session(sess);
+      if (!credito) throw new NotFoundException(`Credito con el id ${creditoId} no existe`);
+
+      const moraConfig = await this.resolveMoraConfigForRuta(credito.ruta.toString());
+      if (!moraConfig?.cobraMora) {
+        throw new BadRequestException('La empresa no tiene habilitado el cobro de mora');
+      }
+
+      const montoRedondeado = Math.round(monto * 100) / 100;
+      if (montoRedondeado <= 0) {
+        throw new BadRequestException('El monto a perdonar debe ser mayor a 0');
+      }
+
+      const antes = credito.mora_adeudada ?? 0;
+      if (montoRedondeado > antes + 0.005) {
+        throw new BadRequestException(
+          `No se puede perdonar más mora de la adeudada (${antes}).`,
+        );
+      }
+
+      const despues = Math.round((antes - montoRedondeado) * 100) / 100;
+      const moraAdeudada = Math.max(0, despues);
+
+      // updateOne evita revalidar campos legacy (p.ej. frecuencia_cobro: 'DIARIO').
+      await this.creditoModel.updateOne(
+        { _id: credito._id },
+        { $set: { mora_adeudada: moraAdeudada } },
+        { session: sess },
+      );
+
+      await this.moraAplicacionModel.create([{
+        credito: credito._id,
+        usuario: new Types.ObjectId(usuarioId),
+        tipo: TipoMoraAplicacion.PERDONAR,
+        monto: montoRedondeado,
+        motivo,
+        mora_adeudada_antes: antes,
+        mora_adeudada_despues: moraAdeudada,
+      }], { session: sess });
+
+      return {
+        creditoId: credito._id.toString(),
+        rutaId: credito.ruta.toString(),
+        mora_adeudada: moraAdeudada,
+        montoPerdonado: montoRedondeado,
+      };
+    };
+
+    const result = session
+      ? await run(session)
+      : await this.transactionHelper.withTransaction(run, 'CreditoService.perdonarMora');
+
+    this.messageGateway.emitMoraActualizada({
+      ruta: result.rutaId,
+      creditoId: result.creditoId,
+      tipo: 'PERDONAR',
+      monto: result.montoPerdonado,
+      mora_adeudada: result.mora_adeudada,
+    });
+
+    return {
+      creditoId: result.creditoId,
+      mora_adeudada: result.mora_adeudada,
+      montoPerdonado: result.montoPerdonado,
+    };
+  }
+
+  /**
+   * Aplica y cobra mora tras un pago (actualiza mora_adeudada / mora_cobrada).
+   */
+  async applyMoraCobroOnCredito(
+    creditoId: string,
+    montoMora: number,
+    moraAAplicar: number,
+    session: ClientSession,
+  ): Promise<void> {
+    if (montoMora <= 0 && moraAAplicar <= 0) return;
+
+    const credito = await this.creditoModel.findById(creditoId).session(session);
+    if (!credito) throw new NotFoundException(`Credito con el id ${creditoId} no existe`);
+
+    const adeudada = credito.mora_adeudada ?? 0;
+    const cobrada = credito.mora_cobrada ?? 0;
+
+    const moraAdeudada = Math.round(
+      Math.max(0, adeudada + moraAAplicar - montoMora) * 100,
+    ) / 100;
+    const moraCobrada = Math.round((cobrada + montoMora) * 100) / 100;
+
+    await this.creditoModel.updateOne(
+      { _id: credito._id },
+      { $set: { mora_adeudada: moraAdeudada, mora_cobrada: moraCobrada } },
+      { session },
+    );
+  }
+
+  /**
+   * Revierte el efecto de mora de un pago (update/delete).
+   */
+  async revertMoraCobroOnCredito(
+    creditoId: string,
+    montoMoraAnterior: number,
+    session: ClientSession,
+  ): Promise<void> {
+    if (!montoMoraAnterior || montoMoraAnterior <= 0) return;
+
+    const credito = await this.creditoModel.findById(creditoId).session(session);
+    if (!credito) throw new NotFoundException(`Credito con el id ${creditoId} no existe`);
+
+    const adeudada = credito.mora_adeudada ?? 0;
+    const cobrada = credito.mora_cobrada ?? 0;
+
+    const moraAdeudada = Math.round((adeudada + montoMoraAnterior) * 100) / 100;
+    const moraCobrada = Math.round(Math.max(0, cobrada - montoMoraAnterior) * 100) / 100;
+
+    await this.creditoModel.updateOne(
+      { _id: credito._id },
+      { $set: { mora_adeudada: moraAdeudada, mora_cobrada: moraCobrada } },
+      { session },
+    );
+  }
+
+  async resolveMoraConfigForRuta(rutaId: string) {
+    const empresaInfo = await this.rutaService.getEmpresaIdByRutaId(rutaId);
+    if (!empresaInfo.exists || !empresaInfo.empresaId) {
+      return {
+        cobraMora: false,
+        permiteMoraVoluntaria: false,
+        porcentajeMora: 0,
+        baseCalculoMora: 'VALOR_CUOTA',
+      };
+    }
+    const config = await this.empresaService.getMoraConfigById(empresaInfo.empresaId);
+    return config ?? {
+      cobraMora: false,
+      permiteMoraVoluntaria: false,
+      porcentajeMora: 0,
+      baseCalculoMora: 'VALOR_CUOTA',
+    };
+  }
+
+  private async enrichCreditsWithMoraConfig(
+    credits: CreditoEntity[],
+    rutaId: string,
+  ): Promise<CreditoEntity[]> {
+    const moraConfig = await this.resolveMoraConfigForRuta(rutaId);
+
+    return credits.map((credit) => {
+      const moraSugerida = this.creditCalculatorSvc.calcularMoraSugerida({
+        cobraMora: moraConfig.cobraMora,
+        porcentajeMora: moraConfig.porcentajeMora,
+        baseCalculoMora: moraConfig.baseCalculoMora,
+        valorCuota: credit.valor_cuota,
+        saldo: credit.saldo,
+        valorCredito: credit.valor_credito,
+      });
+
+      credit.moraSugerida = moraSugerida;
+      credit.cobraMora = moraConfig.cobraMora;
+      credit.permiteMoraVoluntaria = moraConfig.permiteMoraVoluntaria;
+      credit.porcentajeMora = moraConfig.porcentajeMora;
+      credit.baseCalculoMora = moraConfig.baseCalculoMora;
+      return credit;
+    });
+  }
+
   // --- APIs de consulta/comando para otros módulos (Vertical 1–4: sin @InjectModel ajeno) ---
 
   /** Ownership: resolver ruta a partir de un crédito. */
@@ -622,10 +950,22 @@ export class CreditoService {
       {
         $addFields: {
           abonos: {
-            $reduce: {
-              input: '$allPayments',
-              initialValue: 0,
-              in: { $add: ['$$value', '$$this.monto'] },
+            $sum: {
+              $map: {
+                input: '$allPayments',
+                as: 'p',
+                in: {
+                  $ifNull: [
+                    '$$p.montoAbono',
+                    {
+                      $subtract: [
+                        '$$p.monto',
+                        { $ifNull: ['$$p.montoMora', 0] },
+                      ],
+                    },
+                  ],
+                },
+              },
             },
           },
         },
@@ -673,11 +1013,12 @@ export class CreditoService {
     return result.map((c) => c._id.toString());
   }
 
-  /** Pretendido / total clientes activos al abrir caja. */
+  /** Pretendido / total clientes activos al abrir caja (+ mora por cobrar). */
   async getCreditSummaryForRuta(rutaId: string): Promise<{
     pretendido: number;
     totalClientes: number;
     clientesPendietes: number;
+    moraPorCobrar: number;
   }> {
     const result = await this.creditoModel.aggregate([
       {
@@ -691,6 +1032,7 @@ export class CreditoService {
           _id: null,
           pretendido: { $sum: '$valor_cuota' },
           totalClientes: { $sum: 1 },
+          moraPorCobrar: { $sum: { $ifNull: ['$mora_adeudada', 0] } },
         },
       },
     ]);
@@ -700,10 +1042,11 @@ export class CreditoService {
         pretendido: result[0].pretendido,
         totalClientes: result[0].totalClientes,
         clientesPendietes: result[0].totalClientes,
+        moraPorCobrar: result[0].moraPorCobrar ?? 0,
       };
     }
 
-    return { pretendido: 0, totalClientes: 0, clientesPendietes: 0 };
+    return { pretendido: 0, totalClientes: 0, clientesPendietes: 0, moraPorCobrar: 0 };
   }
 
   /** Reportes: agregaciones sin exponer el model. */
@@ -748,13 +1091,25 @@ export class CreditoService {
       {
         $addFields: {
           abonos: {
-            $reduce: {
-              input: "$allPayments",
-              initialValue: 0,
-              in: { $add: ["$$value", "$$this.monto"] }
-            }
+            $sum: {
+              $map: {
+                input: '$allPayments',
+                as: 'p',
+                in: {
+                  $ifNull: [
+                    '$$p.montoAbono',
+                    {
+                      $subtract: [
+                        '$$p.monto',
+                        { $ifNull: ['$$p.montoMora', 0] },
+                      ],
+                    },
+                  ],
+                },
+              },
+            },
           },
-          ultimo_pago: { $max: "$allPayments.createdAt" }
+          ultimo_pago: { $max: '$allPayments.createdAt' },
         },
       },
       {
@@ -837,7 +1192,9 @@ export class CreditoService {
         total_cuotas: 1,
         dueDate: 1,
         observaciones: 1,
-        paymentsToday: 1
+        paymentsToday: 1,
+        mora_adeudada: 1,
+        mora_cobrada: 1,
       },
     };
   }

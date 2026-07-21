@@ -64,6 +64,27 @@ export class GetCreditoResponseDto {
   @Expose()
   valor_credito: number;
 
+  @Expose()
+  mora_adeudada: number;
+
+  @Expose()
+  mora_cobrada: number;
+
+  @Expose()
+  moraSugerida: number;
+
+  @Expose()
+  cobraMora: boolean;
+
+  @Expose()
+  permiteMoraVoluntaria: boolean;
+
+  @Expose()
+  porcentajeMora: number;
+
+  @Expose()
+  baseCalculoMora: string;
+
   @Exclude()
   __v: number;
 
@@ -88,7 +109,9 @@ export class GetCreditoResponseDto {
       saldo, total_pagar, status, ultimo_pago, abonos, paidToday, total_cuotas,
       // daysOverdue y state no estarán aquí directamente, se añaden después.
       // Si la agregación ya proyecta un 'daysOverdue' o 'state', puedes incluirlo.
-      daysOverdue, state, 
+      daysOverdue, state,
+      mora_adeudada, mora_cobrada, moraSugerida,
+      cobraMora, permiteMoraVoluntaria, porcentajeMora, baseCalculoMora,
     } = object;
 
     // Asegurar que el ID del CRÉDITO se tome de _id o id
@@ -117,6 +140,13 @@ export class GetCreditoResponseDto {
       abonos: abonos ?? null,
       paidToday: paidToday ?? null,
       total_cuotas: total_cuotas ?? null,
+      mora_adeudada: mora_adeudada ?? 0,
+      mora_cobrada: mora_cobrada ?? 0,
+      moraSugerida: moraSugerida ?? 0,
+      cobraMora: cobraMora ?? false,
+      permiteMoraVoluntaria: permiteMoraVoluntaria ?? false,
+      porcentajeMora: porcentajeMora ?? 0,
+      baseCalculoMora: baseCalculoMora ?? null,
     });
 
     return creditoDto;

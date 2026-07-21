@@ -15,6 +15,25 @@ export type RutaLockStatePayload = {
   isLocked: boolean;
 };
 
+export type MoraActualizadaTipo = 'APLICAR' | 'PERDONAR';
+
+export type MoraActualizadaPayload = {
+  ruta: string;
+  creditoId: string;
+  tipo: MoraActualizadaTipo;
+  monto: number;
+  mora_adeudada: number;
+  clienteNombre?: string;
+};
+
+export type MoraConfigActualizadaPayload = {
+  empresa: string;
+  cobraMora: boolean;
+  permiteMoraVoluntaria: boolean;
+  porcentajeMora: number;
+  baseCalculoMora: string;
+};
+
 @WebSocketGateway({ cors: true })
 export class MessageGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer() wss: Server;
@@ -56,6 +75,16 @@ export class MessageGateway implements OnGatewayConnection, OnGatewayDisconnect 
   /** Emite apertura de ruta/caja al frontend tras persistir en DB. */
   emitOpenCaja(rutaId: string): void {
     this.wss.emit('open-caja', { ruta: rutaId });
+  }
+
+  /** Emite mora aplicada/perdonada para que el cobrador actualice en vivo. */
+  emitMoraActualizada(payload: MoraActualizadaPayload): void {
+    this.wss.emit('mora-actualizada', payload);
+  }
+
+  /** Emite cambio de config de mora de la empresa (activar/desactivar, %, base). */
+  emitMoraConfigActualizada(payload: MoraConfigActualizadaPayload): void {
+    this.wss.emit('mora-config-actualizada', payload);
   }
 
   @SubscribeMessage('admin-close-caja')

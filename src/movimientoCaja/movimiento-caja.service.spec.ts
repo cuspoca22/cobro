@@ -7,6 +7,7 @@ import { MovimientoCajaService } from './movimiento-caja.service';
 import { MovimientoCaja } from './schemas/caja-movimiento.schemas';
 import { DateFnsAdapter } from '../common/wrappers/date-fns.adapter';
 import { CreditoService } from 'src/credito/credito.service';
+import { CreditCalculatorService } from 'src/credito/helpers/credit.calculator.service';
 import { RutaService } from 'src/ruta/ruta.service';
 import { CajaService } from 'src/caja/caja.service';
 import { SubTipo, TipoMovimiento } from './interfaces';
@@ -28,6 +29,7 @@ describe('MovimientoCajaService', () => {
   let rutaService: any;
   let cajaService: any;
   let creditoService: any;
+  let creditCalculatorSvc: any;
   let mockSession: Partial<ClientSession>;
 
   const rutaId = new Types.ObjectId().toString();
@@ -64,6 +66,7 @@ describe('MovimientoCajaService', () => {
       findOne: jest.fn().mockReturnValue({
         session: jest.fn().mockResolvedValue(null),
       }),
+      findById: jest.fn(),
       create: jest.fn().mockResolvedValue([{ _id: new Types.ObjectId() }]),
       find: jest.fn(),
       findByIdAndUpdate: jest.fn(),
@@ -75,6 +78,10 @@ describe('MovimientoCajaService', () => {
 
     rutaService = {
       findOperacionContextById: jest.fn().mockResolvedValue(openRutaContext),
+      findContextById: jest.fn().mockResolvedValue({
+        _id: rutaId,
+        timeZone: 'America/Mexico_City',
+      }),
     };
 
     cajaService = {
@@ -86,12 +93,37 @@ describe('MovimientoCajaService', () => {
         id: creditoId,
         _id: creditoId,
         saldo: 500,
+        mora_adeudada: 0,
+        valor_cuota: 100,
+        valor_credito: 1000,
+        moraSugerida: 0,
       }),
       handlePaymentMade: jest.fn().mockResolvedValue({
         ok: true,
         message: 'Pago registrado',
       }),
+      resolveMoraConfigForRuta: jest.fn().mockResolvedValue({
+        cobraMora: false,
+        permiteMoraVoluntaria: false,
+        porcentajeMora: 0,
+        baseCalculoMora: 'VALOR_CUOTA',
+      }),
+      applyMoraCobroOnCredito: jest.fn().mockResolvedValue(undefined),
+      revertMoraCobroOnCredito: jest.fn().mockResolvedValue(undefined),
       create: jest.fn(),
+    };
+
+    creditCalculatorSvc = {
+      calcularMoraSugerida: jest.fn().mockReturnValue(0),
+      maxMoraPermitida: jest.fn().mockReturnValue(0),
+      repartirPago: jest.fn().mockImplementation(({ monto, saldo }) => {
+        if (monto > saldo) {
+          throw new BadRequestException(
+            `El monto del pago (${monto}) excede el saldo pendiente del crédito (${saldo}).`,
+          );
+        }
+        return { montoAbono: monto, montoMora: 0, moraAAplicar: 0 };
+      }),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -101,10 +133,14 @@ describe('MovimientoCajaService', () => {
         { provide: RutaService, useValue: rutaService },
         { provide: CajaService, useValue: cajaService },
         { provide: CreditoService, useValue: creditoService },
+        { provide: CreditCalculatorService, useValue: creditCalculatorSvc },
         {
           provide: DateFnsAdapter,
           useValue: {
             getStartOfTodayInTimeZone: jest.fn().mockReturnValue(startOfDay),
+            getEndOfTodayInTimeZone: jest.fn().mockReturnValue(
+              new Date('2024-01-15T23:59:59.999Z'),
+            ),
           },
         },
         {
@@ -133,6 +169,8 @@ describe('MovimientoCajaService', () => {
           expect.objectContaining({
             caja: cajaId,
             monto: 100,
+            montoAbono: 100,
+            montoMora: 0,
             tipoMovimiento: TipoMovimiento.INGRESO,
             subTipo: SubTipo.PAGOCREDITO,
             credito: creditoId,
@@ -153,6 +191,50 @@ describe('MovimientoCajaService', () => {
       // Ledger-first: no hay CajaService.currentCaja / save en addPago
       expect(result).toEqual({ ok: true, message: 'Pago registrado' });
       expect(mockSession.commitTransaction).toHaveBeenCalled();
+    });
+
+    it('happy path con mora: reparte abono/mora y aplica cobro de mora', async () => {
+      creditoService.resolveMoraConfigForRuta.mockResolvedValue({
+        cobraMora: true,
+        permiteMoraVoluntaria: false,
+        porcentajeMora: 10,
+        baseCalculoMora: 'VALOR_CUOTA',
+      });
+      creditCalculatorSvc.maxMoraPermitida.mockReturnValue(50);
+      creditCalculatorSvc.repartirPago.mockReturnValue({
+        montoAbono: 100,
+        montoMora: 20,
+        moraAAplicar: 0,
+      });
+      creditoService.getCreditoById.mockResolvedValue({
+        id: creditoId,
+        _id: creditoId,
+        saldo: 100,
+        mora_adeudada: 20,
+        valor_cuota: 100,
+        valor_credito: 1000,
+        moraSugerida: 0,
+      });
+
+      await service.addPago({ ...basePagoDto, monto: 120, montoMora: 20 });
+
+      expect(movimientoModel.create).toHaveBeenCalledWith(
+        [
+          expect.objectContaining({
+            monto: 120,
+            montoAbono: 100,
+            montoMora: 20,
+            credito: creditoId,
+          }),
+        ],
+        { session: mockSession },
+      );
+      expect(creditoService.applyMoraCobroOnCredito).toHaveBeenCalledWith(
+        creditoId,
+        20,
+        0,
+        mockSession,
+      );
     });
 
     it('rechaza si la ruta no existe', async () => {
@@ -184,10 +266,20 @@ describe('MovimientoCajaService', () => {
       creditoService.getCreditoById.mockResolvedValue({
         id: creditoId,
         saldo: 50,
+        mora_adeudada: 0,
+        valor_cuota: 100,
+        valor_credito: 1000,
       });
       await expect(service.addPago({ ...basePagoDto, monto: 100 })).rejects.toThrow(
         /excede el saldo/,
       );
+      expect(movimientoModel.create).not.toHaveBeenCalled();
+    });
+
+    it('rechaza mora si la empresa no cobra mora', async () => {
+      await expect(
+        service.addPago({ ...basePagoDto, montoMora: 10 }),
+      ).rejects.toThrow(/no tiene habilitado el cobro de mora/);
       expect(movimientoModel.create).not.toHaveBeenCalled();
     });
 
@@ -220,6 +312,43 @@ describe('MovimientoCajaService', () => {
         { session: mockSession },
       );
       expect(result.ok).toBe(true);
+    });
+  });
+
+  describe('updatePago', () => {
+    const movimientoId = new Types.ObjectId().toString();
+
+    it('rechaza mora en update si empresa no cobra', async () => {
+      const saveMock = jest.fn().mockResolvedValue(undefined);
+      movimientoModel.findById.mockReturnValue({
+        session: jest.fn().mockResolvedValue({
+          _id: movimientoId,
+          caja: cajaId,
+          ruta: rutaId,
+          credito: creditoId,
+          cliente: clienteId,
+          fecha: startOfDay,
+          monto: 100,
+          montoAbono: 100,
+          montoMora: 0,
+          save: saveMock,
+          set: jest.fn(),
+        }),
+      });
+
+      creditoService.resolveMoraConfigForRuta.mockResolvedValue({
+        cobraMora: false,
+        permiteMoraVoluntaria: false,
+        porcentajeMora: 0,
+        baseCalculoMora: 'VALOR_CUOTA',
+      });
+
+      await expect(
+        service.updatePago(movimientoId, { id: movimientoId, monto: 110, montoMora: 10 }),
+      ).rejects.toThrow(/no tiene habilitado el cobro de mora/);
+
+      expect(saveMock).not.toHaveBeenCalled();
+      expect(mockSession.abortTransaction).toHaveBeenCalled();
     });
   });
 

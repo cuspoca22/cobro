@@ -274,4 +274,140 @@ export class CreditCalculatorService {
   private roundToTwo(value: number): number {
     return new Decimal(value).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber();
   }
+
+  // ──────────────────────────────────────────────
+  //  Mora
+  // ──────────────────────────────────────────────
+
+  /**
+   * Calcula la mora sugerida según config de empresa y datos del crédito.
+   * Si la empresa no cobra mora o el % es 0, retorna 0.
+   */
+  calcularMoraSugerida(params: {
+    cobraMora: boolean;
+    porcentajeMora: number;
+    baseCalculoMora: string;
+    valorCuota: number;
+    saldo: number;
+    valorCredito: number;
+  }): number {
+    const {
+      cobraMora,
+      porcentajeMora,
+      baseCalculoMora,
+      valorCuota,
+      saldo,
+      valorCredito,
+    } = params;
+
+    if (!cobraMora || !porcentajeMora || porcentajeMora <= 0) {
+      return 0;
+    }
+
+    let base = 0;
+    switch (baseCalculoMora) {
+      case 'SALDO':
+        base = saldo;
+        break;
+      case 'VALOR_CREDITO':
+        base = valorCredito;
+        break;
+      case 'VALOR_CUOTA':
+      default:
+        base = valorCuota;
+        break;
+    }
+
+    if (base <= 0) return 0;
+
+    return this.roundToTwo(
+      new Decimal(base).times(porcentajeMora).div(100).toNumber(),
+    );
+  }
+
+  /**
+   * Máximo de mora que el cobrador puede cobrar según flags de empresa.
+   * - Sin cobraMora → 0
+   * - Con voluntad → sin tope práctico (Infinity)
+   * - Sin voluntad → max(moraAdeudada, moraSugerida)
+   */
+  maxMoraPermitida(params: {
+    cobraMora: boolean;
+    permiteMoraVoluntaria: boolean;
+    moraAdeudada: number;
+    moraSugerida: number;
+  }): number {
+    if (!params.cobraMora) return 0;
+    if (params.permiteMoraVoluntaria) return Number.POSITIVE_INFINITY;
+    return this.roundToTwo(
+      Math.max(params.moraAdeudada || 0, params.moraSugerida || 0),
+    );
+  }
+
+  /**
+   * Reparte un pago: primero abono al crédito, luego mora.
+   * Si `montoMora` viene explícito, se respeta ese desglose.
+   * Si no, el resto tras el abono se aplica a mora hasta el máximo permitido.
+   */
+  repartirPago(params: {
+    monto: number;
+    montoMora?: number;
+    saldo: number;
+    moraAdeudada: number;
+    maxMoraPermitida: number;
+  }): { montoAbono: number; montoMora: number; moraAAplicar: number } {
+    const monto = this.roundToTwo(params.monto);
+    const saldo = this.roundToTwo(params.saldo);
+    const moraAdeudada = this.roundToTwo(params.moraAdeudada || 0);
+    const maxMora = Number.isFinite(params.maxMoraPermitida)
+      ? this.roundToTwo(params.maxMoraPermitida)
+      : params.maxMoraPermitida;
+
+    if (monto < 0) {
+      throw new BadRequestException('El monto del pago no puede ser negativo');
+    }
+
+    if (params.montoMora !== undefined && params.montoMora !== null) {
+      const montoMora = this.roundToTwo(params.montoMora);
+      if (montoMora < 0) {
+        throw new BadRequestException('El monto de mora no puede ser negativo');
+      }
+      if (montoMora > monto) {
+        throw new BadRequestException(
+          `El monto de mora (${montoMora}) no puede superar el monto total del pago (${monto}).`,
+        );
+      }
+      if (montoMora > maxMora + 0.005) {
+        throw new BadRequestException(
+          `El monto de mora (${montoMora}) excede el máximo permitido (${Number.isFinite(maxMora) ? maxMora : 'voluntaria'}).`,
+        );
+      }
+
+      const montoAbono = this.roundToTwo(monto - montoMora);
+      if (montoAbono > saldo + 0.005) {
+        throw new BadRequestException(
+          `El abono (${montoAbono}) excede el saldo pendiente del crédito (${saldo}).`,
+        );
+      }
+
+      const moraAAplicar = this.roundToTwo(Math.max(0, montoMora - moraAdeudada));
+      return { montoAbono, montoMora, moraAAplicar };
+    }
+
+    // Auto: abono primero, resto a mora
+    const montoAbono = this.roundToTwo(Math.min(monto, saldo));
+    const resto = this.roundToTwo(monto - montoAbono);
+    const montoMora = this.roundToTwo(
+      Math.min(resto, Number.isFinite(maxMora) ? maxMora : resto),
+    );
+
+    if (resto > montoMora + 0.005) {
+      throw new BadRequestException(
+        `El monto del pago (${monto}) excede el saldo (${saldo}) más la mora permitida (${Number.isFinite(maxMora) ? maxMora : resto}).`,
+      );
+    }
+
+    const moraAAplicar = this.roundToTwo(Math.max(0, montoMora - moraAdeudada));
+    return { montoAbono, montoMora, moraAAplicar };
+  }
 }

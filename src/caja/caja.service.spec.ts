@@ -57,6 +57,13 @@ describe('CajaService', () => {
         pretendido: 0,
         totalClientes: 0,
         clientesPendietes: 0,
+        moraPorCobrar: 0,
+      }),
+      resolveMoraConfigForRuta: jest.fn().mockResolvedValue({
+        cobraMora: false,
+        permiteMoraVoluntaria: false,
+        porcentajeMora: 0,
+        baseCalculoMora: 'VALOR_CUOTA',
       }),
     };
 
@@ -69,6 +76,7 @@ describe('CajaService', () => {
         inversiones: 0,
         gastos: 0,
         retiros: 0,
+        moraCobrada: 0,
       }),
     };
 
@@ -199,7 +207,7 @@ describe('CajaService', () => {
 
     it('debe manejar errores de duplicidad (código 11000)', async () => {
       const createCajaDto: CreateCajaDto = { rutaId: mockRutaId, fecha: mockDate, base: 100 };
-      jest.spyOn(service, 'getCreditSummary').mockResolvedValue({ pretendido: 0, totalClientes: 0, clientesPendietes: 0 });
+      jest.spyOn(service, 'getCreditSummary').mockResolvedValue({ pretendido: 0, totalClientes: 0, clientesPendietes: 0, moraPorCobrar: 0 });
 
       const error = { code: 11000 };
       cajaModel.create.mockRejectedValue(error);
@@ -240,6 +248,7 @@ describe('CajaService', () => {
         pretendido: 1000,
         totalClientes: 20,
         clientesPendietes: 20,
+        moraPorCobrar: 0,
       });
 
       const result = await service.getCreditSummary(mockRutaId);
@@ -255,6 +264,7 @@ describe('CajaService', () => {
         pretendido: 0,
         totalClientes: 0,
         clientesPendietes: 0,
+        moraPorCobrar: 0,
       });
 
       const result = await service.getCreditSummary(mockRutaId);
@@ -313,6 +323,7 @@ describe('CajaService', () => {
         inversiones: 10,
         gastos: 5,
         retiros: 5,
+        moraCobrada: 0,
       });
 
       const result = await service.getMovimientosResumen(mockRutaId);
@@ -385,10 +396,108 @@ describe('CajaService', () => {
         inversiones: 10,
         gastos: 5,
         retiros: 5,
+        moraCobrada: 0,
       });
 
       await service.getMovimientosResumen(mockRutaId, undefined, { persistSnapshot: true });
       expect(mockCaja.save).toHaveBeenCalled();
+    });
+
+    it('incluye cobraMora: true en resumen cuando la empresa cobra mora', async () => {
+      const mockCaja = {
+        base: 100,
+        status: true,
+        fecha: new Date(),
+        save: jest.fn(),
+        toObject: jest.fn().mockReturnValue({ _id: mockCajaId, base: 100, status: true }),
+      };
+
+      rutaService.findOperacionContextById.mockResolvedValue({
+        _id: mockRutaId,
+        caja_actual: mockCajaId,
+        status: true,
+        timeZone: 'UTC',
+      });
+      cajaModel.findById.mockReturnValue({
+        session: jest.fn().mockResolvedValue(mockCaja),
+      });
+      creditoService.resolveMoraConfigForRuta.mockResolvedValue({
+        cobraMora: true,
+        permiteMoraVoluntaria: true,
+        porcentajeMora: 10,
+        baseCalculoMora: 'VALOR_CUOTA',
+      });
+
+      const result = await service.getMovimientosResumen(mockRutaId);
+
+      expect(creditoService.resolveMoraConfigForRuta).toHaveBeenCalledWith(mockRutaId);
+      expect(result.cobraMora).toBe(true);
+    });
+
+    it('incluye cobraMora: false en resumen cuando la empresa no cobra mora', async () => {
+      const mockCaja = {
+        base: 100,
+        status: true,
+        fecha: new Date(),
+        save: jest.fn(),
+        toObject: jest.fn().mockReturnValue({ _id: mockCajaId, base: 100, status: true }),
+      };
+
+      rutaService.findOperacionContextById.mockResolvedValue({
+        _id: mockRutaId,
+        caja_actual: mockCajaId,
+        status: true,
+        timeZone: 'UTC',
+      });
+      cajaModel.findById.mockReturnValue({
+        session: jest.fn().mockResolvedValue(mockCaja),
+      });
+      creditoService.resolveMoraConfigForRuta.mockResolvedValue({
+        cobraMora: false,
+        permiteMoraVoluntaria: false,
+        porcentajeMora: 0,
+        baseCalculoMora: 'VALOR_CUOTA',
+      });
+
+      const result = await service.getMovimientosResumen(mockRutaId);
+
+      expect(result.cobraMora).toBe(false);
+    });
+
+    it('día cerrado: incluye cobraMora desde config sin recalcular ledger', async () => {
+      const mockCaja = {
+        base: 100,
+        status: false,
+        cobro: 50,
+        fecha: new Date(),
+        save: jest.fn(),
+        toObject: jest.fn().mockReturnValue({
+          _id: mockCajaId,
+          base: 100,
+          cobro: 50,
+          status: false,
+        }),
+      };
+
+      rutaService.findOperacionContextById.mockResolvedValue({
+        _id: mockRutaId,
+        caja_actual: mockCajaId,
+        status: false,
+        timeZone: 'UTC',
+        currency: 'MXN',
+      });
+      cajaModel.findById.mockReturnValue({
+        session: jest.fn().mockResolvedValue(mockCaja),
+      });
+      creditoService.resolveMoraConfigForRuta.mockResolvedValue({
+        cobraMora: true,
+      });
+
+      const result = await service.getMovimientosResumen(mockRutaId);
+
+      expect(movimientoCajaService.getTotalesLedgerPorRango).not.toHaveBeenCalled();
+      expect(creditoService.resolveMoraConfigForRuta).toHaveBeenCalledWith(mockRutaId);
+      expect(result.cobraMora).toBe(true);
     });
   });
 
