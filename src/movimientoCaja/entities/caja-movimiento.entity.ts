@@ -16,6 +16,8 @@ export class CajaMovimientoEntity {
   categoriaGasto?: CategoriaGasto;
   montoAbono?: number;
   montoMora?: number;
+  /** [lng, lat] del cobrador al registrar el pago */
+  ubication?: number[];
   _id?: string;
 
   constructor(data?: Partial<CajaMovimientoEntity>) {
@@ -46,6 +48,7 @@ export class CajaMovimientoEntity {
       categoriaGasto: object.categoriaGasto,
       montoAbono: object.montoAbono,
       montoMora: object.montoMora ?? 0,
+      ubication: Array.isArray(object.ubication) ? object.ubication : undefined,
     })
     
     return cajaMovimiento;

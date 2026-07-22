@@ -1,4 +1,4 @@
-import { IsDate, IsEnum, IsMongoId, IsNumber, IsOptional, IsString, Min } from "class-validator";
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsDate, IsEnum, IsMongoId, IsNumber, IsOptional, IsString, Min } from "class-validator";
 import { CategoriaGasto, SubTipo, TipoMovimiento } from "../interfaces";
 
 export class CreateMovimientoCajaDto {
@@ -54,5 +54,13 @@ export class CreateMovimientoCajaDto {
   @IsMongoId()
   @IsOptional()
   clienteId?: string;
+
+  /** GPS del cobrador al cobrar: [lng, lat] */
+  @IsOptional()
+  @IsArray()
+  @ArrayMinSize(2)
+  @ArrayMaxSize(2)
+  @IsNumber({}, { each: true })
+  ubication?: number[];
 
 }

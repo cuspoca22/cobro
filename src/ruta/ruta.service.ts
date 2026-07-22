@@ -305,7 +305,10 @@ export class RutaService {
       // Confirma la transacción. Si esta línea no se ejecuta, NINGÚN cambio se guardará.
       await session.commitTransaction();
 
-      this.socketRuta.emitCloseCaja(ruta._id.toString());
+      this.socketRuta.emitCloseCaja(
+        ruta._id.toString(),
+        ruta.empresa?.toString() ?? '',
+      );
 
       return true;
 
@@ -349,11 +352,12 @@ export class RutaService {
       const payload = {
         ruta: ruta._id.toString(),
         isLocked: true as const,
+        empresa: ruta.empresa?.toString() ?? '',
       };
 
       this.socketRuta.emitRutaLockState(payload);
 
-      return { ok: true, ...payload };
+      return { ok: true, ruta: payload.ruta, isLocked: payload.isLocked };
     } catch (error) {
       this.handleExceptions(error);
     }
@@ -384,11 +388,12 @@ export class RutaService {
       const payload = {
         ruta: ruta._id.toString(),
         isLocked: false as const,
+        empresa: ruta.empresa?.toString() ?? '',
       };
 
       this.socketRuta.emitRutaLockState(payload);
 
-      return { ok: true, ...payload };
+      return { ok: true, ruta: payload.ruta, isLocked: payload.isLocked };
     } catch (error) {
       this.handleExceptions(error);
     }
@@ -457,7 +462,10 @@ export class RutaService {
 
       await session.commitTransaction();
 
-      this.socketRuta.emitOpenCaja(ruta._id.toString());
+      this.socketRuta.emitOpenCaja(
+        ruta._id.toString(),
+        ruta.empresa?.toString() ?? '',
+      );
 
       return {
         ok: true,
@@ -492,8 +500,6 @@ export class RutaService {
     name: 'syncRutasPorZonaHoraria',
   })
   async syncRutasPorZonaHoraria() {
-    this.logger.log('Cron multi-TZ: evaluando apertura/cierre por Ruta.timeZone...');
-
     const rutas = await this.rutaModel
       .find({})
       .select('_id status autoOpen timeZone nombre')
@@ -524,12 +530,7 @@ export class RutaService {
 
       if (inCloseWindow && ruta.status === true) {
         try {
-          const closed = await this.closeRuta(rutaId);
-          if (closed) {
-            this.logger.log(
-              `Cierre auto TZ=${timeZone} ruta=${rutaId} (${ruta.nombre || ''})`,
-            );
-          }
+          await this.closeRuta(rutaId);
         } catch (error) {
           this.logger.error(
             `Error cierre auto ruta ${rutaId}: ${error.message}`,
@@ -539,12 +540,7 @@ export class RutaService {
 
       if (inOpenWindow && ruta.status === false && ruta.autoOpen === true) {
         try {
-          const result = await this.openRuta(rutaId);
-          if (result?.ok) {
-            this.logger.log(
-              `Apertura auto TZ=${timeZone} ruta=${rutaId} (${ruta.nombre || ''})`,
-            );
-          }
+          await this.openRuta(rutaId);
         } catch (error) {
           this.logger.error(
             `Error apertura auto ruta ${rutaId}: ${error.message}`,

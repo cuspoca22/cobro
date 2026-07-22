@@ -1,6 +1,7 @@
 import { BadRequestException, forwardRef, Inject, Injectable, InternalServerErrorException, Logger, NotFoundException } from "@nestjs/common";
 import { InjectModel, InjectConnection } from "@nestjs/mongoose";
 import mongoose, { Model, Connection, Types, ClientSession, PipelineStage } from "mongoose";
+import { endOfDay, startOfDay } from 'date-fns';
 
 import { MovimientoCaja } from "./schemas/caja-movimiento.schemas";
 import { CreateMovimientoCajaDto, UpdateMovimientoCajaDto } from "./dto";
@@ -43,7 +44,8 @@ export class MovimientoCajaService {
 
   async addPago(createPagoDto: CreateMovimientoCajaDto) {
     return this.transactionHelper.withTransaction(async (session) => {
-      const { rutaId, monto, creditoId, clienteId, montoMora, ...rest } = createPagoDto;
+      const { rutaId, monto, creditoId, clienteId, montoMora, ubication, ...rest } =
+        createPagoDto;
 
       const ruta = await this.rutaService.findOperacionContextById(rutaId, session);
       if (!ruta) throw new NotFoundException(`La ruta con el id ${rutaId} no existe`);
@@ -107,6 +109,8 @@ export class MovimientoCajaService {
         throw new BadRequestException(`Ya ingresaste este pago, por favor recarga la pagina`);
       }
 
+      const ubicationValida = this.sanitizeUbication(ubication);
+
       // crear el movimiento — el índice unique_pago_credito_por_dia evita doble insert concurrente
       try {
         await this.cajaMovimientoModel.create([{
@@ -120,6 +124,7 @@ export class MovimientoCajaService {
           cliente: clienteId,
           credito: creditoId,
           ruta: rutaId,
+          ...(ubicationValida ? { ubication: ubicationValida } : {}),
           ...rest
         }], { session });
       } catch (error: any) {
@@ -147,6 +152,16 @@ export class MovimientoCajaService {
         message: result.message
       };
     }, 'MovimientoCajaService.addPago');
+  }
+
+  /** Acepta solo [lng, lat] válidos; si no, retorna undefined (pago sin GPS). */
+  private sanitizeUbication(ubication?: number[]): number[] | undefined {
+    if (!Array.isArray(ubication) || ubication.length !== 2) return undefined;
+    const lng = Number(ubication[0]);
+    const lat = Number(ubication[1]);
+    if (!Number.isFinite(lng) || !Number.isFinite(lat)) return undefined;
+    if (Math.abs(lng) > 180 || Math.abs(lat) > 90) return undefined;
+    return [lng, lat];
   }
 
   async addOficinaMovimiento(createMovimientoDto: CreateMovimientoCajaDto) {
@@ -555,6 +570,8 @@ export class MovimientoCajaService {
           monto: 1,
           subTipo: 1,
           comentario: 1,
+          ubication: 1,
+          createdAt: 1,
           cliente: {
             id: '$clienteInfo._id',
             nombre: '$clienteInfo.nombre',
@@ -566,6 +583,94 @@ export class MovimientoCajaService {
 
     return pagos;
 
+  }
+
+  /**
+   * Pagos del día con GPS, para todas las rutas de una empresa (mapa Seguimiento).
+   */
+  async getPagosConUbicacionEmpresa(empresaId: string, fechaIso?: string) {
+    const rutas = await this.rutaService.findLean(
+      { empresa: new Types.ObjectId(empresaId) },
+      { select: '_id timeZone' },
+    );
+    if (!rutas.length) return [];
+
+    const ref = fechaIso
+      ? new Date(fechaIso)
+      : this.dateFnsAdapter.nowUtc();
+
+    // Agrupar rutas por TZ: cada ruta filtra “hoy” en su propia zona
+    const byTz = new Map<string, Types.ObjectId[]>();
+    for (const ruta of rutas) {
+      const tz = (ruta.timeZone as string) || 'UTC';
+      const ids = byTz.get(tz) ?? [];
+      ids.push(ruta._id);
+      byTz.set(tz, ids);
+    }
+
+    const orFechaPorRuta: Array<{
+      ruta: { $in: Types.ObjectId[] };
+      fecha: { $gte: Date; $lte: Date };
+    }> = [];
+
+    for (const [timeZone, rutaIds] of byTz) {
+      const dateInZone = this.dateFnsAdapter.convertUtcToZonedTime(
+        ref,
+        timeZone,
+      );
+      orFechaPorRuta.push({
+        ruta: { $in: rutaIds },
+        fecha: {
+          $gte: this.dateFnsAdapter.convertZonedTimeToUtc(
+            startOfDay(dateInZone),
+            timeZone,
+          ),
+          $lte: this.dateFnsAdapter.convertZonedTimeToUtc(
+            endOfDay(dateInZone),
+            timeZone,
+          ),
+        },
+      });
+    }
+
+    return this.cajaMovimientoModel.aggregate([
+      {
+        $match: {
+          $or: orFechaPorRuta,
+          subTipo: SubTipo.PAGOCREDITO,
+          // $size en query (no $expr) ignora docs sin el campo
+          ubication: { $type: 'array', $size: 2 },
+        },
+      },
+      {
+        $lookup: {
+          from: 'clientes',
+          localField: 'cliente',
+          foreignField: '_id',
+          as: 'clienteInfo',
+        },
+      },
+      {
+        $unwind: {
+          path: '$clienteInfo',
+          preserveNullAndEmptyArrays: true,
+        },
+      },
+      {
+        $project: {
+          fecha: 1,
+          monto: 1,
+          ubication: 1,
+          createdAt: 1,
+          ruta: 1,
+          cliente: {
+            id: '$clienteInfo._id',
+            nombre: '$clienteInfo.nombre',
+            alias: '$clienteInfo.alias',
+          },
+        },
+      },
+    ]);
   }
 
   /**

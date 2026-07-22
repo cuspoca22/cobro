@@ -569,6 +569,7 @@ describe('CreditoService', () => {
       );
       expect(mockMessageGateway.emitMoraActualizada).toHaveBeenCalledWith({
         ruta: 'ruta789',
+        empresa: 'empresa123',
         creditoId: 'credito123',
         tipo: 'APLICAR',
         monto: 25,
@@ -610,6 +611,7 @@ describe('CreditoService', () => {
       );
       expect(mockMessageGateway.emitMoraActualizada).toHaveBeenCalledWith({
         ruta: 'ruta789',
+        empresa: 'empresa123',
         creditoId: 'credito123',
         tipo: 'PERDONAR',
         monto: 20,

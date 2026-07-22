@@ -113,9 +113,11 @@ export class MovimientoCaja {
     })
     fecha: Date;
 
-    // Campos para el registro de la "instantánea" diaria (si es necesario, aunque generalmente esto va en CajaInstantaneaDiaria)
-    // Se podría considerar un campo para la fecha de la transacción si `createdAt` no es suficiente,
-    // pero `createdAt` de `timestamps: true` ya te da la fecha y hora exacta.
+    /** GPS del cobrador al registrar el pago: [lng, lat] */
+    @Prop({
+        type: [Number],
+    })
+    ubication?: number[];
 }
 
 export const MovimientoCajaSchema = SchemaFactory.createForClass(MovimientoCaja);

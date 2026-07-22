@@ -194,7 +194,7 @@ describe('RutaService', () => {
       expect(mockRuta.status).toBe(true);
       expect(mockRuta.save).toHaveBeenCalledWith({ session: expect.anything() });
       expect(mockSession.commitTransaction).toHaveBeenCalled();
-      expect(mockSocketGateway.emitOpenCaja).toHaveBeenCalledWith(rutaId);
+      expect(mockSocketGateway.emitOpenCaja).toHaveBeenCalledWith(rutaId, '');
       expect(mockSession.endSession).toHaveBeenCalled();
     });
 
@@ -263,7 +263,7 @@ describe('RutaService', () => {
       expect(mockCajaService.markOpen).toHaveBeenCalledWith(cajaId, expect.anything());
       expect(mockCajaService.create).not.toHaveBeenCalled();
       expect(mockCajaService.getUltimaCaja).not.toHaveBeenCalled();
-      expect(mockSocketGateway.emitOpenCaja).toHaveBeenCalledWith(rutaId);
+      expect(mockSocketGateway.emitOpenCaja).toHaveBeenCalledWith(rutaId, '');
       expect(mockSession.commitTransaction).toHaveBeenCalled();
     });
   });
@@ -345,7 +345,7 @@ describe('RutaService', () => {
       expect(mockCajaService.markClosed).toHaveBeenCalledWith(cajaId, expect.anything());
       expect(mockCajaService.congelarSnapshotCierre).toHaveBeenCalledWith(rutaId, expect.anything());
       expect(mockSession.commitTransaction).toHaveBeenCalled();
-      expect(mockSocketGateway.emitCloseCaja).toHaveBeenCalledWith(rutaId);
+      expect(mockSocketGateway.emitCloseCaja).toHaveBeenCalledWith(rutaId, '');
       expect(mockSession.endSession).toHaveBeenCalled();
     });
 
@@ -405,6 +405,7 @@ describe('RutaService', () => {
       expect(mockSocketGateway.emitRutaLockState).toHaveBeenCalledWith({
         ruta: rutaId,
         isLocked: true,
+        empresa: '',
       });
     });
   });
@@ -451,6 +452,7 @@ describe('RutaService', () => {
       expect(mockSocketGateway.emitRutaLockState).toHaveBeenCalledWith({
         ruta: rutaId,
         isLocked: false,
+        empresa: '',
       });
     });
   });

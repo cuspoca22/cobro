@@ -677,9 +677,14 @@ export class CreditoService {
         mora_adeudada_despues: despues,
       }], { session: sess });
 
+      const empresaInfo = await this.rutaService.getEmpresaIdByRutaId(
+        credito.ruta.toString(),
+      );
+
       return {
         creditoId: credito._id.toString(),
         rutaId: credito.ruta.toString(),
+        empresaId: empresaInfo.exists ? (empresaInfo.empresaId ?? '') : '',
         mora_adeudada: despues,
         montoAplicado: montoRedondeado,
       };
@@ -691,6 +696,7 @@ export class CreditoService {
 
     this.messageGateway.emitMoraActualizada({
       ruta: result.rutaId,
+      empresa: result.empresaId,
       creditoId: result.creditoId,
       tipo: 'APLICAR',
       monto: result.montoAplicado,
@@ -752,9 +758,14 @@ export class CreditoService {
         mora_adeudada_despues: moraAdeudada,
       }], { session: sess });
 
+      const empresaInfo = await this.rutaService.getEmpresaIdByRutaId(
+        credito.ruta.toString(),
+      );
+
       return {
         creditoId: credito._id.toString(),
         rutaId: credito.ruta.toString(),
+        empresaId: empresaInfo.exists ? (empresaInfo.empresaId ?? '') : '',
         mora_adeudada: moraAdeudada,
         montoPerdonado: montoRedondeado,
       };
@@ -766,6 +777,7 @@ export class CreditoService {
 
     this.messageGateway.emitMoraActualizada({
       ruta: result.rutaId,
+      empresa: result.empresaId,
       creditoId: result.creditoId,
       tipo: 'PERDONAR',
       monto: result.montoPerdonado,

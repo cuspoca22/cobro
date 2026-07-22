@@ -1,6 +1,7 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from "@nestjs/common";
+import { Body, Controller, Delete, ForbiddenException, Get, Param, Patch, Post, Query } from "@nestjs/common";
 
-import { Auth } from '../auth/decorators';
+import { Auth, GetUser } from '../auth/decorators';
+import { UserEntity } from '../auth/entities/user.entity';
 import { ValidRoles } from '../auth/interfaces';
 import { MovimientoCajaService } from "./movimiento-caja.service";
 import { CreateMovimientoCajaDto, UpdateMovimientoCajaDto, ResumenOficinaQueryDto } from "./dto";
@@ -36,6 +37,24 @@ export class MovimientoCajaController {
     @Query('fecha') fecha: string,
   ) {
     return await this.movimientoCajaService.getResumenDiario(rutaId, fecha);
+  }
+
+  @Auth(ValidRoles.admin, ValidRoles.superAdmin, ValidRoles.supervisor)
+  @Get('pagos-ubicacion')
+  async getPagosConUbicacion(
+    @Query('empresaId', ParseMongoIdPipe) empresaId: string,
+    @GetUser() user: UserEntity,
+    @Query('fecha') fecha?: string,
+  ) {
+    if (user.rol !== ValidRoles.superAdmin && user.empresa !== empresaId) {
+      throw new ForbiddenException(
+        'No puedes ver ubicaciones de pagos de otra empresa',
+      );
+    }
+    return this.movimientoCajaService.getPagosConUbicacionEmpresa(
+      empresaId,
+      fecha,
+    );
   }
 
   @RutaAbierta()
