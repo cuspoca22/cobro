@@ -1,6 +1,13 @@
-import { Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+} from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { createObjectCsvStringifier } from 'csv-writer';
 import Decimal from 'decimal.js';
 import { PipelineStage, Types } from 'mongoose';
+import * as nodemailer from 'nodemailer';
 
 import { SubTipo } from '../movimientoCaja/interfaces/sub-tipo.enum';
 import { TipoMovimiento } from '../movimientoCaja/interfaces/tipo-movimiento.enum';
@@ -45,8 +52,28 @@ interface MovimientoRaw {
   fechaDia?: string;
 }
 
+interface BackupCreditoRow {
+  ruta?: string;
+  cliente?: string;
+  alias?: string;
+  dpi?: string;
+  telefono?: string;
+  valor_credito?: number;
+  total_pagar?: number;
+  valor_cuota?: number;
+  status?: boolean;
+  fecha_inicio?: Date;
+  dueDate?: Date;
+  state?: string;
+  frecuencia_cobro?: string;
+  mora_adeudada?: number;
+  mora_cobrada?: number;
+}
+
 @Injectable()
 export class ReportesService {
+  private readonly logger = new Logger(ReportesService.name);
+
   constructor(
     private readonly empresaService: EmpresaService,
     private readonly rutaService: RutaService,
@@ -55,6 +82,7 @@ export class ReportesService {
     private readonly cajaService: CajaService,
     private readonly movimientoCajaService: MovimientoCajaService,
     private readonly dateFnsAdapter: DateFnsAdapter,
+    private readonly configService: ConfigService,
   ) {}
 
   private resolveContext(empresaId: string, rutaId?: string) {
@@ -828,5 +856,188 @@ export class ReportesService {
       seriesDiarias: [],
       rutas: [],
     };
+  }
+
+  /**
+   * CSV de backup: un registro por crédito de las rutas de la empresa.
+   * Columnas documentadas en el endpoint GET /reports/backup.
+   */
+  async buildEmpresaBackupCsv(empresaId: string): Promise<Buffer> {
+    const contexto = await this.resolveContext(empresaId);
+    const rutaIds = contexto.rutas.map((r) => r.rutaId);
+
+    const rows: BackupCreditoRow[] =
+      rutaIds.length === 0
+        ? []
+        : await this.creditoService.aggregatePipeline<BackupCreditoRow>([
+            { $match: { ruta: { $in: rutaIds } } },
+            {
+              $lookup: {
+                from: 'clientes',
+                localField: 'cliente',
+                foreignField: '_id',
+                as: 'clienteDoc',
+              },
+            },
+            {
+              $unwind: {
+                path: '$clienteDoc',
+                preserveNullAndEmptyArrays: true,
+              },
+            },
+            {
+              $lookup: {
+                from: 'rutas',
+                localField: 'ruta',
+                foreignField: '_id',
+                as: 'rutaDoc',
+              },
+            },
+            {
+              $unwind: {
+                path: '$rutaDoc',
+                preserveNullAndEmptyArrays: true,
+              },
+            },
+            {
+              $project: {
+                _id: 0,
+                ruta: '$rutaDoc.nombre',
+                cliente: '$clienteDoc.nombre',
+                alias: '$clienteDoc.alias',
+                dpi: '$clienteDoc.dpi',
+                telefono: '$clienteDoc.telefono',
+                valor_credito: 1,
+                total_pagar: 1,
+                valor_cuota: 1,
+                status: 1,
+                fecha_inicio: 1,
+                dueDate: 1,
+                state: 1,
+                frecuencia_cobro: 1,
+                mora_adeudada: 1,
+                mora_cobrada: 1,
+              },
+            },
+            { $sort: { ruta: 1, cliente: 1 } },
+          ]);
+
+    const stringifier = createObjectCsvStringifier({
+      header: [
+        { id: 'ruta', title: 'ruta' },
+        { id: 'cliente', title: 'cliente' },
+        { id: 'alias', title: 'alias' },
+        { id: 'dpi', title: 'dpi' },
+        { id: 'telefono', title: 'telefono' },
+        { id: 'valor_credito', title: 'valor_credito' },
+        { id: 'total_pagar', title: 'total_pagar' },
+        { id: 'valor_cuota', title: 'valor_cuota' },
+        { id: 'status', title: 'status' },
+        { id: 'fecha_inicio', title: 'fecha_inicio' },
+        { id: 'dueDate', title: 'dueDate' },
+        { id: 'state', title: 'state' },
+        { id: 'frecuencia_cobro', title: 'frecuencia_cobro' },
+        { id: 'mora_adeudada', title: 'mora_adeudada' },
+        { id: 'mora_cobrada', title: 'mora_cobrada' },
+      ],
+    });
+
+    const records = rows.map((row) => ({
+      ruta: row.ruta ?? '',
+      cliente: row.cliente ?? '',
+      alias: row.alias ?? '',
+      dpi: row.dpi ?? '',
+      telefono: row.telefono ?? '',
+      valor_credito: row.valor_credito ?? 0,
+      total_pagar: row.total_pagar ?? 0,
+      valor_cuota: row.valor_cuota ?? 0,
+      status: row.status ? 'activo' : 'saldado',
+      fecha_inicio: row.fecha_inicio
+        ? new Date(row.fecha_inicio).toISOString()
+        : '',
+      dueDate: row.dueDate ? new Date(row.dueDate).toISOString() : '',
+      state: row.state ?? '',
+      frecuencia_cobro: row.frecuencia_cobro ?? '',
+      mora_adeudada: row.mora_adeudada ?? 0,
+      mora_cobrada: row.mora_cobrada ?? 0,
+    }));
+
+    const csv =
+      stringifier.getHeaderString() + stringifier.stringifyRecords(records);
+    return Buffer.from(csv, 'utf-8');
+  }
+
+  async sendEmpresaBackupEmail(
+    empresaId: string,
+    to?: string,
+  ): Promise<boolean> {
+    const empresa = await this.empresaService.findByIdLean(
+      empresaId,
+      'name email',
+    );
+    if (!empresa) {
+      throw new BadRequestException('Empresa no encontrada');
+    }
+
+    const destinatario = (to || (empresa as { email?: string }).email || '')
+      .toString()
+      .trim();
+    if (!destinatario || !destinatario.includes('@')) {
+      throw new BadRequestException(
+        'Email destino inválido. Actualiza el correo de la empresa o pasa ?to=',
+      );
+    }
+
+    const host = this.configService.get<string>('SMTP_HOST');
+    const port = Number(this.configService.get<string>('SMTP_PORT') || 587);
+    const user = this.configService.get<string>('SMTP_USER');
+    const pass = this.configService.get<string>('SMTP_PASS');
+    const from =
+      this.configService.get<string>('SMTP_FROM') ||
+      user ||
+      'noreply@nathyapp.local';
+
+    if (!host || !user || !pass) {
+      throw new BadRequestException(
+        'SMTP no configurado. Define SMTP_HOST, SMTP_PORT, SMTP_USER y SMTP_PASS.',
+      );
+    }
+
+    const buffer = await this.buildEmpresaBackupCsv(empresaId);
+    const safeName = ((empresa as { name?: string }).name || 'empresa')
+      .replace(/[^\w\-]+/g, '_')
+      .slice(0, 40);
+    const filename = `${safeName}_backup.csv`;
+
+    try {
+      const transporter = nodemailer.createTransport({
+        host,
+        port,
+        secure: port === 465,
+        auth: { user, pass },
+      });
+
+      await transporter.sendMail({
+        from,
+        to: destinatario,
+        subject: `Copia de seguridad — ${(empresa as { name?: string }).name || empresaId}`,
+        text:
+          'Adjunto encontrarás la copia de seguridad en CSV de créditos y clientes de la empresa.',
+        attachments: [
+          {
+            filename,
+            content: buffer,
+            contentType: 'text/csv',
+          },
+        ],
+      });
+
+      return true;
+    } catch (error) {
+      this.logger.error('Error enviando backup por email', error as Error);
+      throw new BadRequestException(
+        'No se pudo enviar el correo de copia de seguridad. Revisa la configuración SMTP.',
+      );
+    }
   }
 }

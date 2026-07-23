@@ -1,7 +1,16 @@
-import { Controller, Get, Query } from '@nestjs/common';
+import {
+  Controller,
+  ForbiddenException,
+  Get,
+  Header,
+  Query,
+  StreamableFile,
+} from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiOperation,
+  ApiProduces,
+  ApiQuery,
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
@@ -18,11 +27,26 @@ import {
   ReporteOficinaResponseDto,
 } from './responses';
 
-@Controller('reportes')
+/** Alias `reports` para el admin legacy; `reportes` es el path canónico. */
+@Controller(['reportes', 'reports'])
 @ApiTags('Reportes')
 @ApiBearerAuth('bearerAuth')
 export class ReportesController {
   constructor(private readonly reportesService: ReportesService) {}
+
+  private resolveEmpresaId(user: GetUserDto, empresaQuery?: string): string {
+    const empresaId = (empresaQuery || user.empresa || '').toString();
+    if (!empresaId) {
+      throw new ForbiddenException('Empresa no disponible en la sesión');
+    }
+    if (
+      user.rol !== ValidRoles.superAdmin &&
+      empresaId !== user.empresa?.toString()
+    ) {
+      throw new ForbiddenException('No puedes exportar otra empresa');
+    }
+    return empresaId;
+  }
 
   @Get('oficina')
   @Auth(ValidRoles.admin, ValidRoles.superAdmin)
@@ -99,5 +123,51 @@ export class ReportesController {
     @Query() query: ReporteRangoQueryDto,
   ): Promise<ReporteCajaHistoricoResponseDto> {
     return this.reportesService.getReporteCajaHistorico(query, user.empresa);
+  }
+
+  @Get('backup')
+  @Auth(ValidRoles.admin, ValidRoles.superAdmin)
+  @Header('Content-Type', 'text/csv; charset=utf-8')
+  @Header('Content-Disposition', 'attachment; filename="empresa_backup.csv"')
+  @ApiOperation({
+    summary: 'Descargar copia de seguridad CSV',
+    description:
+      'Exporta créditos de la empresa (con datos de cliente y ruta) en CSV. ' +
+      'Columnas: ruta, cliente, alias, dpi, telefono, valor_credito, total_pagar, ' +
+      'valor_cuota, status, fecha_inicio, dueDate, state, frecuencia_cobro, ' +
+      'mora_adeudada, mora_cobrada.',
+  })
+  @ApiQuery({ name: 'empresa', required: false, description: 'ID de empresa (debe coincidir con la sesión salvo SUPERADMIN)' })
+  @ApiProduces('text/csv')
+  @ApiResponse({ status: 200, description: 'CSV de backup' })
+  @ApiResponse({ status: 403, description: 'Sin permiso sobre la empresa' })
+  async getBackup(
+    @GetUser() user: GetUserDto,
+    @Query('empresa') empresa?: string,
+  ): Promise<StreamableFile> {
+    const empresaId = this.resolveEmpresaId(user, empresa);
+    const buffer = await this.reportesService.buildEmpresaBackupCsv(empresaId);
+    return new StreamableFile(buffer);
+  }
+
+  @Get('send-backup')
+  @Auth(ValidRoles.admin, ValidRoles.superAdmin)
+  @ApiOperation({
+    summary: 'Enviar copia de seguridad por email',
+    description:
+      'Genera el mismo CSV que /backup y lo envía por SMTP al destinatario indicado. ' +
+      'Requiere variables SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS (y opcional SMTP_FROM).',
+  })
+  @ApiQuery({ name: 'empresa', required: false })
+  @ApiQuery({ name: 'to', required: false, description: 'Email destino; por defecto el email de la empresa' })
+  @ApiResponse({ status: 200, description: 'true si el correo se envió' })
+  @ApiResponse({ status: 400, description: 'SMTP no configurado o email inválido' })
+  sendBackup(
+    @GetUser() user: GetUserDto,
+    @Query('empresa') empresa?: string,
+    @Query('to') to?: string,
+  ): Promise<boolean> {
+    const empresaId = this.resolveEmpresaId(user, empresa);
+    return this.reportesService.sendEmpresaBackupEmail(empresaId, to);
   }
 }
