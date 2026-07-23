@@ -31,7 +31,7 @@ jobs:
           host: ${{ secrets.DO_HOST }}
           username: ${{ secrets.DO_USER }}
           key: ${{ secrets.DO_SSH_KEY }}
-          source: "dist/,package.json"
+          source: "dist/,package.json,ecosystem.config.cjs"
           target: "~/proyectos/api"
           strip_components: 0
 
@@ -44,4 +44,7 @@ jobs:
           script: |
             cd ~/proyectos/api
             npm install --production
-            pm2 restart cobro
+            # Arranca/recarga siempre desde dist (no src / ts-node)
+            pm2 delete cobro || true
+            pm2 start ecosystem.config.cjs
+            pm2 save

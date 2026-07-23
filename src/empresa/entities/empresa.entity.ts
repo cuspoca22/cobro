@@ -36,6 +36,9 @@ export class EmpresaEntity {
    }
 
    static fromObject(object: { [key: string]: any }): EmpresaEntity {
+      if (!object) {
+         throw new Error('EmpresaEntity.fromObject: object is required');
+      }
 
       const { _id, id } = object;
       const empresaId = (id || _id)?.toString() || null;

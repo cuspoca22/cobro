@@ -103,6 +103,10 @@ export class EmpresaService {
         .populate('rutas')
         .populate('owner')
 
+      if (!empresa) {
+        throw new NotFoundException(`Empresa con el id ${id} no existe`);
+      }
+
       return EmpresaEntity.fromObject(empresa);
 
     } catch (error) {

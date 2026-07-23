@@ -30,6 +30,8 @@ import { AccessSuspendedReason } from './interfaces/subscription-status';
 export class EmpresaController {
   constructor(private readonly empresaService: EmpresaService) {}
 
+  // ─── Static routes FIRST (antes de :id) ───────────────────────────
+
   @Auth(ValidRoles.superAdmin)
   @Post()
   create(@Body() createEmpresaDto: CreateEmpresaDto) {
@@ -52,26 +54,6 @@ export class EmpresaController {
     return this.empresaService.findEmpresaWithRutasOpened();
   }
 
-  @Auth()
-  @Get()
-  findOne(@GetUser() user: any) {
-    if (!user?.empresa) {
-      // SUPERADMIN (u otros) pueden existir sin empresa asignada
-      if (user?.rol === ValidRoles.superAdmin) {
-        return {
-          id: null,
-          name: null,
-          rutas: [],
-          employes: [],
-        };
-      }
-      throw new BadRequestException('El usuario no tiene una empresa asignada');
-    }
-
-    const empresa = user.empresa.toString();
-    return this.empresaService.findRutasByEmpresa(empresa);
-  }
-
   @Auth(ValidRoles.superAdmin)
   @Get('all')
   findAllEmpresas() {
@@ -88,37 +70,26 @@ export class EmpresaController {
     return this.empresaService.getOverdueEmpresas(withGrace);
   }
 
-  @Auth(ValidRoles.superAdmin)
-  @Patch(':id/subscription')
-  updateSubscription(
-    @GetUser() user: any,
-    @Param('id', ParseMongoIdPipe) id: string,
-    @Body() dto: UpdateSubscriptionDto,
-  ) {
-    return this.empresaService.updateSubscription(id, dto, user.id);
-  }
+  @Auth()
+  @Get()
+  findOne(@GetUser() user: any) {
+    if (!user?.empresa) {
+      if (user?.rol === ValidRoles.superAdmin) {
+        return {
+          id: null,
+          name: null,
+          rutas: [],
+          employes: [],
+        };
+      }
+      throw new BadRequestException('El usuario no tiene una empresa asignada');
+    }
 
-  @Auth(ValidRoles.superAdmin)
-  @Post(':id/suspend')
-  suspendEmpresa(
-    @Param('id', ParseMongoIdPipe) id: string,
-    @Body() dto: SuspendEmpresaDto,
-  ) {
-    return this.empresaService.suspendEmpresa(
-      id,
-      dto.reason ?? AccessSuspendedReason.PAYMENT,
-    );
-  }
-
-  @Auth(ValidRoles.superAdmin)
-  @Post(':id/unsuspend')
-  unsuspendEmpresa(
-    @Param('id', ParseMongoIdPipe) id: string,
-    @Query('markPaid') markPaid?: string,
-  ) {
-    const paid =
-      markPaid === '1' || markPaid === 'true' || markPaid === 'yes';
-    return this.empresaService.unsuspendEmpresa(id, paid);
+    const empresa =
+      typeof user.empresa === 'object' && user.empresa?._id
+        ? user.empresa._id.toString()
+        : user.empresa.toString();
+    return this.empresaService.findRutasByEmpresa(empresa);
   }
 
   @Auth(ValidRoles.superAdmin)
@@ -137,38 +108,6 @@ export class EmpresaController {
   @Patch('assign-ruta')
   assignRuta(@Body() dto: AssignRutaDto) {
     return this.empresaService.assignRuta(dto);
-  }
-
-  @Auth(ValidRoles.admin, ValidRoles.superAdmin)
-  @Patch(':id/mora-config')
-  updateMoraConfig(
-    @GetUser() user: any,
-    @Param('id', ParseMongoIdPipe) id: string,
-    @Body() dto: UpdateMoraConfigDto,
-  ) {
-    this.empresaService.assertCanAccessEmpresa(user, id);
-    return this.empresaService.updateMoraConfig(id, dto);
-  }
-
-  @Auth()
-  @Get(':id')
-  findById(
-    @GetUser() user: any,
-    @Param('id', ParseMongoIdPipe) id: string,
-  ) {
-    this.empresaService.assertCanAccessEmpresa(user, id);
-    return this.empresaService.getEmpresaById(id);
-  }
-
-  @Auth(ValidRoles.admin, ValidRoles.superAdmin)
-  @Patch('update/:id')
-  update(
-    @GetUser() user: any,
-    @Param('id', ParseMongoIdPipe) id: string,
-    @Body() updateEmpresaDto: UpdateEmpresaDto,
-  ) {
-    this.empresaService.assertCanAccessEmpresa(user, id);
-    return this.empresaService.update(id, updateEmpresaDto);
   }
 
   @Auth(ValidRoles.admin, ValidRoles.superAdmin)
@@ -211,10 +150,15 @@ export class EmpresaController {
     return this.empresaService.addOwner(empresa, user);
   }
 
-  @Auth(ValidRoles.superAdmin)
-  @Delete(':id')
-  remove(@Param('id', ParseMongoIdPipe) id: string) {
-    return this.empresaService.remove(id);
+  @Auth(ValidRoles.admin, ValidRoles.superAdmin)
+  @Patch('update/:id')
+  update(
+    @GetUser() user: any,
+    @Param('id', ParseMongoIdPipe) id: string,
+    @Body() updateEmpresaDto: UpdateEmpresaDto,
+  ) {
+    this.empresaService.assertCanAccessEmpresa(user, id);
+    return this.empresaService.update(id, updateEmpresaDto);
   }
 
   @Auth(ValidRoles.admin, ValidRoles.superAdmin, ValidRoles.supervisor)
@@ -227,5 +171,71 @@ export class EmpresaController {
   ) {
     this.empresaService.assertCanAccessEmpresa(user, idEmpresa);
     return true;
+  }
+
+  // ─── Parameterized routes (después de estáticas) ──────────────────
+
+  @Auth(ValidRoles.superAdmin)
+  @Patch(':id/subscription')
+  updateSubscription(
+    @GetUser() user: any,
+    @Param('id', ParseMongoIdPipe) id: string,
+    @Body() dto: UpdateSubscriptionDto,
+  ) {
+    return this.empresaService.updateSubscription(id, dto, user.id);
+  }
+
+  @Auth(ValidRoles.superAdmin)
+  @Post(':id/suspend')
+  suspendEmpresa(
+    @Param('id', ParseMongoIdPipe) id: string,
+    @Body() dto: SuspendEmpresaDto,
+  ) {
+    return this.empresaService.suspendEmpresa(
+      id,
+      dto.reason ?? AccessSuspendedReason.PAYMENT,
+    );
+  }
+
+  @Auth(ValidRoles.superAdmin)
+  @Post(':id/unsuspend')
+  unsuspendEmpresa(
+    @Param('id', ParseMongoIdPipe) id: string,
+    @Query('markPaid') markPaid?: string,
+  ) {
+    const paid =
+      markPaid === '1' || markPaid === 'true' || markPaid === 'yes';
+    return this.empresaService.unsuspendEmpresa(id, paid);
+  }
+
+  @Auth(ValidRoles.admin, ValidRoles.superAdmin)
+  @Patch(':id/mora-config')
+  updateMoraConfig(
+    @GetUser() user: any,
+    @Param('id', ParseMongoIdPipe) id: string,
+    @Body() dto: UpdateMoraConfigDto,
+  ) {
+    this.empresaService.assertCanAccessEmpresa(user, id);
+    return this.empresaService.updateMoraConfig(id, dto);
+  }
+
+  /**
+   * Detalle de empresa por id.
+   * SUPERADMIN no tiene user.empresa: no hacer toString() sobre ella.
+   */
+  @Auth()
+  @Get(':id')
+  findById(
+    @GetUser() user: any,
+    @Param('id', ParseMongoIdPipe) id: string,
+  ) {
+    this.empresaService.assertCanAccessEmpresa(user, id);
+    return this.empresaService.getEmpresaById(id);
+  }
+
+  @Auth(ValidRoles.superAdmin)
+  @Delete(':id')
+  remove(@Param('id', ParseMongoIdPipe) id: string) {
+    return this.empresaService.remove(id);
   }
 }

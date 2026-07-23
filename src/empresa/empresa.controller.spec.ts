@@ -43,6 +43,7 @@ describe('EmpresaController', () => {
   };
 
   beforeEach(async () => {
+    jest.clearAllMocks();
     const module: TestingModule = await Test.createTestingModule({
       controllers: [EmpresaController],
       providers: [
@@ -109,6 +110,30 @@ describe('EmpresaController', () => {
 
       expect(await controller.findOne(mockUser)).toBe(result);
       expect(mockEmpresaService.findRutasByEmpresa).toHaveBeenCalledWith(mockUser.empresa);
+    });
+
+    it('SUPERADMIN sin empresa no hace toString y retorna vacío', async () => {
+      const sa = { rol: 'SUPERADMIN' };
+      const result = await controller.findOne(sa);
+      expect(result).toEqual({
+        id: null,
+        name: null,
+        rutas: [],
+        employes: [],
+      });
+      expect(mockEmpresaService.findRutasByEmpresa).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('findById', () => {
+    it('SUPERADMIN sin empresa puede ver detalle por id', async () => {
+      const sa = { rol: 'SUPERADMIN' };
+      const empresa = { id: 'emp1', name: 'Test' };
+      mockEmpresaService.getEmpresaById.mockResolvedValue(empresa);
+
+      expect(await controller.findById(sa, 'emp1')).toBe(empresa);
+      expect(mockEmpresaService.assertCanAccessEmpresa).toHaveBeenCalledWith(sa, 'emp1');
+      expect(mockEmpresaService.getEmpresaById).toHaveBeenCalledWith('emp1');
     });
   });
 
