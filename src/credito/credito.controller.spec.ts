@@ -13,6 +13,8 @@ jest.mock('src/common/ownership', () => ({
   RutaOwnership: () => jest.fn(),
   RutaOwnershipService: jest.fn().mockImplementation(() => ({
     resolveRutaId: jest.fn().mockResolvedValue('rutaId'),
+    toId: (v: any) => (v == null || v === '' ? null : String(v)),
+    assertCanAccessRuta: jest.fn().mockResolvedValue(undefined),
   })),
 }));
 
@@ -29,6 +31,8 @@ describe('CreditoController', () => {
 
   const mockOwnershipService = {
     resolveRutaId: jest.fn().mockResolvedValue('rutaId'),
+    toId: (v: any) => (v == null || v === '' ? null : String(v)),
+    assertCanAccessRuta: jest.fn().mockResolvedValue(undefined),
   };
 
   const mockUser: GetUserDto = {

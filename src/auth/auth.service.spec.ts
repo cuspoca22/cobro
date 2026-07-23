@@ -208,3 +208,100 @@ describe('AuthService.updateProfile', () => {
     );
   });
 });
+
+describe('AuthService.deleteUser', () => {
+  let service: AuthService;
+  let mockUserModel: {
+    findById: jest.Mock;
+    findByIdAndDelete: jest.Mock;
+  };
+  let mockEmpresaService: { pullEmploye: jest.Mock };
+
+  const userId = new Types.ObjectId().toString();
+  const empresaId = new Types.ObjectId().toString();
+
+  beforeEach(async () => {
+    mockUserModel = {
+      findById: jest.fn(),
+      findByIdAndDelete: jest.fn(),
+    };
+    mockEmpresaService = {
+      pullEmploye: jest.fn().mockResolvedValue(undefined),
+    };
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        AuthService,
+        { provide: getModelToken(User.name), useValue: mockUserModel },
+        { provide: getModelToken(LogAuth.name), useValue: {} },
+        { provide: JwtService, useValue: { sign: jest.fn() } },
+        { provide: CajaDayCheckService, useValue: {} },
+        { provide: EmpresaService, useValue: mockEmpresaService },
+      ],
+    }).compile();
+
+    service = module.get(AuthService);
+  });
+
+  it('hace pullEmploye y borra el usuario', async () => {
+    mockUserModel.findById.mockReturnValue({
+      select: jest.fn().mockResolvedValue({
+        _id: new Types.ObjectId(userId),
+        empresa: new Types.ObjectId(empresaId),
+      }),
+    });
+    mockUserModel.findByIdAndDelete.mockResolvedValue({ _id: userId });
+
+    const result = await service.deleteUser(userId);
+
+    expect(mockEmpresaService.pullEmploye).toHaveBeenCalledWith(empresaId, userId);
+    expect(mockUserModel.findByIdAndDelete).toHaveBeenCalledWith(userId);
+    expect(result).toEqual({ ok: true, id: userId });
+  });
+
+  it('borra el usuario aunque pullEmploye falle', async () => {
+    mockUserModel.findById.mockReturnValue({
+      select: jest.fn().mockResolvedValue({
+        _id: new Types.ObjectId(userId),
+        empresa: new Types.ObjectId(empresaId),
+      }),
+    });
+    mockEmpresaService.pullEmploye.mockRejectedValue(new Error('empresa gone'));
+    mockUserModel.findByIdAndDelete.mockResolvedValue({ _id: userId });
+
+    const result = await service.deleteUser(userId);
+
+    expect(mockUserModel.findByIdAndDelete).toHaveBeenCalledWith(userId);
+    expect(result).toEqual({ ok: true, id: userId });
+  });
+
+  it('no llama pullEmploye si el usuario no tiene empresa', async () => {
+    mockUserModel.findById.mockReturnValue({
+      select: jest.fn().mockResolvedValue({
+        _id: new Types.ObjectId(userId),
+        empresa: null,
+      }),
+    });
+    mockUserModel.findByIdAndDelete.mockResolvedValue({ _id: userId });
+
+    await service.deleteUser(userId);
+
+    expect(mockEmpresaService.pullEmploye).not.toHaveBeenCalled();
+    expect(mockUserModel.findByIdAndDelete).toHaveBeenCalledWith(userId);
+  });
+
+  it('lanza NotFoundException si el usuario no existe', async () => {
+    mockUserModel.findById.mockReturnValue({
+      select: jest.fn().mockResolvedValue(null),
+    });
+
+    await expect(service.deleteUser(userId)).rejects.toThrow(NotFoundException);
+    expect(mockUserModel.findByIdAndDelete).not.toHaveBeenCalled();
+  });
+
+  it('rechaza id inválido', async () => {
+    await expect(service.deleteUser('no-es-objectid')).rejects.toThrow(
+      BadRequestException,
+    );
+  });
+});

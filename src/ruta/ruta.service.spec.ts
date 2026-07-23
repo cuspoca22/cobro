@@ -43,6 +43,9 @@ describe('RutaService', () => {
 
     mockConnection = {
       startSession: jest.fn().mockResolvedValue(mockSession),
+      collection: jest.fn().mockReturnValue({
+        deleteMany: jest.fn().mockResolvedValue({ deletedCount: 0 }),
+      }),
     };
 
     mockRutaModel = {
@@ -84,6 +87,7 @@ describe('RutaService', () => {
       findOne: jest.fn(),
       findOneByRuta: jest.fn().mockResolvedValue(null),
       unsetRuta: jest.fn(),
+      clearAssignmentsToRuta: jest.fn(),
     };
 
     mockEmpresaService = {
@@ -565,6 +569,77 @@ describe('RutaService', () => {
       mockRutaModel.findById.mockResolvedValue(null);
 
       await expect(service.actualizarRuta(rutaId)).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('delete', () => {
+    const rutaId = new Types.ObjectId().toString();
+    const empresaId = new Types.ObjectId();
+
+    it('ejecuta cascada completa y limpia asignaciones', async () => {
+      const mockRuta = {
+        _id: new Types.ObjectId(rutaId),
+        empresa: empresaId,
+      };
+      const deleteMany = jest.fn().mockResolvedValue({ deletedCount: 1 });
+
+      mockRutaModel.findById.mockReturnValue({
+        session: jest.fn().mockResolvedValue(mockRuta),
+      });
+      mockRutaModel.findByIdAndDelete.mockReturnValue({
+        session: jest.fn().mockResolvedValue(mockRuta),
+      });
+      mockConnection.collection.mockReturnValue({ deleteMany });
+      mockMovimientoCajaService.deleteManyByRuta.mockResolvedValue(undefined);
+      mockCreditoService.deleteManyByRuta.mockResolvedValue(undefined);
+      mockClienteService.deleteManyByRuta.mockResolvedValue(undefined);
+      mockCajaService.deleteManyByRuta.mockResolvedValue(undefined);
+      mockAuthService.clearAssignmentsToRuta.mockResolvedValue(undefined);
+      mockEmpresaService.pullRuta.mockResolvedValue(undefined);
+
+      const result = await service.delete(rutaId);
+
+      expect(result).toBe(true);
+      expect(mockMovimientoCajaService.deleteManyByRuta).toHaveBeenCalledWith(rutaId, mockSession);
+      expect(mockCreditoService.deleteManyByRuta).toHaveBeenCalledWith(rutaId, mockSession);
+      expect(mockClienteService.deleteManyByRuta).toHaveBeenCalledWith(rutaId, mockSession);
+      expect(mockCajaService.deleteManyByRuta).toHaveBeenCalledWith(rutaId, mockSession);
+      expect(mockConnection.collection).toHaveBeenCalledWith('Peticiones');
+      expect(mockConnection.collection).toHaveBeenCalledWith('cobrador_tracking');
+      expect(mockAuthService.clearAssignmentsToRuta).toHaveBeenCalledWith(rutaId, mockSession);
+      expect(mockEmpresaService.pullRuta).toHaveBeenCalledWith(empresaId, mockRuta._id, mockSession);
+      expect(mockSession.commitTransaction).toHaveBeenCalled();
+      expect(mockSession.endSession).toHaveBeenCalled();
+    });
+
+    it('lanza NotFoundException si la ruta no existe', async () => {
+      mockRutaModel.findById.mockReturnValue({
+        session: jest.fn().mockResolvedValue(null),
+      });
+
+      await expect(service.delete(rutaId)).rejects.toThrow(NotFoundException);
+      expect(mockSession.abortTransaction).toHaveBeenCalled();
+      expect(mockSession.endSession).toHaveBeenCalled();
+    });
+
+    it('no llama pullRuta si la ruta no tiene empresa', async () => {
+      const mockRuta = { _id: new Types.ObjectId(rutaId), empresa: null };
+      mockRutaModel.findById.mockReturnValue({
+        session: jest.fn().mockResolvedValue(mockRuta),
+      });
+      mockRutaModel.findByIdAndDelete.mockReturnValue({
+        session: jest.fn().mockResolvedValue(mockRuta),
+      });
+      mockMovimientoCajaService.deleteManyByRuta.mockResolvedValue(undefined);
+      mockCreditoService.deleteManyByRuta.mockResolvedValue(undefined);
+      mockClienteService.deleteManyByRuta.mockResolvedValue(undefined);
+      mockCajaService.deleteManyByRuta.mockResolvedValue(undefined);
+      mockAuthService.clearAssignmentsToRuta.mockResolvedValue(undefined);
+
+      await service.delete(rutaId);
+
+      expect(mockEmpresaService.pullRuta).not.toHaveBeenCalled();
+      expect(mockAuthService.clearAssignmentsToRuta).toHaveBeenCalled();
     });
   });
 });

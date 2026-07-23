@@ -27,6 +27,10 @@ describe('EmpresaController', () => {
     addRuta: jest.fn(),
     addOwner: jest.fn(),
     remove: jest.fn(),
+    assertCanAccessEmpresa: jest.fn(),
+    moveEmpleado: jest.fn(),
+    moveRuta: jest.fn(),
+    assignRuta: jest.fn(),
   };
 
   const mockUser = {
@@ -79,7 +83,7 @@ describe('EmpresaController', () => {
       const result = [];
       mockEmpresaService.findAll.mockResolvedValue(result);
 
-      expect(await controller.findAll(empresaId)).toBe(result);
+      expect(await controller.findAll(mockUser, empresaId)).toBe(result);
       expect(mockEmpresaService.findAll).toHaveBeenCalledWith(empresaId);
     });
   });
@@ -111,7 +115,7 @@ describe('EmpresaController', () => {
       const result = true;
       mockEmpresaService.update.mockResolvedValue(result);
 
-      expect(await controller.update(id, dto)).toBe(result);
+      expect(await controller.update(mockUser, id, dto)).toBe(result);
       expect(mockEmpresaService.update).toHaveBeenCalledWith(id, dto);
     });
   });
@@ -127,8 +131,19 @@ describe('EmpresaController', () => {
       const result = true;
       mockEmpresaService.addEmploye.mockResolvedValue(result);
 
-      expect(await controller.addEmploye(dto)).toBe(result);
-      expect(mockEmpresaService.addEmploye).toHaveBeenCalledWith(dto);
+      expect(await controller.addEmploye(mockUser, dto)).toBe(result);
+      expect(mockEmpresaService.addEmploye).toHaveBeenCalledWith(dto, mockUser);
+    });
+  });
+
+  describe('assignRuta', () => {
+    it('delega al service assignRuta', async () => {
+      const dto = { rutaId: 'ruta1', empresaId: 'emp1' };
+      const result = { message: 'Ruta asignada a la empresa' };
+      mockEmpresaService.assignRuta.mockResolvedValue(result);
+
+      expect(await controller.assignRuta(dto)).toBe(result);
+      expect(mockEmpresaService.assignRuta).toHaveBeenCalledWith(dto);
     });
   });
 });
