@@ -1,0 +1,63 @@
+---
+description: V4b — fronteras de módulos Nest/Mongoose (sin forFeature/InjectModel ajenos ni ciclos nuevos)
+globs: src/**/*.ts
+alwaysApply: false
+---
+
+# V4b — fronteras de módulos (api-final)
+
+## Reglas
+
+1. Cada `*.module.ts` solo hace `MongooseModule.forFeature` de **sus** schemas.
+2. Nunca `@InjectModel(SchemaAjeno)` fuera del módulo dueño. Usa el **Service del dueño**.
+3. Side-effects entre dominios (p. ej. Empresa → Announcement): **eventos** (`AppEventBus`), no `ModuleRef` ni import cruzado.
+4. `forwardRef` solo para ciclos Nest ya conocidos; no crear ciclos nuevos de módulos.
+5. Excepción documentada: `CajaDayCheckModule` (lectura Caja liviana para Auth.login).
+
+## Dueños
+
+| Schema | Dueño | Acceso externo |
+|--------|--------|----------------|
+| User, LogAuth | AuthModule | AuthService |
+| Empresa | EmpresaModule | EmpresaService |
+| Ruta | RutaModule | RutaService |
+| Caja | CajaModule | CajaService / CajaDayCheckService |
+| Cliente | ClienteModule | ClienteService |
+| Credito, MoraAplicacion | CreditoModule | CreditoService |
+| MovimientoCaja | MovimientoCajaModule | MovimientoCajaService |
+| Announcement* | AnnouncementModule | AnnouncementService / eventos |
+| CobradorTracking | TrackingModule | TrackingService |
+
+## Ejemplos
+
+```typescript
+// ❌ BAD — Tracking registra User/Ruta ajenos
+MongooseModule.forFeature([
+  { name: User.name, schema: UserSchema },
+  { name: Ruta.name, schema: RutaSchema },
+]);
+
+// ✅ GOOD — solo lo propio; User/Ruta vía services
+MongooseModule.forFeature([
+  { name: CobradorTracking.name, schema: CobradorTrackingSchema },
+]);
+```
+
+```typescript
+// ❌ BAD
+@InjectModel(Empresa.name) private empresaModel: Model<Empresa>
+
+// ✅ GOOD
+constructor(private readonly empresaService: EmpresaService) {}
+await this.empresaService.isAccessSuspended(empresaId);
+```
+
+```typescript
+// ❌ BAD — Empresa importa AnnouncementModule
+imports: [AnnouncementModule]
+
+// ✅ GOOD — Empresa emite; Announcement escucha
+this.events.emit(SUBSCRIPTION_PAYMENT_DUE, payload);
+```
+
+Si falta un método en el service dueño, **añádelo ahí** (API lean/comando) en lugar de reabrir el schema ajeno.
