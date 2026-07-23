@@ -1,12 +1,12 @@
 import { Request } from 'express';
-import { Injectable, UnauthorizedException, Logger, BadRequestException, InternalServerErrorException, NotFoundException, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, UnauthorizedException, Logger, BadRequestException, InternalServerErrorException, NotFoundException, Inject, forwardRef, ForbiddenException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { ClientSession, Model, Types, isValidObjectId } from 'mongoose';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from "bcrypt";
 
 import { CreateUserDto, GetUserDto, LoginDto, LoginResponseDto, UpdateProfileDto } from './dto';
-import { JwtPayload } from './interfaces';
+import { JwtPayload, ValidRoles } from './interfaces';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { LogAuth } from 'src/log-auth/entities/log-auth.entity';
 import { User } from './schemas/user.schema';
@@ -34,7 +34,14 @@ export class AuthService {
       private readonly empresaService: EmpresaService,
    ) { }
 
-   async create(createUserDto: CreateUserDto): Promise<User> {
+   async create(createUserDto: CreateUserDto, actor?: { rol?: string }): Promise<User> {
+
+      if (
+         createUserDto.rol === ValidRoles.superAdmin &&
+         actor?.rol !== ValidRoles.superAdmin
+      ) {
+         throw new ForbiddenException('Solo un SUPERADMIN puede crear usuarios SUPERADMIN');
+      }
 
       try {
          const payload = this.normalizeRoleAssignment({ ...createUserDto });
@@ -171,24 +178,28 @@ export class AuthService {
 
    }
 
-   async findAll(user: UserEntity, have_empresa: boolean = true) {
-      if (!have_empresa) {
-         return this.userModel.find({
-            empresa: { $in: [null, undefined] }
-         })
+   async findAll(user: UserEntity, empresaId?: string) {
+      const filter: Record<string, any> = {};
+
+      if (user.rol === ValidRoles.superAdmin) {
+         if (empresaId) {
+            filter.empresa = empresaId;
+         }
+      } else {
+         const userEmpresa =
+            (user.empresa as any)?.toString?.() ?? user.empresa?.toString?.() ?? user.empresa;
+         if (!userEmpresa) {
+            return [];
+         }
+         filter.empresa = userEmpresa;
       }
 
-      let empleados = [];
+      const users = await this.userModel
+         .find(filter)
+         .select('-password')
+         .populate(['ruta', 'rutas', 'empresa']);
 
-      // for (const ruta of user.rutas) {
-      //    let consulta = await this.userModel.find({ ruta: ruta._id });
-
-      //    empleados.push(...consulta)
-      // }
-
-      const users = await this.userModel.find();
-      return users.filter(userDb => userDb._id.toString() !== user.id.toString());
-
+      return users.filter((userDb) => userDb._id.toString() !== user.id?.toString());
    }
 
    async findOne(termino: string) {
@@ -269,12 +280,19 @@ export class AuthService {
       }
    }
 
-   async update(id: string, updateUserDto: UpdateUserDto) {
+   async update(id: string, updateUserDto: UpdateUserDto, actor?: { rol?: string }) {
 
       const user = await this.userModel.findById(id)
 
       if (!user) {
          throw new NotFoundException(`No existe un usuario con el id ${id}`)
+      }
+
+      if (
+         (updateUserDto.rol === ValidRoles.superAdmin || user.rol === ValidRoles.superAdmin) &&
+         actor?.rol !== ValidRoles.superAdmin
+      ) {
+         throw new ForbiddenException('Solo un SUPERADMIN puede crear o modificar usuarios SUPERADMIN');
       }
 
 
@@ -363,26 +381,64 @@ export class AuthService {
       };
    }
 
-   public async deleteUser(id: string): Promise<string> {
+   public async deleteUser(id: string): Promise<{ ok: true; id: string }> {
+      if (!isValidObjectId(id)) {
+         throw new BadRequestException('Id de usuario inválido');
+      }
+
       try {
-         const user = await this.userModel.findById(id);
+         const user = await this.userModel.findById(id).select('_id empresa');
          if (!user) {
             throw new NotFoundException(`Usuario con id ${id} no existe`);
          }
 
-         // FIX [P1 dual-refs]: $pull de Empresa.employes (vía EmpresaService)
-         if (user.empresa) {
-            await this.empresaService.pullEmploye(user.empresa, user._id);
+         const empresaId = user.empresa ? user.empresa.toString() : null;
+         if (empresaId && isValidObjectId(empresaId)) {
+            try {
+               await this.empresaService.pullEmploye(empresaId, id);
+            } catch (pullErr: any) {
+               // Empresa ya borrada o refs rotas: no bloquear el delete del usuario
+               this.logger.warn(
+                  `pullEmploye omitido al borrar user ${id}: ${pullErr?.message || pullErr}`,
+               );
+            }
          }
 
-         await this.userModel.findByIdAndDelete(id);
-         return id;
+         const deleted = await this.userModel.findByIdAndDelete(id);
+         if (!deleted) {
+            throw new NotFoundException(`Usuario con id ${id} no existe`);
+         }
 
+         return { ok: true, id };
       } catch (error) {
-
-         this.handleExceptions(error)
-
+         this.handleExceptions(error);
       }
+   }
+
+   /**
+    * Borrado masivo de usuarios de una empresa (cascada de empresa.remove).
+    * No toca SUPERADMIN. No hace $pull (la empresa se elimina después).
+    */
+   async deleteManyByEmpresa(
+      empresaId: string,
+      employeIds: Array<string | Types.ObjectId> = [],
+   ): Promise<number> {
+      const oid = new Types.ObjectId(empresaId);
+      const extraIds = (employeIds || [])
+         .map((e) => e?.toString())
+         .filter(Boolean)
+         .map((id) => new Types.ObjectId(id));
+
+      const filter: Record<string, unknown> = {
+         rol: { $ne: ValidRoles.superAdmin },
+         $or: [{ empresa: oid }],
+      };
+      if (extraIds.length > 0) {
+         (filter.$or as unknown[]).push({ _id: { $in: extraIds } });
+      }
+
+      const result = await this.userModel.deleteMany(filter);
+      return result.deletedCount || 0;
    }
 
    /** Ruta.delete: localizar cobrador asignado a la ruta. */
@@ -426,6 +482,75 @@ export class AuthService {
       };
    }
 
+   async findByIdForMove(
+      id: string,
+   ): Promise<{ _id: string; empresa?: string | null; rol?: string } | null> {
+      const user = await this.userModel.findById(id).select('empresa rol').lean();
+      if (!user) return null;
+      return {
+         _id: user._id.toString(),
+         empresa: user.empresa ? user.empresa.toString() : null,
+         rol: user.rol,
+      };
+   }
+
+   async reassignToEmpresa(
+      userId: string,
+      toEmpresaId: string,
+      opts: { rutaId?: string | null } = {},
+      session?: ClientSession,
+   ): Promise<void> {
+      const user = await this.userModel.findById(userId).session(session || null);
+      if (!user) {
+         throw new NotFoundException(`Usuario con id ${userId} no existe`);
+      }
+
+      user.empresa = new Types.ObjectId(toEmpresaId) as any;
+
+      if (user.rol === ValidRoles.cobrador) {
+         user.ruta = opts.rutaId
+            ? (new Types.ObjectId(opts.rutaId) as any)
+            : (null as any);
+         user.rutas = [];
+      } else if (user.rol === ValidRoles.supervisor) {
+         user.ruta = null as any;
+         if (opts.rutaId) {
+            user.rutas = [new Types.ObjectId(opts.rutaId) as any];
+         } else {
+            user.rutas = [];
+         }
+      } else {
+         user.ruta = null as any;
+         user.rutas = [];
+      }
+
+      await user.save({ session: session || undefined });
+   }
+
+   async clearAssignmentsToRuta(
+      rutaId: string,
+      session?: ClientSession,
+   ): Promise<void> {
+      const oid = new Types.ObjectId(rutaId);
+      const sessionOpt = { session: session || undefined };
+      // Match ObjectId o string por si hay docs legacy; $unset evita ruta: null
+      await this.userModel.updateMany(
+         { $or: [{ ruta: oid }, { ruta: rutaId }] },
+         { $unset: { ruta: 1 } },
+         sessionOpt,
+      );
+      await this.userModel.updateMany(
+         { rutas: oid },
+         { $pull: { rutas: oid } },
+         sessionOpt,
+      );
+      await this.userModel.updateMany(
+         { rutas: rutaId },
+         { $pull: { rutas: rutaId } },
+         sessionOpt,
+      );
+   }
+
    async deleteById(id: string, session?: ClientSession): Promise<void> {
       await this.userModel.findByIdAndDelete(id).session(session || null);
    }
@@ -456,8 +581,12 @@ export class AuthService {
          throw new BadRequestException(`Ya existe un usuario ${JSON.stringify(error.keyValue)}`);
       }
 
+      if (error?.status && error?.response) {
+         throw error;
+      }
+
       this.logger.error(error);
-      throw new InternalServerErrorException("Revisar el console.log")
+      throw new InternalServerErrorException("Revisar los logs")
    }
 
 }

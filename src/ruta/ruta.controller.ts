@@ -26,7 +26,13 @@ export class RutaController {
   async findAll(
     @GetUser() user: UserEntity
   ) {
-    return this.rutaService.findAll();
+    if (user.rol === ValidRoles.superAdmin) {
+      return this.rutaService.findAll();
+    }
+    const empresaId =
+      (user.empresa as any)?.toString?.() ?? user.empresa?.toString?.() ?? user.empresa;
+    if (!empresaId) return [];
+    return this.rutaService.findAllByEmpresa(String(empresaId));
   }
 
   // open/close ANTES de :id para no capturar "open"/"close" como ObjectId

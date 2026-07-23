@@ -981,8 +981,19 @@ export class CreditoService {
     return this.getCreditoById(credito._id.toString(), rutaId, session);
   }
 
-  /** Conteos / borrado usados por RutaService */
+  /** Conteos / borrado usados por RutaService (incluye mora ligada a créditos). */
   async deleteManyByRuta(rutaId: string, session: ClientSession): Promise<void> {
+    const creditos = await this.creditoModel
+      .find({ ruta: rutaId })
+      .select('_id')
+      .session(session)
+      .lean();
+    const creditoIds = creditos.map((c) => c._id);
+    if (creditoIds.length > 0) {
+      await this.moraAplicacionModel
+        .deleteMany({ credito: { $in: creditoIds } })
+        .session(session);
+    }
     await this.creditoModel.deleteMany({ ruta: rutaId }).session(session);
   }
 

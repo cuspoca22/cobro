@@ -1,4 +1,4 @@
-import { Body, Controller, Post, Param, Get, Patch, Delete, Query, ParseBoolPipe, Req } from '@nestjs/common';
+import { Body, Controller, Post, Param, Get, Patch, Delete, Query, Req } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { LoginDto, UpdateUserDto, UpdateProfileDto, CreateUserDto, GetUserDto } from './dto';
 import { Auth, GetUser } from './decorators';
@@ -14,8 +14,9 @@ export class AuthController {
   @Post("new-user")
   async create(
     @Body() createUserDto: CreateUserDto,
+    @GetUser() actor: UserEntity,
   ){
-    return this.authService.create(createUserDto)
+    return this.authService.create(createUserDto, actor)
   }
 
   @Post("login")
@@ -26,13 +27,17 @@ export class AuthController {
     return this.authService.login(loginDto, request);
   }
 
-  @Auth()
+  @Auth(ValidRoles.admin, ValidRoles.superAdmin, ValidRoles.supervisor)
   @Get("users")
   async findAll(
     @GetUser() user: UserEntity,
-    // @Query('have_empresa', ParseBoolPipe) have_empresa: boolean,
+    @Query('empresaId') empresaId?: string,
   ) {
-    return this.authService.findAll(user)
+    const filterEmpresa =
+      empresaId && user.rol === ValidRoles.superAdmin
+        ? empresaId
+        : undefined;
+    return this.authService.findAll(user, filterEmpresa)
   }
 
   @Auth()
@@ -65,9 +70,10 @@ export class AuthController {
   @Patch("update-user/:id")
   async update(
     @Param("id") id: string,
-    @Body() updateUserDto: UpdateUserDto
+    @Body() updateUserDto: UpdateUserDto,
+    @GetUser() actor: UserEntity,
   ) {
-    return this.authService.update(id, updateUserDto)
+    return this.authService.update(id, updateUserDto, actor)
   }
 
   @Auth(ValidRoles.admin, ValidRoles.superAdmin)

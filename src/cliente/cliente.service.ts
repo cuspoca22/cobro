@@ -91,10 +91,25 @@ export class ClienteService {
   }
 
   async remove(id: string) {
-    const client = await this.findOne(id);
-    // await client.updateOne({ state: false }, { returnDocument: 'after' });
+    const cliente = await this.clienteModel.findById(id);
+    if (!cliente) {
+      throw new NotFoundException('No existe el cliente');
+    }
 
-    return true;
+    const rutaId = cliente.ruta?.toString();
+    if (!rutaId) {
+      throw new BadRequestException('El cliente no tiene ruta asociada');
+    }
+
+    const activeCredito = await this.creditoService.getActiveCreditoForCliente(id, rutaId);
+    if (activeCredito) {
+      throw new BadRequestException(
+        'No se puede eliminar el cliente: tiene un crédito activo. Elimina o salda el crédito primero.',
+      );
+    }
+
+    await this.clienteModel.findByIdAndDelete(id);
+    return { message: 'Cliente eliminado', id };
   }
 
   // --- APIs para otros módulos (Vertical 1 / 4) ---

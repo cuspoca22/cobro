@@ -353,6 +353,53 @@ export class CajaService {
     await this.cajaModel.deleteMany({ ruta: rutaId }).session(session);
   }
 
+  /** SUPERADMIN: edita campos whitelist de una caja. */
+  async updateById(id: string, dto: {
+    base?: number;
+    inversion?: number;
+    retiro?: number;
+    gasto?: number;
+  }): Promise<CajaEntity> {
+    const caja = await this.cajaModel.findById(id);
+    if (!caja) {
+      throw new NotFoundException(`Caja con el id ${id} no existe`);
+    }
+
+    const patch: Record<string, number> = {};
+    if (dto.base !== undefined) patch.base = dto.base;
+    if (dto.inversion !== undefined) patch.inversion = dto.inversion;
+    if (dto.retiro !== undefined) patch.retiro = dto.retiro;
+    if (dto.gasto !== undefined) patch.gasto = dto.gasto;
+
+    if (Object.keys(patch).length === 0) {
+      throw new BadRequestException('No hay campos para actualizar');
+    }
+
+    Object.assign(caja, patch);
+    // Recalcular caja_final con campos conocidos: base + cobro + inversion - retiro - gasto - prestamo (heurística existente)
+    caja.caja_final =
+      Number(caja.base || 0) +
+      Number(caja.cobro || 0) +
+      Number(caja.inversion || 0) -
+      Number(caja.retiro || 0) -
+      Number(caja.gasto || 0) -
+      Number(caja.prestamo || 0);
+
+    await caja.save();
+    return CajaEntity.fromObject(caja);
+  }
+
+  async getRutaIdByCajaId(
+    cajaId: string,
+  ): Promise<{ exists: false } | { exists: true; rutaId: string | null }> {
+    const caja = await this.cajaModel.findById(cajaId).select('ruta').lean();
+    if (!caja) return { exists: false };
+    return {
+      exists: true,
+      rutaId: caja.ruta ? caja.ruta.toString() : null,
+    };
+  }
+
   /** Busca la caja de una ruta en una fecha exacta (inicio de día UTC/TZ). */
   async findByRutaAndFecha(
     rutaId: string,

@@ -235,7 +235,11 @@ export class MovimientoCajaService {
 
   }
 
-  async updateCredito(creditoId: string, updateCreditoDto: UpdateCreditoDto) {
+  async updateCredito(
+    creditoId: string,
+    updateCreditoDto: UpdateCreditoDto,
+    opts: { bypassDayCheck?: boolean } = {},
+  ) {
     const session = await this.connection.startSession();
     session.startTransaction();
 
@@ -256,12 +260,14 @@ export class MovimientoCajaService {
         throw new BadRequestException('El movimiento de préstamo no tiene ruta asociada');
       }
 
-      await this.assertMovimientoEsDeHoy(
-        movimiento.fecha,
-        rutaId,
-        'Solo se pueden actualizar créditos o renovaciones del día de hoy',
-        session,
-      );
+      if (!opts.bypassDayCheck) {
+        await this.assertMovimientoEsDeHoy(
+          movimiento.fecha,
+          rutaId,
+          'Solo se pueden actualizar créditos o renovaciones del día de hoy',
+          session,
+        );
+      }
 
       const updateMovimiento = await this.cajaMovimientoModel.findOneAndUpdate(
         { _id: movimiento._id },
@@ -286,7 +292,11 @@ export class MovimientoCajaService {
     }
   }
 
-  async deleteCredito(creditoId: string, movimientoId: string) {
+  async deleteCredito(
+    creditoId: string,
+    movimientoId: string,
+    opts: { bypassDayCheck?: boolean } = {},
+  ) {
     return this.transactionHelper.withTransaction(async (session) => {
       const movimiento = await this.cajaMovimientoModel
         .findById(movimientoId)
@@ -301,12 +311,14 @@ export class MovimientoCajaService {
         throw new BadRequestException('El movimiento no tiene ruta asociada');
       }
 
-      await this.assertMovimientoEsDeHoy(
-        movimiento.fecha,
-        rutaId,
-        'Solo se pueden eliminar créditos o renovaciones del día de hoy',
-        session,
-      );
+      if (!opts.bypassDayCheck) {
+        await this.assertMovimientoEsDeHoy(
+          movimiento.fecha,
+          rutaId,
+          'Solo se pueden eliminar créditos o renovaciones del día de hoy',
+          session,
+        );
+      }
 
       const deleteMovimiento = await this.cajaMovimientoModel.findByIdAndDelete(
         movimientoId,
@@ -320,6 +332,17 @@ export class MovimientoCajaService {
 
       return true;
     }, 'MovimientoCajaService.deleteCredito');
+  }
+
+  async deleteCreditoAsSuperAdmin(creditoId: string) {
+    const movimiento = await this.cajaMovimientoModel.findOne({
+      credito: new mongoose.Types.ObjectId(creditoId),
+      subTipo: SubTipo.PRESTAMO,
+    });
+    if (!movimiento) {
+      throw new NotFoundException(`No hay movimiento PRESTAMO para el crédito ${creditoId}`);
+    }
+    return this.deleteCredito(creditoId, movimiento._id.toString(), { bypassDayCheck: true });
   }
 
   async updatePago(movimientoId: string, updateMovimientoCajaDto: UpdateMovimientoCajaDto) {

@@ -128,8 +128,11 @@ export class MovimientoCajaController {
   async updateCredito(
     @Body() updateCreditoDto: UpdateCreditoDto,
     @Param('creditoId', ParseMongoIdPipe) creditoId: string,
+    @GetUser() user: UserEntity,
   ) {
-    return this.movimientoCajaService.updateCredito(creditoId, updateCreditoDto);
+    return this.movimientoCajaService.updateCredito(creditoId, updateCreditoDto, {
+      bypassDayCheck: user.rol === ValidRoles.superAdmin,
+    });
   }
 
   @RutaAbierta()
@@ -142,8 +145,21 @@ export class MovimientoCajaController {
   async deleteCredito(
     @Param('creditoId', ParseMongoIdPipe) creditoId: string,
     @Param('movimientoId', ParseMongoIdPipe) movimientoId: string,
+    @GetUser() user: UserEntity,
   ) {
-    return this.movimientoCajaService.deleteCredito(creditoId, movimientoId);
+    return this.movimientoCajaService.deleteCredito(creditoId, movimientoId, {
+      bypassDayCheck: user.rol === ValidRoles.superAdmin,
+    });
+  }
+
+  /** SUPERADMIN: elimina crédito resolviendo el movimiento PRESTAMO asociado. */
+  @Auth(ValidRoles.superAdmin)
+  @RutaOwnership({ creditoId: { in: 'params', key: 'creditoId' } })
+  @Delete('delete-credito-sa/:creditoId')
+  async deleteCreditoSa(
+    @Param('creditoId', ParseMongoIdPipe) creditoId: string,
+  ) {
+    return this.movimientoCajaService.deleteCreditoAsSuperAdmin(creditoId);
   }
 
 }

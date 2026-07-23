@@ -218,6 +218,25 @@ export class RutaService {
 
   }
 
+  async setEmpresa(
+    rutaId: string,
+    empresaId: string,
+    session?: ClientSession,
+  ): Promise<void> {
+    const updated = await this.rutaModel.findByIdAndUpdate(
+      rutaId,
+      { empresa: new Types.ObjectId(empresaId) },
+      { session: session || undefined, new: true },
+    );
+    if (!updated) {
+      throw new NotFoundException(`La ruta con el id ${rutaId} no existe`);
+    }
+  }
+
+  async findAllByEmpresa(empresaId: string): Promise<Ruta[]> {
+    return this.rutaModel.find({ empresa: empresaId });
+  }
+
   async delete(id: string): Promise<boolean> {
     const session = await this.connection.startSession();
     session.startTransaction();
@@ -228,36 +247,44 @@ export class RutaService {
         throw new NotFoundException(`La ruta con el id ${id} no existe`);
       }
 
-      const user = await this.authService.findOneByRuta(id, session);
+      const rutaOid = new Types.ObjectId(id);
+      this.logger.log(`Iniciando eliminación en cascada de la ruta ${id}...`);
 
-      this.logger.log(`Iniciando eliminación de la ruta ${id} y sus dependencias...`);
-
-      // 1. Eliminar Movimientos de Caja relacionados a la ruta (Vertical 2)
+      // 1. Movimientos de caja
       await this.movimientoCajaService.deleteManyByRuta(id, session);
 
-      // 2–3. Créditos y clientes vía servicios dueños (Vertical 1)
+      // 2. Mora + créditos
       await this.creditoService.deleteManyByRuta(id, session);
+
+      // 3. Clientes
       await this.clienteService.deleteManyByRuta(id, session);
 
-      // 4. Eliminar Cajas relacionadas a la ruta
+      // 4. Cajas
       await this.cajaSvc.deleteManyByRuta(id, session);
 
-      // 5. Remover la ruta del perfil del usuario si existe
-      if (user) {
-        this.logger.log(`Limpiando referencia de ruta en el usuario ${user._id}`);
-        await this.authService.unsetRuta(user._id, session);
-      }
+      // 5. Peticiones de ubicación y tracking del cobrador
+      await this.connection.collection('Peticiones').deleteMany(
+        { id_ruta: rutaOid },
+        { session },
+      );
+      await this.connection.collection('cobrador_tracking').deleteMany(
+        { ruta: rutaOid },
+        { session },
+      );
 
-      // FIX [P1 dual-refs]: $pull del array Empresa.rutas
+      // 6. Desasignar cobradores/supervisores (ruta + rutas[])
+      await this.authService.clearAssignmentsToRuta(id, session);
+
+      // 7. Quitar de Empresa.rutas
       if (ruta.empresa) {
         await this.empresaService.pullRuta(ruta.empresa, ruta._id, session);
       }
 
-      // 6. Eliminar la Ruta
+      // 8. Documento ruta
       await this.rutaModel.findByIdAndDelete(id).session(session);
 
       await session.commitTransaction();
-      this.logger.log(`Ruta ${id} eliminada exitosamente junto con todos sus datos relacionados.`);
+      this.logger.log(`Ruta ${id} eliminada con cascada completa.`);
 
       return true;
 

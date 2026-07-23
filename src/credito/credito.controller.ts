@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query, BadRequestException } from '@nestjs/common';
 
 import { CreditoService } from './credito.service';
 import { Auth, GetUser } from '../auth/decorators';
@@ -17,12 +17,22 @@ export class CreditoController {
     private readonly ownershipService: RutaOwnershipService,
   ) { }
 
-  // Cobrador: su ruta. Admin con ruta asignada también.
+  // Cobrador: su ruta. Admin/SUPERADMIN pueden pasar ?rutaId=
   @Get('get-creditos-by-ruta')
   async getCreditosByRuta(
-    @GetUser() user: GetUserDto
+    @GetUser() user: GetUserDto,
+    @Query('rutaId') rutaId?: string,
   ) {
-    return await this.creditoService.getCreditosByRuta(user.ruta)
+    const resolved =
+      this.ownershipService.toId(rutaId) ||
+      this.ownershipService.toId(user.ruta);
+
+    if (!resolved) {
+      throw new BadRequestException('Se requiere rutaId o una ruta asignada al usuario');
+    }
+
+    await this.ownershipService.assertCanAccessRuta(user, resolved);
+    return await this.creditoService.getCreditosByRuta(resolved);
   }
 
   @RutaOwnership({ clienteId: { in: 'query', key: 'clienteId' } })
@@ -70,7 +80,6 @@ export class CreditoController {
   async findOne(
     @Param('creditId', ParseMongoIdPipe) creditId: string,
   ) {
-    // Usa la ruta real del crédito (admins sin user.ruta también funcionan)
     const rutaId = await this.ownershipService.resolveRutaId({ creditoId: creditId });
     return this.creditoService.getCreditoById(creditId, rutaId);
   }

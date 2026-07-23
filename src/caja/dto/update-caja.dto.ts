@@ -1,4 +1,23 @@
-import { PartialType } from '@nestjs/mapped-types';
-import { CreateCajaDto } from './create-caja.dto';
+import { IsNumber, IsOptional, Min } from 'class-validator';
 
-export class UpdateCajaDto extends PartialType(CreateCajaDto) {}
+/** Campos editables por SUPERADMIN (no recalcula cobro/préstamo derivados). */
+export class UpdateCajaDto {
+  @IsOptional()
+  @IsNumber()
+  base?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  inversion?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  retiro?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  gasto?: number;
+}

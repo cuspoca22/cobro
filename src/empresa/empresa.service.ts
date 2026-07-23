@@ -1,8 +1,10 @@
-import { Injectable, Logger, BadRequestException, InternalServerErrorException, NotFoundException, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException, InternalServerErrorException, NotFoundException, Inject, forwardRef, ForbiddenException } from '@nestjs/common';
 import { CreateEmpresaDto } from './dto/create-empresa.dto';
 import { UpdateEmpresaDto } from './dto/update-empresa.dto';
-import { InjectModel } from '@nestjs/mongoose';
-import { ClientSession, Model, Types } from 'mongoose';
+import { MoveEmpleadoDto } from './dto/move-empleado.dto';
+import { MoveRutaDto } from './dto/move-ruta.dto';
+import { InjectConnection, InjectModel } from '@nestjs/mongoose';
+import { ClientSession, Connection, Model, Types } from 'mongoose';
 
 import { Empresa } from './schemas/empresa.schema';
 import { RutaService } from '../ruta/ruta.service';
@@ -14,6 +16,7 @@ import { User } from 'src/auth/schemas/user.schema';
 import { EmpresaEntity } from './entities/empresa.entity';
 import { Ruta } from '../ruta/schema/ruta.schema';
 import { MessageGateway } from '../message/message.gateway';
+import { ValidRoles } from 'src/auth/interfaces';
 
 @Injectable()
 export class EmpresaService {
@@ -23,6 +26,9 @@ export class EmpresaService {
   constructor(
     @InjectModel(Empresa.name)
     private readonly empresaModel: Model<Empresa>,
+
+    @InjectConnection()
+    private readonly connection: Connection,
 
     @Inject(forwardRef(() => RutaService))
     private rutaSvc: RutaService,
@@ -34,6 +40,23 @@ export class EmpresaService {
     @Inject(forwardRef(() => MessageGateway))
     private readonly messageGateway: MessageGateway,
   ) { }
+
+  /** SUPERADMIN: cualquier empresa. Otros: solo la propia. */
+  assertCanAccessEmpresa(
+    user: { rol?: string; empresa?: unknown },
+    empresaId: string,
+  ): void {
+    if (user.rol === ValidRoles.superAdmin) return;
+    const userEmpresa =
+      user.empresa == null
+        ? null
+        : typeof user.empresa === 'object' && (user.empresa as any)._id
+          ? String((user.empresa as any)._id)
+          : String(user.empresa);
+    if (!userEmpresa || userEmpresa !== empresaId) {
+      throw new ForbiddenException('No tienes permiso para operar sobre esta empresa');
+    }
+  }
 
   async create(createEmpresaDto: CreateEmpresaDto) {
 
@@ -63,15 +86,10 @@ export class EmpresaService {
       return EmpresaEntity.fromObject(empresa);
 
     } catch (error) {
-      console.log(error)
       this.handleExceptions(error);
 
     }
 
-  }
-
-  mundo() {
-    this.findEmpresaWithRutasOpened().then(console.log)
   }
 
   async findEmpresaWithRutasOpened() {
@@ -147,6 +165,10 @@ export class EmpresaService {
       .populate('rutas')
       .populate('employes')
       .populate('owner')
+
+    if (!empresa) {
+      throw new NotFoundException(`Empresa con el id ${idEmpresa} no existe`);
+    }
 
     return EmpresaEntity.fromObject(empresa);
 
@@ -256,7 +278,7 @@ export class EmpresaService {
     };
   }
 
-  async addEmploye(userDto: CreateUserDto) {
+  async addEmploye(userDto: CreateUserDto, actor?: { rol?: string }) {
 
     try {
 
@@ -270,7 +292,7 @@ export class EmpresaService {
         ...(userDto.rutas || []),
       ]);
 
-      const empleado = await this.authSvc.create(userDto);
+      const empleado = await this.authSvc.create(userDto, actor);
 
       const existeEmpleado = (empresa.employes as User[]).some(e => e._id.equals(empleado._id));
 
@@ -397,10 +419,185 @@ export class EmpresaService {
 
   }
 
-  remove(id: number) {
-    return `This action removes a #${id} empresa`;
+  async remove(id: string): Promise<{ message: string }> {
+    const empresa = await this.empresaModel.findById(id);
+    if (!empresa) {
+      throw new NotFoundException(`Empresa con el id ${id} no existe`);
+    }
+
+    this.logger.log(`Iniciando eliminación en cascada de la empresa ${id}...`);
+
+    const rutaIds = new Set<string>();
+    for (const r of empresa.rutas || []) {
+      rutaIds.add(r.toString());
+    }
+    const rutasDb = await this.rutaSvc.findAllByEmpresa(id);
+    for (const r of rutasDb || []) {
+      rutaIds.add((r as any)._id.toString());
+    }
+
+    for (const rutaId of rutaIds) {
+      try {
+        await this.rutaSvc.delete(rutaId);
+      } catch (error) {
+        if (error instanceof NotFoundException) {
+          this.logger.warn(`Ruta ${rutaId} ya no existía al eliminar empresa ${id}`);
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    const deletedUsers = await this.authSvc.deleteManyByEmpresa(
+      id,
+      (empresa.employes || []) as any[],
+    );
+    this.logger.log(`Empresa ${id}: ${deletedUsers} usuario(s) eliminados`);
+
+    await this.connection.collection('cobrador_tracking').deleteMany({
+      empresa: new Types.ObjectId(id),
+    });
+
+    await this.empresaModel.findByIdAndDelete(id);
+    this.logger.log(`Empresa ${id} eliminada con cascada completa`);
+
+    return {
+      message:
+        'Empresa eliminada con rutas, clientes, créditos, cajas, movimientos y empleados relacionados',
+    };
   }
 
+  async moveEmpleado(dto: MoveEmpleadoDto): Promise<{ message: string }> {
+    if (dto.fromEmpresaId === dto.toEmpresaId) {
+      throw new BadRequestException('La empresa de origen y destino deben ser distintas');
+    }
+
+    const [fromEmpresa, toEmpresa, user] = await Promise.all([
+      this.empresaModel.findById(dto.fromEmpresaId),
+      this.empresaModel.findById(dto.toEmpresaId),
+      this.authSvc.findByIdForMove(dto.empleadoId),
+    ]);
+
+    if (!fromEmpresa) throw new NotFoundException('Empresa de origen no existe');
+    if (!toEmpresa) throw new NotFoundException('Empresa de destino no existe');
+    if (!user) throw new NotFoundException('El empleado no existe');
+
+    const userEmpresa = user.empresa?.toString() ?? null;
+    const inFromList = (fromEmpresa.employes || []).some(
+      (e: any) => e.toString() === dto.empleadoId,
+    );
+    if (userEmpresa !== dto.fromEmpresaId && !inFromList) {
+      throw new BadRequestException('El empleado no pertenece a la empresa de origen');
+    }
+
+    if (dto.rutaId) {
+      await this.assertRutasBelongToEmpresa(dto.toEmpresaId, [dto.rutaId]);
+    }
+
+    const session = await this.connection.startSession();
+    session.startTransaction();
+    try {
+      await this.empresaModel.findByIdAndUpdate(
+        dto.fromEmpresaId,
+        { $pull: { employes: new Types.ObjectId(dto.empleadoId) } },
+        { session },
+      );
+      await this.empresaModel.findByIdAndUpdate(
+        dto.toEmpresaId,
+        { $addToSet: { employes: new Types.ObjectId(dto.empleadoId) } },
+        { session },
+      );
+      await this.authSvc.reassignToEmpresa(
+        dto.empleadoId,
+        dto.toEmpresaId,
+        { rutaId: dto.rutaId ?? null },
+        session,
+      );
+      await session.commitTransaction();
+    } catch (error) {
+      await session.abortTransaction();
+      this.handleExceptions(error);
+    } finally {
+      session.endSession();
+    }
+
+    return { message: 'Empleado movido correctamente' };
+  }
+
+  async moveRuta(dto: MoveRutaDto): Promise<{ message: string }> {
+    if (dto.fromEmpresaId === dto.toEmpresaId) {
+      throw new BadRequestException('La empresa de origen y destino deben ser distintas');
+    }
+
+    const [fromEmpresa, toEmpresa, rutaInfo] = await Promise.all([
+      this.empresaModel.findById(dto.fromEmpresaId),
+      this.empresaModel.findById(dto.toEmpresaId),
+      this.rutaSvc.getEmpresaIdByRutaId(dto.rutaId),
+    ]);
+
+    if (!fromEmpresa) throw new NotFoundException('Empresa de origen no existe');
+    if (!toEmpresa) throw new NotFoundException('Empresa de destino no existe');
+    if (!rutaInfo.exists) throw new NotFoundException('La ruta no existe');
+    if (rutaInfo.empresaId !== dto.fromEmpresaId) {
+      throw new BadRequestException('La ruta no pertenece a la empresa de origen');
+    }
+
+    const session = await this.connection.startSession();
+    session.startTransaction();
+    try {
+      await this.rutaSvc.setEmpresa(dto.rutaId, dto.toEmpresaId, session);
+      await this.pullRuta(dto.fromEmpresaId, dto.rutaId, session);
+      await this.empresaModel.findByIdAndUpdate(
+        dto.toEmpresaId,
+        { $addToSet: { rutas: new Types.ObjectId(dto.rutaId) } },
+        { session },
+      );
+      await this.authSvc.clearAssignmentsToRuta(dto.rutaId, session);
+      await session.commitTransaction();
+    } catch (error) {
+      await session.abortTransaction();
+      this.handleExceptions(error);
+    } finally {
+      session.endSession();
+    }
+
+    return { message: 'Ruta movida correctamente' };
+  }
+
+  /** Asigna una ruta huérfana (sin empresa) a una empresa. */
+  async assignRuta(dto: { rutaId: string; empresaId: string }): Promise<{ message: string }> {
+    const [empresa, rutaInfo] = await Promise.all([
+      this.empresaModel.findById(dto.empresaId),
+      this.rutaSvc.getEmpresaIdByRutaId(dto.rutaId),
+    ]);
+
+    if (!empresa) throw new NotFoundException('La empresa no existe');
+    if (!rutaInfo.exists) throw new NotFoundException('La ruta no existe');
+    if (rutaInfo.empresaId) {
+      throw new BadRequestException(
+        'La ruta ya pertenece a una empresa. Usa Transferencias → Mover ruta.',
+      );
+    }
+
+    const session = await this.connection.startSession();
+    session.startTransaction();
+    try {
+      await this.rutaSvc.setEmpresa(dto.rutaId, dto.empresaId, session);
+      await this.empresaModel.findByIdAndUpdate(
+        dto.empresaId,
+        { $addToSet: { rutas: new Types.ObjectId(dto.rutaId) } },
+        { session },
+      );
+      await session.commitTransaction();
+    } catch (error) {
+      await session.abortTransaction();
+      this.handleExceptions(error);
+    } finally {
+      session.endSession();
+    }
+
+    return { message: 'Ruta asignada a la empresa' };
+  }
 
   private handleExceptions(error: any) {
 
@@ -413,12 +610,28 @@ export class EmpresaService {
     }
 
     this.logger.error(error);
-    throw new InternalServerErrorException("Por favor revisa el console.log");
+    throw new InternalServerErrorException("Por favor revisa los logs");
 
   }
 
   getAllEmpresas() {
-    return this.empresaModel.find();
+    return this.empresaModel.find().lean().then((list) =>
+      (list || []).map((doc: any) => ({
+        id: doc._id?.toString(),
+        name: doc.name,
+        email: doc.email,
+        phone: doc.phone,
+        dayOfPay: doc.dayOfPay,
+        country: doc.country,
+        isSubscriptionPaid: doc.isSubscriptionPaid,
+        cobraMora: doc.cobraMora ?? false,
+        permiteMoraVoluntaria: doc.permiteMoraVoluntaria ?? false,
+        porcentajeMora: doc.porcentajeMora ?? 0,
+        baseCalculoMora: doc.baseCalculoMora,
+        employes: doc.employes || [],
+        rutas: doc.rutas || [],
+      })),
+    );
   }
 
   /** Reportes / facades: lectura lean sin populate. */
@@ -447,9 +660,14 @@ export class EmpresaService {
     userId: string | Types.ObjectId,
     session?: ClientSession,
   ): Promise<void> {
+    const empId = empresaId?.toString?.() ?? String(empresaId);
+    const uid = userId?.toString?.() ?? String(userId);
+    if (!Types.ObjectId.isValid(empId) || !Types.ObjectId.isValid(uid)) {
+      return;
+    }
     await this.empresaModel.findByIdAndUpdate(
-      empresaId,
-      { $pull: { employes: userId } },
+      empId,
+      { $pull: { employes: new Types.ObjectId(uid) } },
       { session: session || undefined },
     );
   }

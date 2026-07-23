@@ -56,7 +56,6 @@ export class PeticionesUbicacionService {
 
       return true;
     } catch (error) {
-      console.log(error)
       this.handleExceptions(error);
     }
   }
