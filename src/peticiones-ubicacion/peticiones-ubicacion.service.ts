@@ -22,10 +22,7 @@ export class PeticionesUbicacionService {
 
   /**
    * Creates a new location change request.
-   * @param createPeticionesUbicacionDto Data for the new request.
-   * @param userId ID of the authenticated user making the request.
-   * @param routeId ID of the route associated with the client.
-   * @returns The created request entity.
+   * Cualquier cobrador puede solicitar; admin/supervisor aprueba después.
    */
   async create(
     createPeticionesUbicacionDto: CreatePeticionesUbicacionDto,
@@ -251,7 +248,10 @@ export class PeticionesUbicacionService {
    * @param error Caught error.
    */
   private handleExceptions(error: any): never {
-    if (error instanceof NotFoundException || error instanceof BadRequestException) {
+    if (
+      error instanceof NotFoundException ||
+      error instanceof BadRequestException
+    ) {
       throw error;
     }
 
