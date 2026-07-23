@@ -20,6 +20,8 @@ import {
   adminRoom,
   empresaRoom,
   isAdminSocketRole,
+  isSuperAdminRole,
+  superAdminRoom,
 } from './interfaces/socket-auth.interface';
 import { MessageService } from './message.service';
 
@@ -77,6 +79,7 @@ export class MessageGateway
         ) as string | undefined);
 
       if (!token) {
+        this.logger.warn('WS rechazado: sin token');
         client.disconnect(true);
         return;
       }
@@ -84,7 +87,17 @@ export class MessageGateway
       const payload = this.jwtService.verify<JwtPayload>(token);
       const user = await this.authService.findActiveEntityById(payload.id);
 
-      if (!user?.empresa) {
+      if (!user) {
+        this.logger.warn('WS rechazado: usuario inactivo o inexistente');
+        client.disconnect(true);
+        return;
+      }
+
+      const isSuperAdmin = isSuperAdminRole(user.rol);
+      if (!user.empresa && !isSuperAdmin) {
+        this.logger.warn(
+          `WS rechazado: usuario ${user.id} (${user.rol}) sin empresa`,
+        );
         client.disconnect(true);
         return;
       }
@@ -92,22 +105,28 @@ export class MessageGateway
       const data: SocketUserData = {
         userId: user.id,
         rol: user.rol,
-        empresaId: user.empresa,
+        empresaId: user.empresa || undefined,
         rutaId: user.ruta,
         nombre: user.nombre,
       };
       client.data.user = data;
 
-      await client.join(empresaRoom(user.empresa));
-      if (isAdminSocketRole(user.rol)) {
-        await client.join(adminRoom(user.empresa));
-        await this.sendTrackingSnapshot(client, user.empresa);
+      if (isSuperAdmin) {
+        await client.join(superAdminRoom());
       }
 
-      if (user.rol === 'COBRADOR') {
+      if (user.empresa) {
+        await client.join(empresaRoom(user.empresa));
+        if (isAdminSocketRole(user.rol)) {
+          await client.join(adminRoom(user.empresa));
+          await this.sendTrackingSnapshot(client, user.empresa);
+        }
+      }
+
+      if (user.rol === 'COBRADOR' && user.empresa) {
         this.trackingService.registerCobradorOnline(client.id, {
           userId: data.userId,
-          empresaId: data.empresaId,
+          empresaId: user.empresa,
           nombre: data.nombre,
           rutaId: data.rutaId,
         });
@@ -254,7 +273,7 @@ export class MessageGateway
       | Array<{ lng?: number; lat?: number; accuracy?: number; at?: string }>,
   ) {
     const data = client.data?.user as SocketUserData | undefined;
-    if (!data || data.rol !== 'COBRADOR') {
+    if (!data || data.rol !== 'COBRADOR' || !data.empresaId) {
       this.logger.warn('location:update rechazado: sin sesión cobrador');
       return;
     }
@@ -300,7 +319,7 @@ export class MessageGateway
   @SubscribeMessage('tracking:subscribe')
   async handleTrackingSubscribe(@ConnectedSocket() client: Socket) {
     const data = this.assertAdminClient(client);
-    if (!data) return;
+    if (!data?.empresaId) return;
     await this.sendTrackingSnapshot(client, data.empresaId);
   }
 
@@ -351,10 +370,11 @@ export class MessageGateway
 
   private async rutaBelongsToEmpresa(
     rutaId: string,
-    empresaId: string,
+    empresaId: string | undefined,
     rol: string,
   ): Promise<boolean> {
     if (rol === 'SUPERADMIN') return true;
+    if (!empresaId) return false;
     const info = await this.rutaService.getEmpresaIdByRutaId(rutaId);
     return info.exists && info.empresaId === empresaId;
   }
