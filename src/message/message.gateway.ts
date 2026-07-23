@@ -1,6 +1,5 @@
 import { forwardRef, Inject, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { InjectModel } from '@nestjs/mongoose';
 import {
   ConnectedSocket,
   MessageBody,
@@ -10,12 +9,10 @@ import {
   WebSocketGateway,
   WebSocketServer,
 } from '@nestjs/websockets';
-import { Model } from 'mongoose';
 import { Server, Socket } from 'socket.io';
 
+import { AuthService } from 'src/auth/auth.service';
 import { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
-import { User } from 'src/auth/schemas/user.schema';
-import { UserEntity } from 'src/auth/entities/user.entity';
 import { RutaService } from 'src/ruta/ruta.service';
 import { TrackingService } from 'src/tracking/tracking.service';
 import {
@@ -66,7 +63,8 @@ export class MessageGateway
     @Inject(forwardRef(() => TrackingService))
     private readonly trackingService: TrackingService,
     private readonly jwtService: JwtService,
-    @InjectModel(User.name) private readonly userModel: Model<User>,
+    @Inject(forwardRef(() => AuthService))
+    private readonly authService: AuthService,
   ) {}
 
   async handleConnection(client: Socket) {
@@ -84,17 +82,9 @@ export class MessageGateway
       }
 
       const payload = this.jwtService.verify<JwtPayload>(token);
-      const userDoc = await this.userModel
-        .findById(payload.id)
-        .populate([{ path: 'ruta' }]);
+      const user = await this.authService.findActiveEntityById(payload.id);
 
-      if (!userDoc || !userDoc.estado) {
-        client.disconnect(true);
-        return;
-      }
-
-      const user = UserEntity.fromObject(userDoc.toObject());
-      if (!user.empresa) {
+      if (!user?.empresa) {
         client.disconnect(true);
         return;
       }
@@ -200,6 +190,42 @@ export class MessageGateway
     this.wss
       .to(empresaRoom(payload.empresa))
       .emit('mora-config-actualizada', payload);
+  }
+
+  /** Notifica avisos a rooms de admin (o broadcast si es GLOBAL). */
+  emitAnnouncement(announcement: {
+    id: string;
+    scope: string;
+    empresaIds?: string[];
+    [key: string]: unknown;
+  }): void {
+    if (!this.wss) return;
+
+    if (announcement.scope === 'GLOBAL') {
+      this.wss.emit('announcement:new', announcement);
+      return;
+    }
+
+    const empresaIds = announcement.empresaIds || [];
+    for (const empresaId of empresaIds) {
+      if (!empresaId) continue;
+      this.wss.to(adminRoom(empresaId)).emit('announcement:new', announcement);
+    }
+  }
+
+  emitSubscriptionUpdated(
+    empresaId: string,
+    payload: {
+      isSubscriptionPaid: boolean;
+      subscriptionStatus?: string;
+      dayOfPay?: number;
+    },
+  ): void {
+    if (!this.wss || !empresaId) return;
+    this.wss.to(adminRoom(empresaId)).emit('subscription:updated', {
+      empresaId,
+      ...payload,
+    });
   }
 
   private extractRutaId(

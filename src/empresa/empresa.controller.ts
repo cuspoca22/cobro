@@ -22,6 +22,9 @@ import { ValidRoles } from 'src/auth/interfaces';
 import { CreateUserDto } from 'src/auth/dto';
 import { ToUpperCasePipe } from '../common/pipes/to-upper-case.pipe';
 import { CreateRutaDto } from '../ruta/dto/create-ruta.dto';
+import { UpdateSubscriptionDto } from './dto/update-subscription.dto';
+import { SuspendEmpresaDto } from './dto/suspend-empresa.dto';
+import { AccessSuspendedReason } from './interfaces/subscription-status';
 
 @Controller('empresa')
 export class EmpresaController {
@@ -73,6 +76,49 @@ export class EmpresaController {
   @Get('all')
   findAllEmpresas() {
     return this.empresaService.getAllEmpresas();
+  }
+
+  @Auth(ValidRoles.superAdmin)
+  @Get('overdue')
+  findOverdueEmpresas(@Query('includeGrace') includeGrace?: string) {
+    const withGrace =
+      includeGrace === '1' ||
+      includeGrace === 'true' ||
+      includeGrace === 'yes';
+    return this.empresaService.getOverdueEmpresas(withGrace);
+  }
+
+  @Auth(ValidRoles.superAdmin)
+  @Patch(':id/subscription')
+  updateSubscription(
+    @GetUser() user: any,
+    @Param('id', ParseMongoIdPipe) id: string,
+    @Body() dto: UpdateSubscriptionDto,
+  ) {
+    return this.empresaService.updateSubscription(id, dto, user.id);
+  }
+
+  @Auth(ValidRoles.superAdmin)
+  @Post(':id/suspend')
+  suspendEmpresa(
+    @Param('id', ParseMongoIdPipe) id: string,
+    @Body() dto: SuspendEmpresaDto,
+  ) {
+    return this.empresaService.suspendEmpresa(
+      id,
+      dto.reason ?? AccessSuspendedReason.PAYMENT,
+    );
+  }
+
+  @Auth(ValidRoles.superAdmin)
+  @Post(':id/unsuspend')
+  unsuspendEmpresa(
+    @Param('id', ParseMongoIdPipe) id: string,
+    @Query('markPaid') markPaid?: string,
+  ) {
+    const paid =
+      markPaid === '1' || markPaid === 'true' || markPaid === 'yes';
+    return this.empresaService.unsuspendEmpresa(id, paid);
   }
 
   @Auth(ValidRoles.superAdmin)

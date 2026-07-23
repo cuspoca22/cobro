@@ -21,6 +21,8 @@ import { RenovacionModule } from './renovacion/renovacion.module';
 import { PeticionesUbicacionModule } from './peticiones-ubicacion/peticiones-ubicacion.module';
 import { ReportesModule } from './reportes/reportes.module';
 import { TrackingModule } from './tracking/tracking.module';
+import { AnnouncementModule } from './announcement/announcement.module';
+import { EventsModule } from './common/events/events.module';
 
 const environment = process.env.NODE_ENV || 'development';
 const envFile = `.env.${environment}`;
@@ -29,6 +31,7 @@ const envFile = `.env.${environment}`;
   imports: [
     ConfigModule.forRoot({ isGlobal: true, envFilePath: [envFile, '.env'] }),
     ScheduleModule.forRoot(),
+    EventsModule,
     MongooseModule.forRoot(process.env.MONGO_URL, {
       dbName: process.env.MONGO_DB_NAME,
     }),
@@ -50,6 +53,7 @@ const envFile = `.env.${environment}`;
     PeticionesUbicacionModule,
     ReportesModule,
     TrackingModule,
+    AnnouncementModule,
   ],
   controllers: [],
   providers: [],

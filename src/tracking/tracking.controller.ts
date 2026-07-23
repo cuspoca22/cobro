@@ -5,15 +5,13 @@ import {
   NotFoundException,
   Param,
 } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { Model } from 'mongoose';
 
 import { Auth } from 'src/auth/decorators';
 import { GetUser } from 'src/auth/decorators/get-user.decorator';
 import { UserEntity } from 'src/auth/entities/user.entity';
 import { ValidRoles } from 'src/auth/interfaces/valid-roles';
-import { User } from 'src/auth/schemas/user.schema';
+import { AuthService } from 'src/auth/auth.service';
 import { ParseMongoIdPipe } from 'src/common/pipes/parse-mongo-id.pipe';
 import { TrackingService } from './tracking.service';
 
@@ -24,7 +22,7 @@ import { TrackingService } from './tracking.service';
 export class TrackingController {
   constructor(
     private readonly trackingService: TrackingService,
-    @InjectModel(User.name) private readonly userModel: Model<User>,
+    private readonly authService: AuthService,
   ) {}
 
   @Get('empresa/:empresaId/hoy')
@@ -44,21 +42,17 @@ export class TrackingController {
     @Param('cobradorId', ParseMongoIdPipe) cobradorId: string,
     @GetUser() user: UserEntity,
   ) {
-    const cobrador = await this.userModel
-      .findById(cobradorId)
-      .select('empresa')
-      .lean();
+    const cobrador = await this.authService.findTrackingProfileById(cobradorId);
 
     if (!cobrador) {
       throw new NotFoundException(`Cobrador ${cobradorId} no existe`);
     }
 
-    const cobradorEmpresa = cobrador.empresa?.toString();
-    if (!cobradorEmpresa) {
+    if (!cobrador.empresaId) {
       throw new ForbiddenException('Cobrador sin empresa asignada');
     }
 
-    this.assertSameEmpresa(user, cobradorEmpresa);
+    this.assertSameEmpresa(user, cobrador.empresaId);
 
     const online = this.trackingService.isCobradorOnline(cobradorId);
     return this.trackingService.getCobradorHoy(cobradorId, online);

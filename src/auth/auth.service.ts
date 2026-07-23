@@ -136,6 +136,29 @@ export class AuthService {
          }
       }
 
+      if (user.rol !== ValidRoles.superAdmin && user.empresa) {
+         const empresaId =
+            typeof user.empresa === 'object' && (user.empresa as any)._id
+               ? String((user.empresa as any)._id)
+               : String(user.empresa);
+         const suspended = await this.empresaService.isAccessSuspended(empresaId);
+         if (suspended) {
+            await this.logAuth.create({
+               user: user._id,
+               ipAddress: request.ip,
+               userAgent: request.headers['user-agent'],
+               reason: 'SUBSCRIPTION_SUSPENDED',
+               isSuccessful: false,
+            });
+            throw new UnauthorizedException({
+               statusCode: 401,
+               message:
+                  'El acceso de su empresa está suspendido. Contacte a soporte para reactivarlo.',
+               error: 'SUBSCRIPTION_SUSPENDED',
+            });
+         }
+      }
+
       return {
          user: UserEntity.fromObject(user),
          token: this.getJwtToken({ id: user._id.toString() })
@@ -168,6 +191,22 @@ export class AuthService {
                   'Su ruta se encuentra bloqueada, por favor ponganse en contacto con su supervisor',
                );
             }
+         }
+      }
+
+      if (user.rol !== ValidRoles.superAdmin && user.empresa) {
+         const empresaId =
+            typeof user.empresa === 'object' && (user.empresa as any)._id
+               ? String((user.empresa as any)._id)
+               : String(user.empresa);
+         const suspended = await this.empresaService.isAccessSuspended(empresaId);
+         if (suspended) {
+            throw new UnauthorizedException({
+               statusCode: 401,
+               message:
+                  'El acceso de su empresa está suspendido. Contacte a soporte para reactivarlo.',
+               error: 'SUBSCRIPTION_SUSPENDED',
+            });
          }
       }
 
@@ -565,6 +604,55 @@ export class AuthService {
       }
       user.empresa = new Types.ObjectId(empresaId.toString()) as any;
       await user.save();
+   }
+
+   /** MessageGateway: handshake WS (activo + entidad). */
+   async findActiveEntityById(id: string): Promise<UserEntity | null> {
+      const userDoc = await this.userModel
+         .findById(id)
+         .populate([{ path: 'ruta' }]);
+      if (!userDoc || !userDoc.estado) return null;
+      return UserEntity.fromObject(userDoc.toObject());
+   }
+
+   /** Tracking: perfil lean (nombre/ruta/empresa). */
+   async findTrackingProfileById(id: string): Promise<{
+      _id: string;
+      nombre: string;
+      rutaId?: string;
+      empresaId?: string | null;
+   } | null> {
+      const user = await this.userModel
+         .findById(id)
+         .select('nombre ruta empresa')
+         .lean();
+      if (!user) return null;
+      return {
+         _id: user._id.toString(),
+         nombre: user.nombre as string,
+         rutaId: user.ruta ? user.ruta.toString() : undefined,
+         empresaId: user.empresa ? user.empresa.toString() : null,
+      };
+   }
+
+   /** Tracking: batch de perfiles en una empresa. */
+   async findTrackingProfilesByIds(
+      ids: string[],
+      empresaId: string,
+   ): Promise<Array<{ _id: string; nombre: string; rutaId?: string }>> {
+      if (!ids.length) return [];
+      const users = await this.userModel
+         .find({
+            _id: { $in: ids.map((id) => new Types.ObjectId(id)) },
+            empresa: new Types.ObjectId(empresaId),
+         })
+         .select('nombre ruta')
+         .lean();
+      return users.map((u) => ({
+         _id: u._id.toString(),
+         nombre: u.nombre as string,
+         rutaId: u.ruta ? u.ruta.toString() : undefined,
+      }));
    }
 
    private getJwtToken(payload: JwtPayload): string {

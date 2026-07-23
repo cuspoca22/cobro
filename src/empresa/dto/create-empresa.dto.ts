@@ -1,4 +1,4 @@
-import { IsArray, IsBoolean, IsEmail, IsEnum, IsMongoId, IsNumber, IsOptional, IsString, Min } from "class-validator";
+import { IsArray, IsBoolean, IsEmail, IsEnum, IsInt, IsMongoId, IsNumber, IsOptional, IsString, Max, Min } from "class-validator";
 import { BaseCalculoMora } from "../interfaces";
 
 export class CreateEmpresaDto {
@@ -14,8 +14,10 @@ export class CreateEmpresaDto {
    @IsOptional()
    phone?: string;
 
-   @IsNumber()
+   @IsInt()
    @IsOptional()
+   @Min(1)
+   @Max(31)
    dayOfPay?: number;
 
    @IsString()
@@ -41,7 +43,13 @@ export class CreateEmpresaDto {
 
    @IsBoolean()
    @IsOptional()
-   isSubscriptionPaid: boolean;
+   isSubscriptionPaid?: boolean;
+
+   @IsInt()
+   @IsOptional()
+   @Min(0)
+   @Max(31)
+   subscriptionGraceDays?: number;
 
    @IsBoolean()
    @IsOptional()

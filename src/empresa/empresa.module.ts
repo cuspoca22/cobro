@@ -8,13 +8,16 @@ import { Empresa, EmpresaSchema } from './schemas/empresa.schema';
 import { RutaModule } from '../ruta/ruta.module';
 import { ClienteModule } from '../cliente/cliente.module';
 import { MessageModule } from '../message/message.module';
+import { EventsModule } from 'src/common/events/events.module';
 
 /**
- * V4b: solo registra Empresa. User vía AuthService (forwardRef Auth↔Empresa).
+ * V4b: solo registra Empresa. User vía AuthService (forwardRef ciclo Auth↔Empresa).
+ * Avisos de pago: Empresa emite eventos; Announcement escucha (sin importar AnnouncementModule).
  */
 @Module({
   imports: [
     ConfigModule,
+    EventsModule,
     forwardRef(() => AuthModule),
     forwardRef(() => RutaModule),
     ClienteModule,

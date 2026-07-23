@@ -1,12 +1,12 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { forwardRef, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { toZonedTime } from 'date-fns-tz';
 import { format } from 'date-fns';
 
+import { AuthService } from '../auth/auth.service';
+import { RutaService } from '../ruta/ruta.service';
 import { CobradorTracking } from './schemas/cobrador-tracking.schema';
-import { User } from '../auth/schemas/user.schema';
-import { Ruta } from '../ruta/schema/ruta.schema';
 
 const MIN_INTERVAL_MS = 15_000;
 const MIN_DISTANCE_M = 15;
@@ -62,10 +62,10 @@ export class TrackingService {
   constructor(
     @InjectModel(CobradorTracking.name)
     private readonly trackingModel: Model<CobradorTracking>,
-    @InjectModel(User.name)
-    private readonly userModel: Model<User>,
-    @InjectModel(Ruta.name)
-    private readonly rutaModel: Model<Ruta>,
+    @Inject(forwardRef(() => AuthService))
+    private readonly authService: AuthService,
+    @Inject(forwardRef(() => RutaService))
+    private readonly rutaService: RutaService,
   ) {}
 
   registerCobradorOnline(
@@ -122,21 +122,18 @@ export class TrackingService {
     const cached = this.rutaTzCache.get(rutaId);
     if (cached) return cached;
 
-    const ruta = await this.rutaModel
-      .findById(rutaId)
-      .select('timeZone')
-      .lean();
-    const tz = (ruta?.timeZone as string) || DEFAULT_TZ;
+    const ctx = await this.rutaService.findContextById(rutaId);
+    const tz = ctx?.timeZone || DEFAULT_TZ;
     this.rutaTzCache.set(rutaId, tz);
     return tz;
   }
 
   /** Claves `fecha` de “hoy” para todas las TZ de rutas de la empresa. */
   private async hoyKeysEmpresa(empresaId: string): Promise<string[]> {
-    const rutas = await this.rutaModel
-      .find({ empresa: new Types.ObjectId(empresaId) })
-      .select('timeZone')
-      .lean();
+    const rutas = await this.rutaService.findLean(
+      { empresa: new Types.ObjectId(empresaId) },
+      { select: 'timeZone' },
+    );
 
     const keys = new Set<string>();
     if (!rutas.length) {
@@ -338,13 +335,8 @@ export class TrackingService {
   }
 
   async getUltimaUbicacionHoy(cobradorId: string) {
-    const user = await this.userModel
-      .findById(cobradorId)
-      .select('ruta')
-      .lean();
-    const fecha = this.hoyKey(
-      await this.resolveTimeZone(user?.ruta?.toString()),
-    );
+    const user = await this.authService.findTrackingProfileById(cobradorId);
+    const fecha = this.hoyKey(await this.resolveTimeZone(user?.rutaId));
     const doc = await this.trackingModel
       .findOne({ cobrador: new Types.ObjectId(cobradorId), fecha })
       .select('ultimaUbicacion ruta')
@@ -381,20 +373,17 @@ export class TrackingService {
 
     if (idsToResolve.size === 0) return [];
 
-    const users = await this.userModel
-      .find({
-        _id: { $in: [...idsToResolve].map((id) => new Types.ObjectId(id)) },
-        empresa: new Types.ObjectId(empresaId),
-      })
-      .select('nombre ruta')
-      .lean();
+    const users = await this.authService.findTrackingProfilesByIds(
+      [...idsToResolve],
+      empresaId,
+    );
 
     const userMap = new Map(
       users.map((u) => [
-        u._id.toString(),
+        u._id,
         {
-          nombre: u.nombre as string,
-          rutaId: u.ruta ? u.ruta.toString() : undefined,
+          nombre: u.nombre,
+          rutaId: u.rutaId,
         },
       ]),
     );
@@ -469,18 +458,13 @@ export class TrackingService {
   }
 
   async getCobradorHoy(cobradorId: string, online: boolean): Promise<CobradorTrackingHoyDto> {
-    const user = await this.userModel
-      .findById(cobradorId)
-      .select('nombre ruta empresa')
-      .lean();
+    const user = await this.authService.findTrackingProfileById(cobradorId);
 
     if (!user) {
       throw new NotFoundException(`Cobrador ${cobradorId} no existe`);
     }
 
-    const fecha = this.hoyKey(
-      await this.resolveTimeZone(user.ruta ? user.ruta.toString() : undefined),
-    );
+    const fecha = this.hoyKey(await this.resolveTimeZone(user.rutaId));
     const doc = await this.trackingModel
       .findOne({ cobrador: new Types.ObjectId(cobradorId), fecha })
       .lean();
@@ -497,7 +481,7 @@ export class TrackingService {
     return {
       cobradorId,
       nombre: user.nombre,
-      rutaId: doc?.ruta?.toString() ?? (user.ruta ? user.ruta.toString() : undefined),
+      rutaId: doc?.ruta?.toString() ?? user.rutaId,
       online,
       ultimaUbicacion: ultima
         ? {

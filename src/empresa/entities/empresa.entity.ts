@@ -1,6 +1,10 @@
 import { UserEntity } from "src/auth/entities/user.entity";
 import { RutaEntity } from "src/ruta/entities/ruta.entity";
 import { BaseCalculoMora } from "../interfaces";
+import {
+   computeSubscriptionStatus,
+   SubscriptionStatus,
+} from "../interfaces/subscription-status";
 
 export class EmpresaEntity {
 
@@ -8,9 +12,15 @@ export class EmpresaEntity {
    name: string;
    email: string;
    phone: string;
-   dayOfPay: string;
+   dayOfPay: number;
    country: string;
    isSubscriptionPaid: boolean;
+   subscriptionGraceDays: number;
+   accessSuspended: boolean;
+   accessSuspendedAt?: Date | null;
+   accessSuspendedReason?: 'PAYMENT' | 'MANUAL' | null;
+   subscriptionStatus: SubscriptionStatus;
+   daysPastDue: number;
    cobraMora: boolean;
    permiteMoraVoluntaria: boolean;
    porcentajeMora: number;
@@ -30,14 +40,27 @@ export class EmpresaEntity {
       const { _id, id } = object;
       const empresaId = (id || _id)?.toString() || null;
 
+      const snap = computeSubscriptionStatus({
+         dayOfPay: object.dayOfPay,
+         isSubscriptionPaid: object.isSubscriptionPaid,
+         subscriptionGraceDays: object.subscriptionGraceDays,
+         accessSuspended: object.accessSuspended,
+      });
+
       const empresa = new EmpresaEntity({
          id: empresaId,
          name: object.name,
          email: object.email,
          phone: object.phone,
-         dayOfPay: object.dayOfPay,
+         dayOfPay: snap.dayOfPay,
          country: object.country,
-         isSubscriptionPaid: object.isSubscriptionPaid,
+         isSubscriptionPaid: snap.isSubscriptionPaid,
+         subscriptionGraceDays: snap.graceDays,
+         accessSuspended: snap.accessSuspended,
+         accessSuspendedAt: object.accessSuspendedAt ?? null,
+         accessSuspendedReason: object.accessSuspendedReason ?? null,
+         subscriptionStatus: snap.status,
+         daysPastDue: snap.daysPastDue,
          cobraMora: object.cobraMora ?? false,
          permiteMoraVoluntaria: object.permiteMoraVoluntaria ?? false,
          porcentajeMora: object.porcentajeMora ?? 0,

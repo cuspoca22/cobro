@@ -9,6 +9,7 @@ import { RutaService } from '../ruta/ruta.service';
 import { AuthService } from '../auth/auth.service';
 import { ClienteService } from '../cliente/cliente.service';
 import { MessageGateway } from '../message/message.gateway';
+import { AppEventBus } from 'src/common/events/events.module';
 
 describe('EmpresaService', () => {
   let service: EmpresaService;
@@ -19,7 +20,9 @@ describe('EmpresaService', () => {
   let mockSession: any;
   let mockMessageGateway: {
     emitMoraConfigActualizada: jest.Mock;
+    emitSubscriptionUpdated: jest.Mock;
   };
+  let mockEvents: { emit: jest.Mock };
 
   const empresaId = new Types.ObjectId().toString();
 
@@ -57,6 +60,11 @@ describe('EmpresaService', () => {
 
     mockMessageGateway = {
       emitMoraConfigActualizada: jest.fn(),
+      emitSubscriptionUpdated: jest.fn(),
+    };
+
+    mockEvents = {
+      emit: jest.fn(),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -68,6 +76,7 @@ describe('EmpresaService', () => {
         { provide: AuthService, useValue: mockAuthSvc },
         { provide: ClienteService, useValue: {} },
         { provide: MessageGateway, useValue: mockMessageGateway },
+        { provide: AppEventBus, useValue: mockEvents },
       ],
     }).compile();
 
@@ -249,6 +258,85 @@ describe('EmpresaService', () => {
       await expect(
         service.assignRuta({ rutaId, empresaId: toEmpresaId }),
       ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('updateSubscription', () => {
+    it('emite payment_due al marcar no pagada', async () => {
+      const saveMock = jest.fn().mockResolvedValue(undefined);
+      const ownerId = new Types.ObjectId().toString();
+      mockEmpresaModel.findById.mockResolvedValue({
+        _id: new Types.ObjectId(empresaId),
+        name: 'Acme',
+        dayOfPay: 10,
+        isSubscriptionPaid: true,
+        subscriptionGraceDays: 3,
+        accessSuspended: false,
+        owner: ownerId,
+        save: saveMock,
+        toObject() {
+          return { ...this };
+        },
+      });
+
+      await service.updateSubscription(
+        empresaId,
+        { isSubscriptionPaid: false },
+        'actor-1',
+      );
+
+      expect(saveMock).toHaveBeenCalled();
+      expect(mockEvents.emit).toHaveBeenCalledWith(
+        'subscription.payment_due',
+        expect.objectContaining({
+          empresaId,
+          actorId: 'actor-1',
+          empresaName: 'Acme',
+        }),
+      );
+      expect(mockMessageGateway.emitSubscriptionUpdated).toHaveBeenCalledWith(
+        empresaId,
+        expect.objectContaining({ isSubscriptionPaid: false }),
+      );
+    });
+
+    it('emite payment_cleared al marcar pagada', async () => {
+      const saveMock = jest.fn().mockResolvedValue(undefined);
+      mockEmpresaModel.findById.mockResolvedValue({
+        _id: new Types.ObjectId(empresaId),
+        name: 'Acme',
+        dayOfPay: 10,
+        isSubscriptionPaid: false,
+        subscriptionGraceDays: 3,
+        accessSuspended: false,
+        save: saveMock,
+        toObject() {
+          return { ...this };
+        },
+      });
+
+      await service.updateSubscription(empresaId, { isSubscriptionPaid: true });
+
+      expect(mockEvents.emit).toHaveBeenCalledWith(
+        'subscription.payment_cleared',
+        { empresaId },
+      );
+    });
+  });
+
+  describe('isAccessSuspended', () => {
+    it('retorna true si accessSuspended', async () => {
+      mockEmpresaModel.findById.mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue({ accessSuspended: true }),
+        }),
+      });
+
+      await expect(service.isAccessSuspended(empresaId)).resolves.toBe(true);
+    });
+
+    it('retorna false si id inválido', async () => {
+      await expect(service.isAccessSuspended('nope')).resolves.toBe(false);
     });
   });
 });

@@ -1,4 +1,4 @@
-import { UnauthorizedException, Injectable } from '@nestjs/common';
+import { UnauthorizedException, Injectable, Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from "@nestjs/config";
 import { PassportStrategy } from "@nestjs/passport";
 import { ExtractJwt, Strategy } from 'passport-jwt';
@@ -8,6 +8,8 @@ import { Model } from 'mongoose';
 import { JwtPayload } from "../interfaces/jwt-payload.interface";
 import { User } from '../schemas/user.schema';
 import { UserEntity } from '../entities/user.entity';
+import { EmpresaService } from 'src/empresa/empresa.service';
+import { ValidRoles } from '../interfaces';
 
 @Injectable()
 export class JWTStrategy extends PassportStrategy(Strategy, 'jwt') {
@@ -15,6 +17,9 @@ export class JWTStrategy extends PassportStrategy(Strategy, 'jwt') {
   constructor(
     @InjectModel(User.name)
     private userModel: Model<User>,
+
+    @Inject(forwardRef(() => EmpresaService))
+    private readonly empresaService: EmpresaService,
 
     configService: ConfigService
   ) {
@@ -50,6 +55,20 @@ export class JWTStrategy extends PassportStrategy(Strategy, 'jwt') {
         throw new UnauthorizedException(
           'Su ruta se encuentra bloqueada, por favor ponganse en contacto con su supervisor',
         );
+      }
+    }
+
+    if (user.rol !== ValidRoles.superAdmin && user.empresa) {
+      const empresaId = user.empresa.toString();
+      const suspended = await this.empresaService.isAccessSuspended(empresaId);
+
+      if (suspended) {
+        throw new UnauthorizedException({
+          statusCode: 401,
+          message:
+            'El acceso de su empresa está suspendido. Contacte a soporte para reactivarlo.',
+          error: 'SUBSCRIPTION_SUSPENDED',
+        });
       }
     }
 

@@ -46,6 +46,32 @@ export class Empresa extends Document {
    })
    isSubscriptionPaid: boolean;
 
+   /** Días de gracia después de dayOfPay antes de considerarse vencida. */
+   @Prop({
+      type: Number,
+      default: 3,
+      min: 0,
+   })
+   subscriptionGraceDays: number;
+
+   /** Corte manual de acceso (SUPERADMIN). Bloquea admin + cobrov2. */
+   @Prop({
+      type: Boolean,
+      default: false,
+      index: true,
+   })
+   accessSuspended: boolean;
+
+   @Prop({ type: Date, required: false })
+   accessSuspendedAt?: Date;
+
+   @Prop({
+      type: String,
+      enum: ['PAYMENT', 'MANUAL'],
+      required: false,
+   })
+   accessSuspendedReason?: 'PAYMENT' | 'MANUAL';
+
    /** Master switch: si false, la empresa no opera con mora. */
    @Prop({
       type: Boolean,

@@ -17,6 +17,24 @@ import { EmpresaEntity } from './entities/empresa.entity';
 import { Ruta } from '../ruta/schema/ruta.schema';
 import { MessageGateway } from '../message/message.gateway';
 import { ValidRoles } from 'src/auth/interfaces';
+import { UpdateSubscriptionDto } from './dto/update-subscription.dto';
+import {
+  AccessSuspendedReason,
+  computeSubscriptionStatus,
+  SubscriptionStatus,
+} from './interfaces/subscription-status';
+import {
+  AppEventBus,
+  SUBSCRIPTION_PAYMENT_CLEARED,
+  SUBSCRIPTION_PAYMENT_DUE,
+} from 'src/common/events/events.module';
+
+const SUBSCRIPTION_UPDATE_FIELDS = [
+  'isSubscriptionPaid',
+  'accessSuspended',
+  'accessSuspendedAt',
+  'accessSuspendedReason',
+] as const;
 
 @Injectable()
 export class EmpresaService {
@@ -39,6 +57,8 @@ export class EmpresaService {
 
     @Inject(forwardRef(() => MessageGateway))
     private readonly messageGateway: MessageGateway,
+
+    private readonly events: AppEventBus,
   ) { }
 
   /** SUPERADMIN: cualquier empresa. Otros: solo la propia. */
@@ -203,8 +223,13 @@ export class EmpresaService {
     const empresa = await this.findOne(id);
 
     try {
+      // Billing / suspensión solo vía endpoints dedicados (SUPERADMIN).
+      const safeDto = { ...updateEmpresaDto };
+      for (const key of SUBSCRIPTION_UPDATE_FIELDS) {
+        delete (safeDto as any)[key];
+      }
 
-      await empresa.updateOne(updateEmpresaDto, { returnDocument: 'after' });
+      await empresa.updateOne(safeDto, { returnDocument: 'after' });
 
       return true;
 
@@ -213,6 +238,160 @@ export class EmpresaService {
     }
 
 
+  }
+
+  async updateSubscription(
+    id: string,
+    dto: UpdateSubscriptionDto,
+    actorId?: string,
+  ) {
+    const empresa = await this.empresaModel.findById(id);
+    if (!empresa) {
+      throw new NotFoundException(`Empresa con el id ${id} no existe`);
+    }
+
+    const wasPaid = empresa.isSubscriptionPaid !== false;
+
+    if (dto.dayOfPay !== undefined) empresa.dayOfPay = dto.dayOfPay;
+    if (dto.isSubscriptionPaid !== undefined) {
+      empresa.isSubscriptionPaid = dto.isSubscriptionPaid;
+    }
+    if (dto.subscriptionGraceDays !== undefined) {
+      empresa.subscriptionGraceDays = dto.subscriptionGraceDays;
+    }
+
+    await empresa.save();
+
+    const nowPaid = empresa.isSubscriptionPaid !== false;
+    const actor = actorId || empresa.owner?.toString?.() || id;
+    const view = this.toSubscriptionView(empresa.toObject());
+
+    try {
+      if (wasPaid && !nowPaid) {
+        this.events.emit(SUBSCRIPTION_PAYMENT_DUE, {
+          empresaId: id,
+          actorId: String(actor),
+          dayOfPay: empresa.dayOfPay,
+          empresaName: empresa.name,
+        });
+      } else if (!wasPaid && nowPaid) {
+        this.events.emit(SUBSCRIPTION_PAYMENT_CLEARED, { empresaId: id });
+      }
+    } catch (error) {
+      this.logger.warn(
+        `No se pudo emitir evento de pago para empresa ${id}: ${(error as Error).message}`,
+      );
+    }
+
+    try {
+      this.messageGateway.emitSubscriptionUpdated(id, {
+        isSubscriptionPaid: view.isSubscriptionPaid,
+        subscriptionStatus: view.subscriptionStatus,
+        dayOfPay: view.dayOfPay,
+      });
+    } catch {
+      /* ignore ws errors */
+    }
+
+    return view;
+  }
+
+  async suspendEmpresa(
+    id: string,
+    reason: AccessSuspendedReason = AccessSuspendedReason.PAYMENT,
+  ) {
+    const empresa = await this.empresaModel.findById(id);
+    if (!empresa) {
+      throw new NotFoundException(`Empresa con el id ${id} no existe`);
+    }
+
+    if (empresa.accessSuspended) {
+      return this.toSubscriptionView(empresa.toObject());
+    }
+
+    empresa.accessSuspended = true;
+    empresa.accessSuspendedAt = new Date();
+    empresa.accessSuspendedReason = reason;
+    await empresa.save();
+
+    return this.toSubscriptionView(empresa.toObject());
+  }
+
+  async unsuspendEmpresa(id: string, markPaid = false) {
+    const empresa = await this.empresaModel.findById(id);
+    if (!empresa) {
+      throw new NotFoundException(`Empresa con el id ${id} no existe`);
+    }
+
+    empresa.accessSuspended = false;
+    empresa.accessSuspendedAt = undefined;
+    empresa.accessSuspendedReason = undefined;
+    if (markPaid) {
+      empresa.isSubscriptionPaid = true;
+    }
+
+    await empresa.save();
+
+    if (markPaid) {
+      try {
+        this.events.emit(SUBSCRIPTION_PAYMENT_CLEARED, { empresaId: id });
+      } catch (error) {
+        this.logger.warn(
+          `No se pudo emitir limpieza de avisos al reactivar ${id}: ${(error as Error).message}`,
+        );
+      }
+    }
+
+    return this.toSubscriptionView(empresa.toObject());
+  }
+
+  async getOverdueEmpresas(includeGrace = false) {
+    const list = await this.empresaModel.find().lean();
+    const statuses = includeGrace
+      ? [SubscriptionStatus.OVERDUE, SubscriptionStatus.GRACE, SubscriptionStatus.SUSPENDED]
+      : [SubscriptionStatus.OVERDUE, SubscriptionStatus.SUSPENDED];
+
+    return (list || [])
+      .map((doc: any) => this.toSubscriptionView(doc))
+      .filter((row) => statuses.includes(row.subscriptionStatus))
+      .sort((a, b) => b.daysPastDue - a.daysPastDue);
+  }
+
+  /** True si la empresa tiene corte de acceso manual. */
+  async isAccessSuspended(empresaId: string): Promise<boolean> {
+    if (!empresaId || !Types.ObjectId.isValid(empresaId)) return false;
+    const doc = await this.empresaModel
+      .findById(empresaId)
+      .select('accessSuspended')
+      .lean();
+    return !!doc?.accessSuspended;
+  }
+
+  private toSubscriptionView(doc: any) {
+    const snap = computeSubscriptionStatus({
+      dayOfPay: doc.dayOfPay,
+      isSubscriptionPaid: doc.isSubscriptionPaid,
+      subscriptionGraceDays: doc.subscriptionGraceDays,
+      accessSuspended: doc.accessSuspended,
+    });
+
+    return {
+      id: doc._id?.toString?.() ?? doc.id,
+      name: doc.name,
+      email: doc.email,
+      phone: doc.phone,
+      country: doc.country,
+      dayOfPay: snap.dayOfPay,
+      isSubscriptionPaid: snap.isSubscriptionPaid,
+      subscriptionGraceDays: snap.graceDays,
+      accessSuspended: snap.accessSuspended,
+      accessSuspendedAt: doc.accessSuspendedAt ?? null,
+      accessSuspendedReason: doc.accessSuspendedReason ?? null,
+      subscriptionStatus: snap.status,
+      daysPastDue: snap.daysPastDue,
+      employes: doc.employes || [],
+      rutas: doc.rutas || [],
+    };
   }
 
   async updateMoraConfig(id: string, dto: {
@@ -616,21 +795,35 @@ export class EmpresaService {
 
   getAllEmpresas() {
     return this.empresaModel.find().lean().then((list) =>
-      (list || []).map((doc: any) => ({
-        id: doc._id?.toString(),
-        name: doc.name,
-        email: doc.email,
-        phone: doc.phone,
-        dayOfPay: doc.dayOfPay,
-        country: doc.country,
-        isSubscriptionPaid: doc.isSubscriptionPaid,
-        cobraMora: doc.cobraMora ?? false,
-        permiteMoraVoluntaria: doc.permiteMoraVoluntaria ?? false,
-        porcentajeMora: doc.porcentajeMora ?? 0,
-        baseCalculoMora: doc.baseCalculoMora,
-        employes: doc.employes || [],
-        rutas: doc.rutas || [],
-      })),
+      (list || []).map((doc: any) => {
+        const snap = computeSubscriptionStatus({
+          dayOfPay: doc.dayOfPay,
+          isSubscriptionPaid: doc.isSubscriptionPaid,
+          subscriptionGraceDays: doc.subscriptionGraceDays,
+          accessSuspended: doc.accessSuspended,
+        });
+        return {
+          id: doc._id?.toString(),
+          name: doc.name,
+          email: doc.email,
+          phone: doc.phone,
+          dayOfPay: snap.dayOfPay,
+          country: doc.country,
+          isSubscriptionPaid: snap.isSubscriptionPaid,
+          subscriptionGraceDays: snap.graceDays,
+          accessSuspended: snap.accessSuspended,
+          accessSuspendedAt: doc.accessSuspendedAt ?? null,
+          accessSuspendedReason: doc.accessSuspendedReason ?? null,
+          subscriptionStatus: snap.status,
+          daysPastDue: snap.daysPastDue,
+          cobraMora: doc.cobraMora ?? false,
+          permiteMoraVoluntaria: doc.permiteMoraVoluntaria ?? false,
+          porcentajeMora: doc.porcentajeMora ?? 0,
+          baseCalculoMora: doc.baseCalculoMora,
+          employes: doc.employes || [],
+          rutas: doc.rutas || [],
+        };
+      }),
     );
   }
 
