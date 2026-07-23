@@ -25,6 +25,15 @@ export class GetUserDto {
   ruta: string;
 
   @Expose()
+  @Transform(({ obj }) => {
+    if (!Array.isArray(obj.rutas)) return [];
+    return obj.rutas
+      .map((r: any) => (r?._id ?? r)?.toString())
+      .filter((v: string | undefined): v is string => !!v);
+  })
+  rutas: string[];
+
+  @Expose()
   estado: boolean;
 
   @Expose()
@@ -37,11 +46,12 @@ export class GetUserDto {
   @Expose()
   nombre: string;
 
-  @Exclude()
-  password: string;
+  @Expose()
+  @Transform(({ obj }) => obj.puedeActualizarUbicacion ?? false)
+  puedeActualizarUbicacion: boolean;
 
   @Exclude()
-  rutas: string[];
+  password: string;
 
   @Exclude()
   _id: string;

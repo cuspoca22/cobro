@@ -8,6 +8,8 @@ export class UserEntity {
    empresa: string;
    estado: boolean;
    ruta?: string;
+   /** Rutas de SUPERVISOR (ids). */
+   rutas?: string[];
    puedeActualizarUbicacion?: boolean;
 
    constructor(data?: Partial<UserEntity>) {
@@ -23,6 +25,11 @@ export class UserEntity {
       const rutaRaw = object.ruta?._id ?? object.ruta;
       const empresaRaw = object.empresa?._id ?? object.empresa;
 
+      const rutasRaw = Array.isArray(object.rutas) ? object.rutas : [];
+      const rutas = rutasRaw
+         .map((r: any) => (r?._id ?? r)?.toString())
+         .filter((v: string | undefined): v is string => !!v);
+
       return new UserEntity({
          id: userId,
          nombre: object.nombre,
@@ -31,7 +38,8 @@ export class UserEntity {
          empresa: empresaRaw ? empresaRaw.toString() : undefined,
          estado: object.estado,
          ruta: rutaRaw ? rutaRaw.toString() : undefined,
-         puedeActualizarUbicacion: object.puedeActualizarUbicacion
+         rutas,
+         puedeActualizarUbicacion: object.puedeActualizarUbicacion ?? false,
       });
 
    }

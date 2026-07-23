@@ -1,6 +1,6 @@
 import { Body, Controller, Post, Param, Get, Patch, Delete, Query, ParseBoolPipe, Req } from '@nestjs/common';
 import { AuthService } from './auth.service';
-import { LoginDto, UpdateUserDto, CreateUserDto, GetUserDto } from './dto';
+import { LoginDto, UpdateUserDto, UpdateProfileDto, CreateUserDto, GetUserDto } from './dto';
 import { Auth, GetUser } from './decorators';
 import { ValidRoles } from './interfaces';
 import { Request } from 'express';
@@ -49,6 +49,16 @@ export class AuthController {
     @Param("termino") termino: string
   ) {
     return this.authService.findOne(termino)
+  }
+
+  /** Auto-edición: cualquier usuario autenticado, solo nombre/username/password. */
+  @Auth()
+  @Patch('me')
+  async updateMe(
+    @GetUser() user: GetUserDto,
+    @Body() dto: UpdateProfileDto,
+  ) {
+    return this.authService.updateProfile(user.id, dto);
   }
 
   @Auth(ValidRoles.admin, ValidRoles.superAdmin)

@@ -119,9 +119,10 @@ export class EmpresaService {
       .populate([
         {
           path: 'employes',
-          populate: {
-            path: 'ruta'
-          }
+          populate: [
+            { path: 'ruta' },
+            { path: 'rutas', select: 'nombre' },
+          ],
         },
         {
           path: 'rutas'
@@ -260,6 +261,15 @@ export class EmpresaService {
     try {
 
       const empresa = await this.empresaModel.findById(userDto.empresa).populate('employes');
+      if (!empresa) {
+        throw new NotFoundException('La empresa no existe');
+      }
+
+      await this.assertRutasBelongToEmpresa(userDto.empresa, [
+        ...(userDto.ruta ? [userDto.ruta] : []),
+        ...(userDto.rutas || []),
+      ]);
+
       const empleado = await this.authSvc.create(userDto);
 
       const existeEmpleado = (empresa.employes as User[]).some(e => e._id.equals(empleado._id));
@@ -283,6 +293,35 @@ export class EmpresaService {
     }
 
     return true;
+  }
+
+  /** Valida que las rutas indicadas pertenezcan a la empresa. */
+  async assertRutasBelongToEmpresa(
+    empresaId: string,
+    rutaIds: string[],
+  ): Promise<void> {
+    const uniqueIds = [...new Set(rutaIds.filter(Boolean))];
+    if (uniqueIds.length === 0) return;
+
+    const empresa = await this.empresaModel
+      .findById(empresaId)
+      .select('rutas')
+      .lean();
+
+    if (!empresa) {
+      throw new NotFoundException('La empresa no existe');
+    }
+
+    const empresaRutaIds = new Set(
+      (empresa.rutas || []).map((id: any) => id.toString()),
+    );
+
+    const invalid = uniqueIds.filter((id) => !empresaRutaIds.has(id));
+    if (invalid.length > 0) {
+      throw new BadRequestException(
+        `Las rutas no pertenecen a la empresa: ${invalid.join(', ')}`,
+      );
+    }
   }
 
   async deleteEmpleado(idEmpresa: string, empleado: string) {
@@ -367,6 +406,10 @@ export class EmpresaService {
 
     if (error.code === 11000) {
       throw new BadRequestException("Ya existe esta Empresa");
+    }
+
+    if (error?.status && error?.response) {
+      throw error;
     }
 
     this.logger.error(error);

@@ -54,6 +54,13 @@ export class User extends Document {
    })
    ruta: Ruta;
 
+   /** Rutas asignadas a SUPERVISOR (multi-ruta). */
+   @Prop({
+      type: [{ type: mongoose.Schema.Types.ObjectId, ref: "Ruta" }],
+      default: [],
+   })
+   rutas: Types.ObjectId[] | Ruta[];
+
    @Prop({
       type: mongoose.Schema.Types.ObjectId,
       ref: "Empresa"
@@ -72,4 +79,5 @@ export const UserSchema = SchemaFactory.createForClass(User);
 
 // crea los indices para un funcionamiento mas optimizado
 UserSchema.index({ ruta: 1 });
+UserSchema.index({ rutas: 1 });
 UserSchema.index({ empresa: 1 });

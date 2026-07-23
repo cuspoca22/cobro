@@ -5,7 +5,7 @@ import { ClientSession, Model, Types, isValidObjectId } from 'mongoose';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from "bcrypt";
 
-import { CreateUserDto, GetUserDto, LoginDto, LoginResponseDto } from './dto';
+import { CreateUserDto, GetUserDto, LoginDto, LoginResponseDto, UpdateProfileDto } from './dto';
 import { JwtPayload } from './interfaces';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { LogAuth } from 'src/log-auth/entities/log-auth.entity';
@@ -37,8 +37,9 @@ export class AuthService {
    async create(createUserDto: CreateUserDto): Promise<User> {
 
       try {
+         const payload = this.normalizeRoleAssignment({ ...createUserDto });
 
-         const user = new this.userModel(createUserDto);
+         const user = new this.userModel(payload);
          user.password = bcrypt.hashSync(createUserDto.password, 10);
 
          await user.save();
@@ -58,10 +59,16 @@ export class AuthService {
       let user = await this.userModel.findOne({
          username: username.toUpperCase()
       })
-         .populate({
-            path: "ruta",
-            select: 'status isLocked timeZone'
-         }).lean()
+         .populate([
+            {
+               path: "ruta",
+               select: 'status isLocked timeZone'
+            },
+            {
+               path: "rutas",
+               select: 'nombre status'
+            },
+         ]).lean()
 
       if (!user) {
 
@@ -190,7 +197,7 @@ export class AuthService {
 
       if (isValidObjectId(termino)) {
          user = await this.userModel.findById(termino)
-            .populate('ruta')
+            .populate(['ruta', 'rutas'])
             .select("-password")
       }
 
@@ -199,10 +206,7 @@ export class AuthService {
          user = await this.userModel.findOne({
             $or: [{ nombre: regex }, { username: regex }],
          })
-            .populate({
-               path: "rol",
-               select: "rol"
-            })
+            .populate(['ruta', 'rutas'])
             .select("-password");
       }
 
@@ -212,6 +216,57 @@ export class AuthService {
       }
 
       return user;
+   }
+
+   /**
+    * Actualiza solo datos de perfil del usuario autenticado.
+    * No permite cambiar rol, ruta, empresa ni permisos.
+    */
+   async updateProfile(id: string, dto: UpdateProfileDto) {
+      const user = await this.userModel.findById(id);
+      if (!user) {
+         throw new NotFoundException(`No existe un usuario con el id ${id}`);
+      }
+
+      const patch: Record<string, any> = {};
+
+      if (dto.nombre !== undefined) {
+         const nombre = dto.nombre?.trim();
+         if (!nombre || nombre.length < 3) {
+            throw new BadRequestException('El nombre debe tener al menos 3 caracteres');
+         }
+         patch.nombre = nombre;
+      }
+
+      if (dto.username !== undefined) {
+         const username = dto.username?.trim();
+         if (!username || username.length < 3) {
+            throw new BadRequestException('El usuario debe tener al menos 3 caracteres');
+         }
+         patch.username = username;
+      }
+
+      if (dto.password) {
+         if (dto.password.length < 6) {
+            throw new BadRequestException('La contraseña tiene que tener minimo 6 caracteres');
+         }
+         patch.password = bcrypt.hashSync(dto.password, 10);
+      }
+
+      if (Object.keys(patch).length === 0) {
+         throw new BadRequestException('No hay campos para actualizar');
+      }
+
+      try {
+         await user.updateOne(patch, { returnDocument: 'after' });
+         const { password: _pw, ...safePatch } = patch;
+         return UserEntity.fromObject({
+            ...user.toJSON(),
+            ...safePatch,
+         });
+      } catch (error) {
+         this.handleExceptions(error);
+      }
    }
 
    async update(id: string, updateUserDto: UpdateUserDto) {
@@ -232,17 +287,80 @@ export class AuthService {
          delete updateUserDto.password;
       }
 
+      const effectiveRol = updateUserDto.rol ?? user.rol;
+      const normalized = this.normalizeRoleAssignment({
+         ...updateUserDto,
+         rol: effectiveRol,
+         ruta: updateUserDto.ruta !== undefined ? updateUserDto.ruta : (user.ruta as any)?.toString?.() ?? user.ruta,
+         rutas: updateUserDto.rutas !== undefined
+            ? updateUserDto.rutas
+            : ((user.rutas as any[]) || []).map((r) => (r?._id ?? r)?.toString()).filter(Boolean),
+      } as CreateUserDto);
+
+      const empresaId = (user.empresa as any)?.toString?.() ?? user.empresa?.toString();
+      if (empresaId) {
+         await this.empresaService.assertRutasBelongToEmpresa(empresaId, [
+            ...(normalized.ruta ? [normalized.ruta] : []),
+            ...(normalized.rutas || []),
+         ]);
+      }
+
+      const { password: _pw, ...restDto } = updateUserDto;
+      const patch: Record<string, any> = {
+         ...restDto,
+         rol: effectiveRol,
+         ruta: normalized.ruta ?? null,
+         rutas: normalized.rutas ?? [],
+      };
+      if (updateUserDto.password) {
+         patch.password = updateUserDto.password;
+      }
+      if (updateUserDto.puedeActualizarUbicacion !== undefined) {
+         patch.puedeActualizarUbicacion = updateUserDto.puedeActualizarUbicacion;
+      }
+
       try {
-         await user.updateOne(updateUserDto, { returnDocument: 'after' });
+         await user.updateOne(patch, { returnDocument: 'after' });
 
          return {
             ...user.toJSON(),
-            ...updateUserDto
+            ...patch,
          }
       } catch (error) {
          this.handleExceptions(error)
       }
 
+   }
+
+   /**
+    * Ajusta ruta vs rutas según el rol:
+    * - COBRADOR: usa ruta, limpia rutas
+    * - SUPERVISOR: usa rutas, limpia ruta
+    * - ADMIN/SUPERADMIN/otros: limpia ambos
+    */
+   normalizeRoleAssignment<T extends Partial<CreateUserDto>>(dto: T): T {
+      const rol = dto.rol;
+
+      if (rol === 'COBRADOR') {
+         return {
+            ...dto,
+            rutas: [],
+         };
+      }
+
+      if (rol === 'SUPERVISOR') {
+         return {
+            ...dto,
+            ruta: null as any,
+            rutas: Array.isArray(dto.rutas) ? dto.rutas : [],
+         };
+      }
+
+      return {
+         ...dto,
+         ruta: null as any,
+         rutas: [],
+      };
    }
 
    public async deleteUser(id: string): Promise<string> {

@@ -29,7 +29,8 @@ export class JWTStrategy extends PassportStrategy(Strategy, 'jwt') {
 
     let user = await this.userModel.findById(id)
       .populate([
-        { path: 'ruta' }
+        { path: 'ruta' },
+        { path: 'rutas', select: 'nombre status' },
       ])
 
     if (!user)

@@ -21,6 +21,7 @@ describe('AuthController', () => {
     checkStatus: jest.fn(),
     findOne: jest.fn(),
     update: jest.fn(),
+    updateProfile: jest.fn(),
     deleteUser: jest.fn(),
   };
 
@@ -118,6 +119,19 @@ describe('AuthController', () => {
 
       expect(await controller.findOne(term)).toBe(result);
       expect(mockAuthService.findOne).toHaveBeenCalledWith(term);
+    });
+  });
+
+  describe('updateMe', () => {
+    it('should update the authenticated user profile', async () => {
+      const userDto: GetUserDto = { ...mockUserEntity } as unknown as GetUserDto;
+      const dto = { nombre: 'Updated Name' };
+      const result = { ...mockUserEntity, ...dto };
+
+      mockAuthService.updateProfile.mockResolvedValue(result);
+
+      expect(await controller.updateMe(userDto, dto)).toBe(result);
+      expect(mockAuthService.updateProfile).toHaveBeenCalledWith(userDto.id, dto);
     });
   });
 
