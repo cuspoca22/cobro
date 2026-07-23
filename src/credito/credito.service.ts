@@ -591,46 +591,110 @@ export class CreditoService {
   }
 
   async getHistorialCreditos(clienteId: string): Promise<HistorialCredito[]> {
+    if (!Types.ObjectId.isValid(clienteId)) {
+      throw new BadRequestException('clienteId inválido');
+    }
 
-    const creditos = await this.creditoModel
-      .find({
-        cliente: clienteId,
-        status: false
-      })
-      .sort({ fecha_inicio: -1 })
-      .limit(5)
-      .select('valor_credito interes fecha_inicio frecuencia_cobro total_cuotas ultimo_pago')
-      .lean()
-      .exec();
+    const rows = await this.creditoModel.aggregate([
+      {
+        $match: {
+          cliente: new Types.ObjectId(clienteId),
+          status: false,
+        },
+      },
+      { $sort: { fecha_inicio: -1 } },
+      { $limit: 50 },
+      {
+        $lookup: {
+          from: 'movimientoCaja',
+          let: { creditoId: '$_id' },
+          pipeline: [
+            {
+              $match: {
+                $expr: { $eq: ['$credito', '$$creditoId'] },
+                tipoMovimiento: TipoMovimiento.INGRESO,
+                subTipo: SubTipo.PAGOCREDITO,
+              },
+            },
+          ],
+          as: 'allPayments',
+        },
+      },
+      {
+        $addFields: {
+          abonos: {
+            $sum: {
+              $map: {
+                input: '$allPayments',
+                as: 'p',
+                in: {
+                  $ifNull: [
+                    '$$p.montoAbono',
+                    {
+                      $subtract: [
+                        '$$p.monto',
+                        { $ifNull: ['$$p.montoMora', 0] },
+                      ],
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        },
+      },
+      {
+        $project: {
+          ruta: 1,
+          valor_credito: 1,
+          interes: 1,
+          total_pagar: 1,
+          valor_cuota: 1,
+          fecha_inicio: 1,
+          dueDate: 1,
+          frecuencia_cobro: 1,
+          total_cuotas: 1,
+          ultimo_pago: 1,
+          state: 1,
+          observaciones: 1,
+          mora_adeudada: 1,
+          mora_cobrada: 1,
+          abonos: 1,
+          saldo: { $subtract: ['$total_pagar', '$abonos'] },
+        },
+      },
+    ]);
 
-    const historial: HistorialCredito[] = creditos.map((credito) => {
-      if (!credito.fecha_inicio || !credito.ultimo_pago) {
-        return {
-          valor_credito: credito.valor_credito,
-          interes: credito.interes,
-          fecha_inicio: credito.fecha_inicio,
-          ultimo_pago: credito.ultimo_pago,
-          frecuencia_cobro: credito.frecuencia_cobro,
-          total_cuotas: credito.total_cuotas,
-          dias_tardados_en_pagar: 0
-        }
-      }
-
-      const diasTardados = this.dateFnsAdapter.differenceInDays(credito.ultimo_pago, credito.fecha_inicio);
+    return rows.map((credito) => {
+      const diasTardados =
+        credito.fecha_inicio && credito.ultimo_pago
+          ? this.dateFnsAdapter.differenceInDays(
+              credito.ultimo_pago,
+              credito.fecha_inicio,
+            )
+          : 0;
 
       return {
+        id: credito._id.toString(),
+        ruta: credito.ruta?.toString?.() ?? String(credito.ruta),
         valor_credito: credito.valor_credito,
         interes: credito.interes,
+        total_pagar: credito.total_pagar,
+        abonos: credito.abonos ?? 0,
+        saldo: credito.saldo ?? 0,
+        valor_cuota: credito.valor_cuota,
         fecha_inicio: credito.fecha_inicio,
-        ultimo_pago: credito.ultimo_pago,
+        dueDate: credito.dueDate,
         frecuencia_cobro: credito.frecuencia_cobro,
+        ultimo_pago: credito.ultimo_pago,
         total_cuotas: credito.total_cuotas,
-        dias_tardados_en_pagar: diasTardados
-      }
-    })
-
-    return historial;
-
+        dias_tardados_en_pagar: diasTardados,
+        state: credito.state,
+        observaciones: credito.observaciones,
+        mora_adeudada: credito.mora_adeudada ?? 0,
+        mora_cobrada: credito.mora_cobrada ?? 0,
+      };
+    });
   }
 
   async aplicarMora(

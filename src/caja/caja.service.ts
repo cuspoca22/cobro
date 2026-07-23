@@ -295,8 +295,6 @@ export class CajaService {
 
     const baseDate = new Date(fecha);
     const inicioBusqueda = this.dateFnsAdapter.startOfDayUtc(baseDate);
-    // Para el fin del día, necesitamos asumir que 'fecha' es una fecha local o UTC sin hora.
-    // Si asumimos UTC 00:00, el final es 23:59:59.
     const finBusqueda = new Date(baseDate);
     finBusqueda.setUTCHours(23, 59, 59, 999);
 
@@ -304,16 +302,20 @@ export class CajaService {
       {
         $match: {
           ruta: new Types.ObjectId(rutaId),
-          fecha: { $gte: inicioBusqueda, $lte: finBusqueda }
-        }
-      }
+          fecha: { $gte: inicioBusqueda, $lte: finBusqueda },
+        },
+      },
     ]);
 
     if (caja.length < 1) {
       throw new NotFoundException('No se encontraron registro de este dia');
     }
 
-    return caja[0];
+    const moraConfig = await this.creditoService.resolveMoraConfigForRuta(rutaId);
+    return CajaEntity.fromObject({
+      ...caja[0],
+      cobraMora: !!moraConfig?.cobraMora,
+    });
   }
 
   /** Reportes: lectura lean de cajas históricas. */
