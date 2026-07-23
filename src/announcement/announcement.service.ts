@@ -294,7 +294,7 @@ export class AnnouncementService {
         userId: new Types.ObjectId(userId),
       },
       { $set: { dismissedAt: new Date() } },
-      { upsert: true, new: true },
+      { upsert: true, returnDocument: 'after' },
     );
 
     return { ok: true };
@@ -312,7 +312,7 @@ export class AnnouncementService {
         userId: new Types.ObjectId(userId),
       },
       { $set: { acknowledgedAt: new Date() } },
-      { upsert: true, new: true },
+      { upsert: true, returnDocument: 'after' },
     );
 
     return { ok: true };

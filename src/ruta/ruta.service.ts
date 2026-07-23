@@ -226,7 +226,7 @@ export class RutaService {
     const updated = await this.rutaModel.findByIdAndUpdate(
       rutaId,
       { empresa: new Types.ObjectId(empresaId) },
-      { session: session || undefined, new: true },
+      { session: session || undefined, returnDocument: 'after' },
     );
     if (!updated) {
       throw new NotFoundException(`La ruta con el id ${rutaId} no existe`);

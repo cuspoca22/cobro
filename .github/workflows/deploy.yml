@@ -31,7 +31,7 @@ jobs:
           host: ${{ secrets.DO_HOST }}
           username: ${{ secrets.DO_USER }}
           key: ${{ secrets.DO_SSH_KEY }}
-          source: "dist/,package.json,ecosystem.config.cjs"
+          source: "dist/,package.json,ecosystem.config.cjs,public/"
           target: "~/proyectos/api"
           strip_components: 0
 

@@ -36,7 +36,9 @@ const envFile = `.env.${environment}`;
       dbName: process.env.MONGO_DB_NAME,
     }),
     ServeStaticModule.forRoot({
-      rootPath: join(__dirname, "..", 'public'),
+      // process.cwd() = raíz del proyecto (PM2 cwd / carpeta del deploy).
+      // No usar __dirname: el build queda en dist/src y resolvía a dist/public.
+      rootPath: join(process.cwd(), 'public'),
     }),
     MovimientoCajaModule,
     CurrencyModule,
