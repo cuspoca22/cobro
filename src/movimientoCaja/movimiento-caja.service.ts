@@ -240,44 +240,85 @@ export class MovimientoCajaService {
     session.startTransaction();
 
     try {
+      const movimiento = await this.cajaMovimientoModel
+        .findOne({
+          credito: new mongoose.Types.ObjectId(creditoId),
+          subTipo: SubTipo.PRESTAMO,
+        })
+        .session(session);
 
-      const updateMovimiento = await this.cajaMovimientoModel.findOneAndUpdate(
-        // FIX [P1]: filtrar por préstamo; antes podía machacar un pago_credito del mismo crédito
-        { credito: new mongoose.Types.ObjectId(creditoId), subTipo: SubTipo.PRESTAMO },
-        { $set: { monto: updateCreditoDto.valor_credito } },
-        { returnDocument: 'after', session }
+      if (!movimiento) {
+        throw new NotFoundException(`Credito con el id ${creditoId} no existe`);
+      }
+
+      const rutaId = movimiento.ruta?.toString();
+      if (!rutaId) {
+        throw new BadRequestException('El movimiento de préstamo no tiene ruta asociada');
+      }
+
+      await this.assertMovimientoEsDeHoy(
+        movimiento.fecha,
+        rutaId,
+        'Solo se pueden actualizar créditos o renovaciones del día de hoy',
+        session,
       );
 
-      if (!updateMovimiento) throw new NotFoundException(`Credito con el id ${creditoId} no existe`);
+      const updateMovimiento = await this.cajaMovimientoModel.findOneAndUpdate(
+        { _id: movimiento._id },
+        { $set: { monto: updateCreditoDto.valor_credito } },
+        { returnDocument: 'after', session },
+      );
+
+      if (!updateMovimiento) {
+        throw new NotFoundException(`Credito con el id ${creditoId} no existe`);
+      }
 
       await this.creditoService.updateCredito(creditoId, updateCreditoDto, session);
 
       await session.commitTransaction();
 
       return true;
-
     } catch (error) {
-
       await session.abortTransaction();
       this.handleExceptions(error);
-
     } finally {
-
       await session.endSession();
-
     }
   }
 
   async deleteCredito(creditoId: string, movimientoId: string) {
     return this.transactionHelper.withTransaction(async (session) => {
+      const movimiento = await this.cajaMovimientoModel
+        .findById(movimientoId)
+        .session(session);
 
-      const deleteMovimiento = await this.cajaMovimientoModel.findByIdAndDelete(movimientoId, { session });
-      if (!deleteMovimiento) throw new NotFoundException(`Movimiento con el id ${movimientoId} no existe`);
+      if (!movimiento) {
+        throw new NotFoundException(`Movimiento con el id ${movimientoId} no existe`);
+      }
+
+      const rutaId = movimiento.ruta?.toString();
+      if (!rutaId) {
+        throw new BadRequestException('El movimiento no tiene ruta asociada');
+      }
+
+      await this.assertMovimientoEsDeHoy(
+        movimiento.fecha,
+        rutaId,
+        'Solo se pueden eliminar créditos o renovaciones del día de hoy',
+        session,
+      );
+
+      const deleteMovimiento = await this.cajaMovimientoModel.findByIdAndDelete(
+        movimientoId,
+        { session },
+      );
+      if (!deleteMovimiento) {
+        throw new NotFoundException(`Movimiento con el id ${movimientoId} no existe`);
+      }
 
       await this.creditoService.deleteCredito(creditoId, session);
 
       return true;
-
     }, 'MovimientoCajaService.deleteCredito');
   }
 
@@ -293,7 +334,12 @@ export class MovimientoCajaService {
       if (!caja) throw new NotFoundException(`Caja con el id ${movimiento.caja} no existe`);
 
       const rutaId = (movimiento.ruta ?? caja.ruta).toString();
-      await this.assertPagoEsDeHoy(movimiento.fecha, rutaId, session);
+      await this.assertMovimientoEsDeHoy(
+        movimiento.fecha,
+        rutaId,
+        'Solo se pueden modificar o eliminar pagos del día de hoy',
+        session,
+      );
 
       const creditoId = movimiento.credito.toString();
       const montoMoraAnterior = Number(movimiento.montoMora ?? 0);
@@ -407,7 +453,12 @@ export class MovimientoCajaService {
       }
 
       const rutaId = (movimiento.ruta ?? caja.ruta).toString();
-      await this.assertPagoEsDeHoy(movimiento.fecha, rutaId, session);
+      await this.assertMovimientoEsDeHoy(
+        movimiento.fecha,
+        rutaId,
+        'Solo se pueden modificar o eliminar pagos del día de hoy',
+        session,
+      );
 
       const creditoId = movimiento.credito.toString();
       const clienteId = movimiento.cliente.toString();
@@ -428,10 +479,11 @@ export class MovimientoCajaService {
     }, 'MovimientoCajaService.deletePago');
   }
 
-  /** Solo se pueden mutar pagos cuya fecha es el día actual en la TZ de la ruta. */
-  private async assertPagoEsDeHoy(
-    fechaPago: Date,
+  /** Solo se pueden mutar movimientos cuya fecha es el día actual en la TZ de la ruta. */
+  private async assertMovimientoEsDeHoy(
+    fechaMovimiento: Date,
     rutaId: string,
+    message: string,
     session?: ClientSession,
   ): Promise<void> {
     const ruta = await this.rutaService.findContextById(rutaId, session);
@@ -442,12 +494,10 @@ export class MovimientoCajaService {
     const timeZone = ruta.timeZone || 'UTC';
     const inicioHoy = this.dateFnsAdapter.getStartOfTodayInTimeZone(timeZone);
     const finHoy = this.dateFnsAdapter.getEndOfTodayInTimeZone(timeZone);
-    const fecha = new Date(fechaPago);
+    const fecha = new Date(fechaMovimiento);
 
     if (fecha < inicioHoy || fecha > finHoy) {
-      throw new BadRequestException(
-        'Solo se pueden modificar o eliminar pagos del día de hoy',
-      );
+      throw new BadRequestException(message);
     }
   }
 
