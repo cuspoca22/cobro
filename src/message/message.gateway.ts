@@ -17,10 +17,12 @@ import { RutaService } from 'src/ruta/ruta.service';
 import { TrackingService } from 'src/tracking/tracking.service';
 import {
   SocketUserData,
+  WsCommandAck,
   adminRoom,
   empresaRoom,
   isAdminSocketRole,
   isSuperAdminRole,
+  isSupervisorRole,
   superAdminRoom,
 } from './interfaces/socket-auth.interface';
 import { MessageService } from './message.service';
@@ -113,6 +115,7 @@ export class MessageGateway
         rol: user.rol,
         empresaId,
         rutaId: user.ruta ? String(user.ruta) : undefined,
+        rutaIds: Array.isArray(user.rutas) ? user.rutas.map(String) : [],
         nombre: user.nombre,
       };
       client.data.user = data;
@@ -193,25 +196,49 @@ export class MessageGateway
   }
 
   emitRutaLockState(payload: RutaLockStatePayload): void {
+    if (!payload.empresa) {
+      this.logger.warn(
+        `emitRutaLockState omitido: ruta=${payload.ruta} sin empresa`,
+      );
+      return;
+    }
     const event = payload.isLocked ? 'block-caja' : 'unblock-caja';
     this.wss.to(empresaRoom(payload.empresa)).emit(event, payload);
   }
 
   emitCloseCaja(rutaId: string, empresaId: string): void {
+    if (!empresaId) {
+      this.logger.warn(`emitCloseCaja omitido: ruta=${rutaId} sin empresa`);
+      return;
+    }
     this.wss.to(empresaRoom(empresaId)).emit('close-caja', { ruta: rutaId });
   }
 
   emitOpenCaja(rutaId: string, empresaId: string): void {
+    if (!empresaId) {
+      this.logger.warn(`emitOpenCaja omitido: ruta=${rutaId} sin empresa`);
+      return;
+    }
     this.wss.to(empresaRoom(empresaId)).emit('open-caja', { ruta: rutaId });
   }
 
   emitMoraActualizada(payload: MoraActualizadaPayload): void {
+    if (!payload.empresa) {
+      this.logger.warn(
+        `emitMoraActualizada omitido: credito=${payload.creditoId} sin empresa`,
+      );
+      return;
+    }
     this.wss
       .to(empresaRoom(payload.empresa))
       .emit('mora-actualizada', payload);
   }
 
   emitMoraConfigActualizada(payload: MoraConfigActualizadaPayload): void {
+    if (!payload.empresa) {
+      this.logger.warn('emitMoraConfigActualizada omitido: sin empresa');
+      return;
+    }
     this.wss
       .to(empresaRoom(payload.empresa))
       .emit('mora-config-actualizada', payload);
@@ -268,6 +295,10 @@ export class MessageGateway
       return null;
     }
     return data;
+  }
+
+  private ackFail(error: string): WsCommandAck {
+    return { ok: false, error };
   }
 
   @SubscribeMessage('location:update')
@@ -341,65 +372,112 @@ export class MessageGateway
   }
 
   @SubscribeMessage('tracking:subscribe')
-  async handleTrackingSubscribe(@ConnectedSocket() client: Socket) {
+  async handleTrackingSubscribe(
+    @ConnectedSocket() client: Socket,
+  ): Promise<WsCommandAck> {
     const data = this.assertAdminClient(client);
-    if (!data?.empresaId) return;
+    if (!data) {
+      this.logger.warn('tracking:subscribe rechazado: sin rol admin');
+      return this.ackFail('UNAUTHORIZED');
+    }
+    if (!data.empresaId) {
+      this.logger.warn(
+        `tracking:subscribe rechazado: user=${data.userId} sin empresa`,
+      );
+      return this.ackFail('NO_EMPRESA');
+    }
     await this.sendTrackingSnapshot(client, data.empresaId);
+    return { ok: true };
   }
 
   @SubscribeMessage('admin-close-caja')
   async handleCloseRuta(
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: { ruta: string } | Array<{ ruta: string }>,
-  ) {
-    const admin = this.assertAdminClient(client);
-    if (!admin) return;
-    const ruta = this.extractRutaId(payload);
-    if (!ruta) return;
-    if (!(await this.rutaBelongsToEmpresa(ruta, admin.empresaId, admin.rol))) {
-      return;
-    }
-    await this.rutaService.closeRuta(ruta);
+  ): Promise<WsCommandAck> {
+    return this.runAdminRutaCommand(client, payload, 'close', (ruta) =>
+      this.rutaService.closeRuta(ruta),
+    );
   }
 
   @SubscribeMessage('admin-block-caja')
   async handleBlockRuta(
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: { ruta: string } | Array<{ ruta: string }>,
-  ) {
-    const admin = this.assertAdminClient(client);
-    if (!admin) return;
-    const ruta = this.extractRutaId(payload);
-    if (!ruta) return;
-    if (!(await this.rutaBelongsToEmpresa(ruta, admin.empresaId, admin.rol))) {
-      return;
-    }
-    await this.rutaService.lockRuta(ruta);
+  ): Promise<WsCommandAck> {
+    return this.runAdminRutaCommand(client, payload, 'block', (ruta) =>
+      this.rutaService.lockRuta(ruta),
+    );
   }
 
   @SubscribeMessage('admin-unblock-caja')
   async handleUnblockRuta(
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: { ruta: string } | Array<{ ruta: string }>,
-  ) {
-    const admin = this.assertAdminClient(client);
-    if (!admin) return;
-    const ruta = this.extractRutaId(payload);
-    if (!ruta) return;
-    if (!(await this.rutaBelongsToEmpresa(ruta, admin.empresaId, admin.rol))) {
-      return;
-    }
-    await this.rutaService.unlockRuta(ruta);
+  ): Promise<WsCommandAck> {
+    return this.runAdminRutaCommand(client, payload, 'unblock', (ruta) =>
+      this.rutaService.unlockRuta(ruta),
+    );
   }
 
+  private async runAdminRutaCommand(
+    client: Socket,
+    payload: { ruta: string } | Array<{ ruta: string }>,
+    action: 'close' | 'block' | 'unblock',
+    run: (rutaId: string) => Promise<unknown>,
+  ): Promise<WsCommandAck> {
+    const admin = this.assertAdminClient(client);
+    if (!admin) {
+      this.logger.warn(`admin-${action}-caja rechazado: sin rol admin`);
+      return this.ackFail('UNAUTHORIZED');
+    }
+
+    const ruta = this.extractRutaId(payload);
+    if (!ruta) {
+      this.logger.warn(`admin-${action}-caja rechazado: sin ruta`);
+      return this.ackFail('RUTA_REQUIRED');
+    }
+
+    if (!(await this.rutaBelongsToEmpresa(ruta, admin))) {
+      this.logger.warn(
+        `admin-${action}-caja rechazado: user=${admin.userId} ruta=${ruta} ownership`,
+      );
+      return this.ackFail('FORBIDDEN');
+    }
+
+    try {
+      await run(ruta);
+      return { ok: true };
+    } catch (error) {
+      this.logger.warn(
+        `admin-${action}-caja falló: ${(error as Error).message}`,
+      );
+      return this.ackFail('ACTION_FAILED');
+    }
+  }
+
+  /**
+   * SUPERADMIN: cualquier ruta.
+   * ADMIN: misma empresa.
+   * SUPERVISOR: misma empresa + ruta en user.rutas.
+   */
   private async rutaBelongsToEmpresa(
     rutaId: string,
-    empresaId: string | undefined,
-    rol: string,
+    admin: SocketUserData,
   ): Promise<boolean> {
-    if (rol === 'SUPERADMIN') return true;
-    if (!empresaId) return false;
+    if (isSuperAdminRole(admin.rol)) return true;
+    if (!admin.empresaId) return false;
+
     const info = await this.rutaService.getEmpresaIdByRutaId(rutaId);
-    return info.exists && info.empresaId === empresaId;
+    if (!info.exists || info.empresaId !== admin.empresaId) {
+      return false;
+    }
+
+    if (isSupervisorRole(admin.rol)) {
+      const assigned = admin.rutaIds ?? [];
+      return assigned.includes(rutaId);
+    }
+
+    return true;
   }
 }

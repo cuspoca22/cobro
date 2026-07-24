@@ -332,10 +332,14 @@ export class RutaService {
       // Confirma la transacción. Si esta línea no se ejecuta, NINGÚN cambio se guardará.
       await session.commitTransaction();
 
-      this.socketRuta.emitCloseCaja(
-        ruta._id.toString(),
-        ruta.empresa?.toString() ?? '',
-      );
+      const empresaId = ruta.empresa?.toString();
+      if (empresaId) {
+        this.socketRuta.emitCloseCaja(ruta._id.toString(), empresaId);
+      } else {
+        this.logger.warn(
+          `closeRuta: ruta ${ruta._id} sin empresa; no se emitió close-caja`,
+        );
+      }
 
       return true;
 
@@ -376,15 +380,24 @@ export class RutaService {
       ruta.isLocked = true;
       await ruta.save();
 
-      const payload = {
+      const empresaId = ruta.empresa?.toString();
+      if (!empresaId) {
+        this.logger.warn(
+          `lockRuta: ruta ${ruta._id} sin empresa; no se emitió block-caja`,
+        );
+      } else {
+        this.socketRuta.emitRutaLockState({
+          ruta: ruta._id.toString(),
+          isLocked: true,
+          empresa: empresaId,
+        });
+      }
+
+      return {
+        ok: true,
         ruta: ruta._id.toString(),
         isLocked: true as const,
-        empresa: ruta.empresa?.toString() ?? '',
       };
-
-      this.socketRuta.emitRutaLockState(payload);
-
-      return { ok: true, ruta: payload.ruta, isLocked: payload.isLocked };
     } catch (error) {
       this.handleExceptions(error);
     }
@@ -412,15 +425,24 @@ export class RutaService {
       ruta.isLocked = false;
       await ruta.save();
 
-      const payload = {
+      const empresaId = ruta.empresa?.toString();
+      if (!empresaId) {
+        this.logger.warn(
+          `unlockRuta: ruta ${ruta._id} sin empresa; no se emitió unblock-caja`,
+        );
+      } else {
+        this.socketRuta.emitRutaLockState({
+          ruta: ruta._id.toString(),
+          isLocked: false,
+          empresa: empresaId,
+        });
+      }
+
+      return {
+        ok: true,
         ruta: ruta._id.toString(),
         isLocked: false as const,
-        empresa: ruta.empresa?.toString() ?? '',
       };
-
-      this.socketRuta.emitRutaLockState(payload);
-
-      return { ok: true, ruta: payload.ruta, isLocked: payload.isLocked };
     } catch (error) {
       this.handleExceptions(error);
     }
@@ -489,10 +511,14 @@ export class RutaService {
 
       await session.commitTransaction();
 
-      this.socketRuta.emitOpenCaja(
-        ruta._id.toString(),
-        ruta.empresa?.toString() ?? '',
-      );
+      const empresaId = ruta.empresa?.toString();
+      if (empresaId) {
+        this.socketRuta.emitOpenCaja(ruta._id.toString(), empresaId);
+      } else {
+        this.logger.warn(
+          `openRuta: ruta ${ruta._id} sin empresa; no se emitió open-caja`,
+        );
+      }
 
       return {
         ok: true,

@@ -17,6 +17,8 @@ export type AuthUserLike = {
   rol?: string;
   ruta?: unknown;
   empresa?: unknown;
+  /** Rutas asignadas a SUPERVISOR. */
+  rutas?: unknown;
 };
 
 @Injectable()
@@ -113,6 +115,20 @@ export class RutaOwnershipService {
       const rutaEmpresa = this.toId(ruta.empresaId);
       if (!userEmpresa || !rutaEmpresa || userEmpresa !== rutaEmpresa) {
         throw new ForbiddenException('No tienes permiso para operar sobre rutas de otra empresa');
+      }
+
+      if (rol === ValidRoles.supervisor) {
+        const assigned = Array.isArray(user.rutas)
+          ? user.rutas
+              .map((r) => this.toId(r))
+              .filter((id): id is string => !!id)
+          : [];
+        // Sin rutas asignadas: denegar (evita operar toda la empresa por omisión).
+        if (!assigned.length || !assigned.includes(normalizedRutaId)) {
+          throw new ForbiddenException(
+            'No tienes permiso para operar sobre esta ruta',
+          );
+        }
       }
       return;
     }

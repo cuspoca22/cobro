@@ -625,7 +625,7 @@ export class AuthService {
    async findActiveEntityById(id: string): Promise<UserEntity | null> {
       const userDoc = await this.userModel
          .findById(id)
-         .populate([{ path: 'ruta' }]);
+         .populate([{ path: 'ruta' }, { path: 'rutas', select: '_id' }]);
       if (!userDoc || !userDoc.estado) return null;
       return UserEntity.fromObject(userDoc.toObject());
    }

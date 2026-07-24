@@ -24,7 +24,8 @@ export type RutaOwnershipOptions = {
  * FIX [P0 seguridad / ownership]:
  * Exige que la ruta objetivo pertenezca al ámbito del usuario:
  * - COBRADOR → solo user.ruta
- * - ADMIN / SUPERVISOR → rutas de user.empresa
+ * - ADMIN → rutas de user.empresa
+ * - SUPERVISOR → misma empresa + ruta en user.rutas
  * - SUPERADMIN → acceso global
  */
 export function RutaOwnership(options: RutaOwnershipOptions) {

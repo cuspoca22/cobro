@@ -4,7 +4,14 @@ export type SocketUserData = {
   /** Ausente en SUPERADMIN sin empresa asignada. */
   empresaId?: string;
   rutaId?: string;
+  /** Rutas asignadas (SUPERVISOR); vacías en otros roles si no aplican. */
+  rutaIds?: string[];
   nombre: string;
+};
+
+export type WsCommandAck = {
+  ok: boolean;
+  error?: string;
 };
 
 export const ADMIN_SOCKET_ROLES = ['ADMIN', 'SUPERADMIN', 'SUPERVISOR'] as const;
@@ -15,6 +22,10 @@ export function isAdminSocketRole(rol: string): boolean {
 
 export function isSuperAdminRole(rol: string): boolean {
   return rol === 'SUPERADMIN';
+}
+
+export function isSupervisorRole(rol: string): boolean {
+  return rol === 'SUPERVISOR';
 }
 
 export function empresaRoom(empresaId: string): string {
