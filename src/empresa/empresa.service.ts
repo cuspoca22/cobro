@@ -838,6 +838,24 @@ export class EmpresaService {
     return query.lean();
   }
 
+  /** Announcement receipts: nombres de empresa en batch. */
+  async findNamesByIds(
+    ids: string[],
+  ): Promise<Array<{ id: string; name: string }>> {
+    const valid = (ids || []).filter((id) => Types.ObjectId.isValid(id));
+    if (!valid.length) return [];
+
+    const docs = await this.empresaModel
+      .find({ _id: { $in: valid.map((id) => new Types.ObjectId(id)) } })
+      .select('name')
+      .lean();
+
+    return docs.map((d) => ({
+      id: d._id.toString(),
+      name: ((d as any).name as string) || d._id.toString(),
+    }));
+  }
+
   /** Cascada delete ruta: $pull Empresa.rutas. */
   async pullRuta(
     empresaId: string | Types.ObjectId,

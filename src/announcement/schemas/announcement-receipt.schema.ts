@@ -23,6 +23,10 @@ export class AnnouncementReceipt extends Document {
   })
   userId: Types.ObjectId;
 
+  /** Primera vez que el usuario abrió/vió el aviso. */
+  @Prop({ type: Date, required: false })
+  readAt?: Date;
+
   @Prop({ type: Date, required: false })
   dismissedAt?: Date;
 

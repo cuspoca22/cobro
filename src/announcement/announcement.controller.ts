@@ -38,6 +38,12 @@ export class AnnouncementController {
   }
 
   @Auth(ValidRoles.superAdmin)
+  @Get(':id/receipts')
+  findReceipts(@Param('id', ParseMongoIdPipe) id: string) {
+    return this.announcementService.findReceipts(id);
+  }
+
+  @Auth(ValidRoles.superAdmin)
   @Get(':id')
   findOne(@Param('id', ParseMongoIdPipe) id: string) {
     return this.announcementService.findOne(id);
@@ -62,6 +68,12 @@ export class AnnouncementController {
   @Delete(':id')
   remove(@Param('id', ParseMongoIdPipe) id: string) {
     return this.announcementService.remove(id);
+  }
+
+  @Auth(ValidRoles.admin, ValidRoles.supervisor)
+  @Post(':id/read')
+  markRead(@GetUser() user: any, @Param('id', ParseMongoIdPipe) id: string) {
+    return this.announcementService.markRead(id, user.id);
   }
 
   @Auth(ValidRoles.admin, ValidRoles.supervisor)

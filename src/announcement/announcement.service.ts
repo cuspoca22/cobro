@@ -9,7 +9,9 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 
+import { AuthService } from 'src/auth/auth.service';
 import { ValidRoles } from 'src/auth/interfaces';
+import { EmpresaService } from 'src/empresa/empresa.service';
 import { MessageGateway } from 'src/message/message.gateway';
 import { CreateAnnouncementDto } from './dto/create-announcement.dto';
 import { UpdateAnnouncementDto } from './dto/update-announcement.dto';
@@ -22,6 +24,8 @@ import {
 } from './schemas/announcement.schema';
 import { AnnouncementReceipt } from './schemas/announcement-receipt.schema';
 
+type ReceiptStatus = 'unread' | 'read' | 'acknowledged' | 'dismissed';
+
 @Injectable()
 export class AnnouncementService {
   constructor(
@@ -31,6 +35,9 @@ export class AnnouncementService {
     private readonly receiptModel: Model<AnnouncementReceipt>,
     @Inject(forwardRef(() => MessageGateway))
     private readonly messageGateway: MessageGateway,
+    @Inject(forwardRef(() => AuthService))
+    private readonly authService: AuthService,
+    private readonly empresaService: EmpresaService,
   ) {}
 
   async create(dto: CreateAnnouncementDto, createdBy: string) {
@@ -107,6 +114,7 @@ export class AnnouncementService {
     this.assertScopeEmpresas(doc.scope, doc.empresaIds.map((x) => x.toString()));
 
     await doc.save();
+    // No se resetean receipts al editar (corrección de contenido).
     const view = this.toView(doc.toObject());
     if (view.isActive) {
       this.messageGateway.emitAnnouncement(view);
@@ -270,6 +278,11 @@ export class AnnouncementService {
           ...this.toView(doc),
           dismissed: !!receipt?.dismissedAt,
           acknowledged: !!receipt?.acknowledgedAt,
+          read: !!(
+            receipt?.readAt ||
+            receipt?.acknowledgedAt ||
+            receipt?.dismissedAt
+          ),
         };
       })
       .filter((row) => !row.dismissed)
@@ -277,6 +290,17 @@ export class AnnouncementService {
         (a, b) =>
           (severityRank[b.severity] || 0) - (severityRank[a.severity] || 0),
       );
+  }
+
+  /** Marca el aviso como visto (idempotente). */
+  async markRead(announcementId: string, userId: string) {
+    const announcement = await this.announcementModel.findById(announcementId);
+    if (!announcement || !announcement.isActive) {
+      throw new NotFoundException('Aviso no encontrado');
+    }
+
+    await this.upsertReceiptFlags(announcementId, userId, { markRead: true });
+    return { ok: true };
   }
 
   async dismiss(announcementId: string, userId: string) {
@@ -288,14 +312,10 @@ export class AnnouncementService {
       throw new BadRequestException('Este aviso no se puede descartar');
     }
 
-    await this.receiptModel.findOneAndUpdate(
-      {
-        announcementId: new Types.ObjectId(announcementId),
-        userId: new Types.ObjectId(userId),
-      },
-      { $set: { dismissedAt: new Date() } },
-      { upsert: true, returnDocument: 'after' },
-    );
+    await this.upsertReceiptFlags(announcementId, userId, {
+      markRead: true,
+      dismissed: true,
+    });
 
     return { ok: true };
   }
@@ -306,16 +326,163 @@ export class AnnouncementService {
       throw new NotFoundException('Aviso no encontrado');
     }
 
-    await this.receiptModel.findOneAndUpdate(
-      {
-        announcementId: new Types.ObjectId(announcementId),
-        userId: new Types.ObjectId(userId),
-      },
-      { $set: { acknowledgedAt: new Date() } },
-      { upsert: true, returnDocument: 'after' },
-    );
+    await this.upsertReceiptFlags(announcementId, userId, {
+      markRead: true,
+      acknowledged: true,
+    });
 
     return { ok: true };
+  }
+
+  /**
+   * Reporte SA: audiencia esperada + receipts mergeados.
+   * User vía AuthService; nombres empresa vía EmpresaService (V4b).
+   */
+  async findReceipts(announcementId: string) {
+    const doc = await this.announcementModel.findById(announcementId).lean();
+    if (!doc) {
+      throw new NotFoundException('Aviso no encontrado');
+    }
+
+    const audienceRoles = (doc.audience?.length
+      ? doc.audience
+      : [AnnouncementAudience.ADMIN, AnnouncementAudience.SUPERVISOR]
+    ).map((r) => r.toString());
+
+    const scopeEmpresaIds =
+      doc.scope === AnnouncementScope.GLOBAL
+        ? undefined
+        : (doc.empresaIds || []).map((x) => x.toString());
+
+    const audienceUsers =
+      await this.authService.findForAnnouncementAudience({
+        roles: audienceRoles,
+        empresaIds: scopeEmpresaIds,
+      });
+
+    const empresaIds = [
+      ...new Set(
+        audienceUsers
+          .map((u) => u.empresaId)
+          .filter((id): id is string => !!id),
+      ),
+    ];
+    const empresaNames = await this.empresaService.findNamesByIds(empresaIds);
+    const empresaNameById = new Map(
+      empresaNames.map((e) => [e.id, e.name]),
+    );
+
+    const receipts = await this.receiptModel
+      .find({ announcementId: new Types.ObjectId(announcementId) })
+      .lean();
+    const receiptByUser = new Map(
+      receipts.map((r) => [r.userId.toString(), r]),
+    );
+
+    const recipients = audienceUsers.map((user) => {
+      const receipt = receiptByUser.get(user.id);
+      const readAt = receipt?.readAt ?? null;
+      const acknowledgedAt = receipt?.acknowledgedAt ?? null;
+      const dismissedAt = receipt?.dismissedAt ?? null;
+      const status = this.resolveReceiptStatus({
+        readAt,
+        acknowledgedAt,
+        dismissedAt,
+      });
+
+      return {
+        userId: user.id,
+        name: user.nombre,
+        username: user.username,
+        rol: user.rol,
+        empresaId: user.empresaId,
+        empresaName: user.empresaId
+          ? empresaNameById.get(user.empresaId) || null
+          : null,
+        readAt: readAt ? new Date(readAt).toISOString() : null,
+        acknowledgedAt: acknowledgedAt
+          ? new Date(acknowledgedAt).toISOString()
+          : null,
+        dismissedAt: dismissedAt
+          ? new Date(dismissedAt).toISOString()
+          : null,
+        status,
+      };
+    });
+
+    recipients.sort((a, b) => {
+      const rank: Record<ReceiptStatus, number> = {
+        unread: 0,
+        read: 1,
+        acknowledged: 2,
+        dismissed: 3,
+      };
+      const diff = rank[a.status] - rank[b.status];
+      if (diff !== 0) return diff;
+      return a.name.localeCompare(b.name);
+    });
+
+    const summary = {
+      audienceTotal: recipients.length,
+      read: recipients.filter((r) => r.status !== 'unread').length,
+      acknowledged: recipients.filter((r) => !!r.acknowledgedAt).length,
+      dismissed: recipients.filter((r) => !!r.dismissedAt).length,
+      unread: recipients.filter((r) => r.status === 'unread').length,
+    };
+
+    return {
+      announcementId: doc._id.toString(),
+      title: doc.title,
+      summary,
+      recipients,
+    };
+  }
+
+  private async upsertReceiptFlags(
+    announcementId: string,
+    userId: string,
+    flags: { markRead?: boolean; dismissed?: boolean; acknowledged?: boolean },
+  ) {
+    const filter = {
+      announcementId: new Types.ObjectId(announcementId),
+      userId: new Types.ObjectId(userId),
+    };
+    const now = new Date();
+
+    const $set: Record<string, Date | Types.ObjectId> = {
+      announcementId: filter.announcementId,
+      userId: filter.userId,
+    };
+    if (flags.dismissed) $set.dismissedAt = now;
+    if (flags.acknowledged) $set.acknowledgedAt = now;
+
+    // readAt solo si aún no existe (idempotente; sin aggregation pipeline)
+    if (flags.markRead) {
+      const existing = await this.receiptModel
+        .findOne(filter)
+        .select('readAt')
+        .lean();
+      if (!existing?.readAt) {
+        $set.readAt = now;
+      }
+    }
+
+    await this.receiptModel.findOneAndUpdate(
+      filter,
+      { $set },
+      { upsert: true },
+    );
+  }
+
+  private resolveReceiptStatus(receipt: {
+    readAt?: Date | null;
+    acknowledgedAt?: Date | null;
+    dismissedAt?: Date | null;
+  }): ReceiptStatus {
+    if (receipt.dismissedAt) return 'dismissed';
+    if (receipt.acknowledgedAt) return 'acknowledged';
+    if (receipt.readAt) return 'read';
+    return 'unread';
   }
 
   private assertScopeEmpresas(

@@ -650,11 +650,11 @@ export class AuthService {
       };
    }
 
-   /** Tracking: batch de perfiles en una empresa. */
-   async findTrackingProfilesByIds(
+  /** Tracking: batch de perfiles en una empresa. */
+  async findTrackingProfilesByIds(
       ids: string[],
       empresaId: string,
-   ): Promise<Array<{ _id: string; nombre: string; rutaId?: string }>> {
+  ): Promise<Array<{ _id: string; nombre: string; rutaId?: string }>> {
       if (!ids.length) return [];
       const users = await this.userModel
          .find({
@@ -669,6 +669,47 @@ export class AuthService {
          rutaId: u.ruta ? u.ruta.toString() : undefined,
       }));
    }
+
+  /**
+   * Announcement receipts: audiencia lean por roles (+ empresas opcionales).
+   * Sin `empresaIds` → GLOBAL (todas las empresas).
+   */
+  async findForAnnouncementAudience(params: {
+    roles: string[];
+    empresaIds?: string[];
+  }): Promise<
+    Array<{ id: string; nombre: string; username: string; rol: string; empresaId: string | null }>
+  > {
+    const roles = (params.roles || []).filter(Boolean);
+    if (!roles.length) return [];
+
+    const filter: Record<string, any> = {
+      rol: { $in: roles },
+      estado: true,
+    };
+
+    const empresaIds = (params.empresaIds || []).filter((id) =>
+      Types.ObjectId.isValid(id),
+    );
+    if (empresaIds.length) {
+      filter.empresa = {
+        $in: empresaIds.map((id) => new Types.ObjectId(id)),
+      };
+    }
+
+    const users = await this.userModel
+      .find(filter)
+      .select('nombre username rol empresa')
+      .lean();
+
+    return users.map((u) => ({
+      id: u._id.toString(),
+      nombre: (u.nombre as string) || '',
+      username: (u.username as string) || '',
+      rol: (u.rol as string) || '',
+      empresaId: u.empresa ? u.empresa.toString() : null,
+    }));
+  }
 
    private getJwtToken(payload: JwtPayload): string {
       const token = this.jwtService.sign(payload);
