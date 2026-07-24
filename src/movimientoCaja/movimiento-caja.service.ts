@@ -80,6 +80,7 @@ export class MovimientoCajaService {
         valorCuota: credito.valor_cuota,
         saldo: saldoRedondeado,
         valorCredito: credito.valor_credito,
+        daysOverdue: credito.daysOverdue ?? 0,
       });
 
       const maxMora = this.creditCalculatorSvc.maxMoraPermitida({
@@ -396,6 +397,7 @@ export class MovimientoCajaService {
         valorCuota: credito.valor_cuota,
         saldo: saldoRedondeado,
         valorCredito: credito.valor_credito,
+        daysOverdue: credito.daysOverdue ?? 0,
       });
 
       const maxMora = this.creditCalculatorSvc.maxMoraPermitida({

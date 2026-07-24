@@ -234,11 +234,12 @@ describe('CreditCalculatorService', () => {
           valorCuota: 100,
           saldo: 500,
           valorCredito: 1000,
+          daysOverdue: 3,
         }),
       ).toBe(0);
     });
 
-    it('calcula sobre valor cuota', () => {
+    it('VALOR_CUOTA con 0 días de atraso → 0', () => {
       expect(
         service.calcularMoraSugerida({
           cobraMora: true,
@@ -247,11 +248,38 @@ describe('CreditCalculatorService', () => {
           valorCuota: 100,
           saldo: 500,
           valorCredito: 1000,
+          daysOverdue: 0,
         }),
-      ).toBe(10);
+      ).toBe(0);
     });
 
-    it('calcula sobre saldo', () => {
+    it('VALOR_CUOTA acumula por días de atraso', () => {
+      expect(
+        service.calcularMoraSugerida({
+          cobraMora: true,
+          porcentajeMora: 10,
+          baseCalculoMora: 'VALOR_CUOTA',
+          valorCuota: 100,
+          saldo: 500,
+          valorCredito: 1000,
+          daysOverdue: 1,
+        }),
+      ).toBe(10);
+
+      expect(
+        service.calcularMoraSugerida({
+          cobraMora: true,
+          porcentajeMora: 10,
+          baseCalculoMora: 'VALOR_CUOTA',
+          valorCuota: 100,
+          saldo: 500,
+          valorCredito: 1000,
+          daysOverdue: 5,
+        }),
+      ).toBe(50);
+    });
+
+    it('calcula sobre saldo sin factor días', () => {
       expect(
         service.calcularMoraSugerida({
           cobraMora: true,
@@ -260,11 +288,12 @@ describe('CreditCalculatorService', () => {
           valorCuota: 100,
           saldo: 200,
           valorCredito: 1000,
+          daysOverdue: 5,
         }),
       ).toBe(10);
     });
 
-    it('calcula sobre valor crédito', () => {
+    it('calcula sobre valor crédito sin factor días', () => {
       expect(
         service.calcularMoraSugerida({
           cobraMora: true,
@@ -273,6 +302,7 @@ describe('CreditCalculatorService', () => {
           valorCuota: 100,
           saldo: 500,
           valorCredito: 1000,
+          daysOverdue: 5,
         }),
       ).toBe(20);
     });

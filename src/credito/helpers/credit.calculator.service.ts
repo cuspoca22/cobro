@@ -282,6 +282,8 @@ export class CreditCalculatorService {
   /**
    * Calcula la mora sugerida según config de empresa y datos del crédito.
    * Si la empresa no cobra mora o el % es 0, retorna 0.
+   * Con base VALOR_CUOTA se acumula por días de atraso: cuota × % × daysOverdue.
+   * SALDO / VALOR_CREDITO siguen siendo un % plano (sin factor días).
    */
   calcularMoraSugerida(params: {
     cobraMora: boolean;
@@ -290,6 +292,7 @@ export class CreditCalculatorService {
     valorCuota: number;
     saldo: number;
     valorCredito: number;
+    daysOverdue?: number;
   }): number {
     const {
       cobraMora,
@@ -298,10 +301,25 @@ export class CreditCalculatorService {
       valorCuota,
       saldo,
       valorCredito,
+      daysOverdue = 0,
     } = params;
 
     if (!cobraMora || !porcentajeMora || porcentajeMora <= 0) {
       return 0;
+    }
+
+    const isValorCuota =
+      !baseCalculoMora || baseCalculoMora === 'VALOR_CUOTA';
+
+    if (isValorCuota) {
+      if (daysOverdue <= 0 || valorCuota <= 0) return 0;
+      return this.roundToTwo(
+        new Decimal(valorCuota)
+          .times(porcentajeMora)
+          .div(100)
+          .times(daysOverdue)
+          .toNumber(),
+      );
     }
 
     let base = 0;
@@ -312,9 +330,8 @@ export class CreditCalculatorService {
       case 'VALOR_CREDITO':
         base = valorCredito;
         break;
-      case 'VALOR_CUOTA':
       default:
-        base = valorCuota;
+        base = 0;
         break;
     }
 

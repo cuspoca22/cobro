@@ -55,7 +55,11 @@ describe('CreditoService', () => {
     };
 
     mockRutaService = {
-      findContextById: jest.fn(),
+      findContextById: jest.fn().mockResolvedValue({
+        _id: 'ruta789',
+        timeZone: 'America/Guatemala',
+        currency: 'COP',
+      }),
       getEmpresaIdByRutaId: jest.fn().mockResolvedValue({ exists: false }),
     };
 
@@ -100,7 +104,13 @@ describe('CreditoService', () => {
           },
         },
         { provide: CreditCalculatorService, useValue: mockCreditCalculatorSvc },
-        { provide: CurrencyService, useValue: { round: jest.fn((value) => value) } },
+        { provide: CurrencyService, useValue: {
+          round: jest.fn((value) => value),
+          formatShareAmount: jest.fn((value: number, code?: string) => {
+            const symbol = code === 'GTQ' ? 'Q' : '$';
+            return `${symbol}\u00A0${Math.round(Number(value) || 0)}`;
+          }),
+        } },
         {
           provide: getConnectionToken(),
           useValue: { startSession: jest.fn(() => createMockSession()) },
@@ -247,10 +257,10 @@ describe('CreditoService', () => {
       );
 
       expect(result.message).toContain('Comprobante de pago');
-      expect(result.message).toContain('Mora adeudada: $30');
-      expect(result.message).toContain('Mora cobrada: $20');
-      expect(result.message).toContain('Abono: $100');
-      expect(result.message).toContain('Total pagado: $120');
+      expect(result.message).toContain('Mora adeudada: $\u00A030');
+      expect(result.message).toContain('Mora cobrada: $\u00A020');
+      expect(result.message).toContain('Abono: $\u00A0100');
+      expect(result.message).toContain('Total pagado: $\u00A0120');
       expect(result.message).not.toContain('cuota Abonada');
       expect(result.message).not.toContain('Clasificación');
     });

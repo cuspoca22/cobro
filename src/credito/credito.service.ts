@@ -16,6 +16,7 @@ import { ClienteService } from '../cliente/cliente.service';
 import { RutaService } from '../ruta/ruta.service';
 import { EmpresaService } from '../empresa/empresa.service';
 import { MessageGateway } from '../message/message.gateway';
+import { CurrencyService } from '../currency/currency.service';
 
 @Injectable()
 export class CreditoService {
@@ -44,6 +45,7 @@ export class CreditoService {
 
     private dateFnsAdapter: DateFnsAdapter,
     private creditCalculatorSvc: CreditCalculatorService,
+    private readonly currencyService: CurrencyService,
     @InjectConnection() private readonly connection: Connection,
   ) {
     this.transactionHelper = new TransactionHelper(connection);
@@ -503,13 +505,9 @@ export class CreditoService {
       ? (creditDetails.saldo / creditDetails.valor_cuota).toFixed(2)
       : '0.00';
 
-    const fmt = (n: number) => {
-      const v = Math.round((Number(n) || 0) * 100) / 100;
-      return `$${v.toLocaleString('es-GT', {
-        minimumFractionDigits: 0,
-        maximumFractionDigits: 2,
-      })}`;
-    };
+    const rutaCtx = await this.rutaService.findContextById(rutaId, session);
+    const currencyCode = rutaCtx?.currency || 'USD';
+    const fmt = (n: number) => this.currencyService.formatShareAmount(n, currencyCode);
 
     const fechaHoy = new Date().toLocaleDateString('es-GT');
     const fechaInicio = new Date(creditDetails.fecha_inicio).toLocaleDateString('es-GT');
@@ -943,6 +941,7 @@ export class CreditoService {
         valorCuota: credit.valor_cuota,
         saldo: credit.saldo,
         valorCredito: credit.valor_credito,
+        daysOverdue: credit.daysOverdue ?? 0,
       });
 
       credit.moraSugerida = moraSugerida;
