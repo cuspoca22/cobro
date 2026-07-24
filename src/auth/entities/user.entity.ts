@@ -11,6 +11,10 @@ export class UserEntity {
    /** Rutas de SUPERVISOR (ids). */
    rutas?: string[];
    puedeActualizarUbicacion?: boolean;
+   /** Moneda ISO de la ruta asignada (cobrador). */
+   rutaCurrency?: string;
+   /** País de la ruta asignada (fallback de moneda). */
+   rutaPais?: string;
 
    constructor(data?: Partial<UserEntity>) {
       if (data) {
@@ -30,6 +34,13 @@ export class UserEntity {
          .map((r: any) => (r?._id ?? r)?.toString())
          .filter((v: string | undefined): v is string => !!v);
 
+      const rutaCurrency =
+         object.rutaCurrency
+         ?? (typeof object.ruta === 'object' ? object.ruta?.currency : undefined);
+      const rutaPais =
+         object.rutaPais
+         ?? (typeof object.ruta === 'object' ? object.ruta?.pais : undefined);
+
       return new UserEntity({
          id: userId,
          nombre: object.nombre,
@@ -40,6 +51,8 @@ export class UserEntity {
          ruta: rutaRaw ? rutaRaw.toString() : undefined,
          rutas,
          puedeActualizarUbicacion: object.puedeActualizarUbicacion ?? false,
+         rutaCurrency: rutaCurrency || undefined,
+         rutaPais: rutaPais || undefined,
       });
 
    }

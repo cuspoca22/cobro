@@ -69,7 +69,7 @@ export class AuthService {
          .populate([
             {
                path: "ruta",
-               select: 'status isLocked timeZone'
+               select: 'status isLocked timeZone currency pais'
             },
             {
                path: "rutas",
@@ -167,16 +167,24 @@ export class AuthService {
    }
 
    async checkStatus(user: GetUserDto) {
+      let rutaCurrency: string | undefined;
+      let rutaPais: string | undefined;
+
       if (user.rol === 'COBRADOR' && user.ruta) {
          const fullUser = await this.userModel.findById(user.id)
             .populate({
                path: 'ruta',
-               select: 'status isLocked',
+               select: 'status isLocked currency pais',
             })
             .lean();
 
          const ruta = fullUser?.ruta as
-            | { status?: boolean; isLocked?: boolean }
+            | {
+               status?: boolean;
+               isLocked?: boolean;
+               currency?: string;
+               pais?: string;
+            }
             | undefined;
 
          if (ruta) {
@@ -191,6 +199,9 @@ export class AuthService {
                   'Su ruta se encuentra bloqueada, por favor ponganse en contacto con su supervisor',
                );
             }
+
+            rutaCurrency = ruta.currency;
+            rutaPais = ruta.pais;
          }
       }
 
@@ -211,7 +222,11 @@ export class AuthService {
       }
 
       return {
-         user: UserEntity.fromObject(user),
+         user: UserEntity.fromObject({
+            ...user,
+            rutaCurrency,
+            rutaPais,
+         }),
          token: this.getJwtToken({ id: user.id })
       }
 

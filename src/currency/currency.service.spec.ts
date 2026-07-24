@@ -151,4 +151,20 @@ describe('CurrencyService', () => {
       expect(() => service.format(100, 'USD')).toThrow('Moneda no soportada: USD');
     });
   });
+
+  describe('formatShareAmount', () => {
+    it('usa Q para GTQ', () => {
+      const formatted = service.formatShareAmount(600, 'GTQ');
+      expect(formatted.startsWith('Q')).toBe(true);
+      expect(formatted).toContain('600');
+      expect(formatted).not.toMatch(/^\$/);
+    });
+
+    it('usa $ sin decimales para COP', () => {
+      const formatted = service.formatShareAmount(30, 'COP');
+      expect(formatted.startsWith('$')).toBe(true);
+      expect(formatted).toContain('30');
+      expect(formatted).not.toContain('.');
+    });
+  });
 });

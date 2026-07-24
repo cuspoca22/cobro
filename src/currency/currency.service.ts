@@ -114,4 +114,34 @@ export class CurrencyService {
       maximumFractionDigits: config.decimalPlaces,
     }).format(value);
   }
+
+  /**
+   * Formato para comprobantes compartidos (texto plano).
+   * Usa símbolo explícito (ej. Q 500.00) para evitar ambigüedad de Intl.
+   */
+  formatShareAmount(value: number, currencyCode?: string | null): string {
+    const code = (currencyCode || 'USD').trim().toUpperCase() || 'USD';
+    const config = this.currencies[code] ?? {
+      code: 'USD',
+      name: 'US Dollar',
+      symbol: '$',
+      decimalPlaces: 2,
+      minorUnitFactor: 100,
+      roundingRule: 'half-up' as const,
+      locale: 'en-US',
+    };
+
+    const amount = Number(value);
+    const safe = Number.isFinite(amount) ? amount : 0;
+
+    try {
+      const formatted = new Intl.NumberFormat(config.locale, {
+        minimumFractionDigits: config.decimalPlaces,
+        maximumFractionDigits: config.decimalPlaces,
+      }).format(safe);
+      return `${config.symbol}\u00A0${formatted}`;
+    } catch {
+      return `${config.symbol}\u00A0${safe.toLocaleString(config.locale)}`;
+    }
+  }
 }
