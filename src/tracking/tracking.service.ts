@@ -68,10 +68,13 @@ export class TrackingService {
     private readonly rutaService: RutaService,
   ) {}
 
+  /**
+   * @returns true si el cobrador pasó de offline → online
+   */
   registerCobradorOnline(
     socketId: string,
     data: { userId: string; empresaId: string; nombre: string; rutaId?: string },
-  ): void {
+  ): boolean {
     const userId = String(data.userId);
     const empresaId = String(data.empresaId);
     const existing = this.onlineCobradores.get(userId);
@@ -80,7 +83,7 @@ export class TrackingService {
       existing.empresaId = empresaId;
       existing.nombre = data.nombre;
       existing.rutaId = data.rutaId;
-      return;
+      return false;
     }
     this.onlineCobradores.set(userId, {
       sockets: new Set([socketId]),
@@ -88,6 +91,7 @@ export class TrackingService {
       nombre: data.nombre,
       rutaId: data.rutaId,
     });
+    return true;
   }
 
   /** true si el cobrador quedó completamente offline */

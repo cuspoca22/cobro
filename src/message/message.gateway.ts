@@ -51,7 +51,12 @@ export type MoraConfigActualizadaPayload = {
   baseCalculoMora: string;
 };
 
-@WebSocketGateway({ cors: true })
+@WebSocketGateway({
+  cors: true,
+  // Debe caber bajo nginx proxy_read_timeout (recomendado >= 120s).
+  pingInterval: 25_000,
+  pingTimeout: 60_000,
+})
 export class MessageGateway
   implements OnGatewayConnection, OnGatewayDisconnect
 {
@@ -277,6 +282,24 @@ export class MessageGateway
     if (!data || data.rol !== 'COBRADOR' || !data.empresaId) {
       this.logger.warn('location:update rechazado: sin sesión cobrador');
       return;
+    }
+
+    // Reafirma presencia: tras reinicios/proxy la sesión WS puede vivir
+    // mientras el Map en memoria quedó vacío.
+    const becameOnline = this.trackingService.registerCobradorOnline(client.id, {
+      userId: data.userId,
+      empresaId: data.empresaId,
+      nombre: data.nombre,
+      rutaId: data.rutaId,
+    });
+    if (becameOnline) {
+      this.wss.to(adminRoom(data.empresaId)).emit('cobrador:presence', {
+        cobradorId: data.userId,
+        nombre: data.nombre,
+        rutaId: data.rutaId,
+        online: true,
+        at: new Date().toISOString(),
+      });
     }
 
     const payload = Array.isArray(raw) ? raw[0] : raw;
