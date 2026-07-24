@@ -211,6 +211,16 @@ export class MovimientoCajaService {
 
     try {
 
+      const existing = await this.cajaMovimientoModel.findById(movimientoId).session(session).lean();
+      if (!existing) throw new NotFoundException(`Movimiento con el id ${movimientoId} no existe`);
+
+      const oficinaSubTipos = [SubTipo.GASTO, SubTipo.RETIRO, SubTipo.INVERSION];
+      if (!oficinaSubTipos.includes(existing.subTipo as SubTipo)) {
+        throw new BadRequestException(
+          'Solo se pueden actualizar movimientos de oficina (gasto, retiro o inversión)',
+        );
+      }
+
       const updateMovimiento = await this.cajaMovimientoModel.findByIdAndUpdate(
         movimientoId,
         { $set: updateMovimientoCajaDto },
