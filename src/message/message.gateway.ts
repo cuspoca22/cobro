@@ -102,11 +102,12 @@ export class MessageGateway
         return;
       }
 
+      const empresaId = user.empresa ? String(user.empresa) : undefined;
       const data: SocketUserData = {
-        userId: user.id,
+        userId: String(user.id),
         rol: user.rol,
-        empresaId: user.empresa || undefined,
-        rutaId: user.ruta,
+        empresaId,
+        rutaId: user.ruta ? String(user.ruta) : undefined,
         nombre: user.nombre,
       };
       client.data.user = data;
@@ -115,22 +116,22 @@ export class MessageGateway
         await client.join(superAdminRoom());
       }
 
-      if (user.empresa) {
-        await client.join(empresaRoom(user.empresa));
+      if (empresaId) {
+        await client.join(empresaRoom(empresaId));
         if (isAdminSocketRole(user.rol)) {
-          await client.join(adminRoom(user.empresa));
-          await this.sendTrackingSnapshot(client, user.empresa);
+          await client.join(adminRoom(empresaId));
+          await this.sendTrackingSnapshot(client, empresaId);
         }
       }
 
-      if (user.rol === 'COBRADOR' && user.empresa) {
+      if (user.rol === 'COBRADOR' && empresaId) {
         this.trackingService.registerCobradorOnline(client.id, {
           userId: data.userId,
-          empresaId: user.empresa,
+          empresaId,
           nombre: data.nombre,
           rutaId: data.rutaId,
         });
-        this.wss.to(adminRoom(user.empresa)).emit('cobrador:presence', {
+        this.wss.to(adminRoom(empresaId)).emit('cobrador:presence', {
           cobradorId: data.userId,
           nombre: data.nombre,
           rutaId: data.rutaId,
@@ -142,7 +143,7 @@ export class MessageGateway
           data.userId,
         );
         if (ultima) {
-          this.wss.to(adminRoom(user.empresa)).emit('cobrador:location', {
+          this.wss.to(adminRoom(empresaId)).emit('cobrador:location', {
             cobradorId: data.userId,
             nombre: data.nombre,
             rutaId: data.rutaId ?? ultima.rutaId,
@@ -160,7 +161,7 @@ export class MessageGateway
 
   handleDisconnect(client: Socket) {
     const data = client.data?.user as SocketUserData | undefined;
-    if (!data || data.rol !== 'COBRADOR') return;
+    if (!data || data.rol !== 'COBRADOR' || !data.empresaId) return;
 
     const wentOffline = this.trackingService.unregisterCobradorSocket(
       data.userId,
@@ -168,7 +169,7 @@ export class MessageGateway
     );
     if (!wentOffline) return;
 
-    this.wss.to(adminRoom(data.empresaId)).emit('cobrador:presence', {
+    this.wss.to(adminRoom(String(data.empresaId))).emit('cobrador:presence', {
       cobradorId: data.userId,
       nombre: data.nombre,
       rutaId: data.rutaId,

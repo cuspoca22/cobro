@@ -60,7 +60,7 @@ export class TrackingController {
 
   private assertSameEmpresa(user: UserEntity, empresaId: string): void {
     if (user.rol === ValidRoles.superAdmin) return;
-    if (user.empresa !== empresaId) {
+    if (String(user.empresa) !== String(empresaId)) {
       throw new ForbiddenException('No puedes ver tracking de otra empresa');
     }
   }

@@ -72,17 +72,19 @@ export class TrackingService {
     socketId: string,
     data: { userId: string; empresaId: string; nombre: string; rutaId?: string },
   ): void {
-    const existing = this.onlineCobradores.get(data.userId);
+    const userId = String(data.userId);
+    const empresaId = String(data.empresaId);
+    const existing = this.onlineCobradores.get(userId);
     if (existing) {
       existing.sockets.add(socketId);
-      existing.empresaId = data.empresaId;
+      existing.empresaId = empresaId;
       existing.nombre = data.nombre;
       existing.rutaId = data.rutaId;
       return;
     }
-    this.onlineCobradores.set(data.userId, {
+    this.onlineCobradores.set(userId, {
       sockets: new Set([socketId]),
-      empresaId: data.empresaId,
+      empresaId,
       nombre: data.nombre,
       rutaId: data.rutaId,
     });
@@ -90,26 +92,40 @@ export class TrackingService {
 
   /** true si el cobrador quedó completamente offline */
   unregisterCobradorSocket(userId: string, socketId: string): boolean {
-    const entry = this.onlineCobradores.get(userId);
+    const entry = this.onlineCobradores.get(String(userId));
     if (!entry) return false;
     entry.sockets.delete(socketId);
     if (entry.sockets.size > 0) return false;
-    this.onlineCobradores.delete(userId);
+    this.onlineCobradores.delete(String(userId));
     return true;
   }
 
   getOnlineCobradorIds(empresaId: string): Set<string> {
+    const target = String(empresaId);
     const ids = new Set<string>();
     for (const [cobradorId, entry] of this.onlineCobradores) {
-      if (entry.empresaId === empresaId) {
+      if (String(entry.empresaId) === target) {
         ids.add(cobradorId);
       }
     }
     return ids;
   }
 
+  /** Metadatos de presencia en memoria (fallback si el perfil DB no resuelve). */
+  getOnlinePresence(
+    cobradorId: string,
+  ): { empresaId: string; nombre: string; rutaId?: string } | null {
+    const entry = this.onlineCobradores.get(String(cobradorId));
+    if (!entry) return null;
+    return {
+      empresaId: entry.empresaId,
+      nombre: entry.nombre,
+      rutaId: entry.rutaId,
+    };
+  }
+
   isCobradorOnline(cobradorId: string): boolean {
-    return this.onlineCobradores.has(cobradorId);
+    return this.onlineCobradores.has(String(cobradorId));
   }
 
   hoyKey(timeZone: string = DEFAULT_TZ): string {
@@ -444,11 +460,27 @@ export class TrackingService {
     for (const onlineId of onlineIds) {
       if (byCobrador.has(onlineId)) continue;
       const user = userMap.get(onlineId);
-      if (!user) continue;
+      if (user) {
+        byCobrador.set(onlineId, {
+          cobradorId: onlineId,
+          nombre: user.nombre,
+          rutaId: user.rutaId,
+          online: true,
+          puntos: [],
+        });
+        continue;
+      }
+
+      // Fallback: el Map de presencia ya tiene nombre/ruta (p. ej. si el
+      // lookup por empresa no devolvió el perfil a tiempo).
+      const presence = this.getOnlinePresence(onlineId);
+      if (!presence || String(presence.empresaId) !== String(empresaId)) {
+        continue;
+      }
       byCobrador.set(onlineId, {
         cobradorId: onlineId,
-        nombre: user.nombre,
-        rutaId: user.rutaId,
+        nombre: presence.nombre,
+        rutaId: presence.rutaId,
         online: true,
         puntos: [],
       });
