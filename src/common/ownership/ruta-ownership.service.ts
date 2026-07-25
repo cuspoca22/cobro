@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 
 import { ValidRoles } from 'src/auth/interfaces';
+import { toRutaId, getScopedRutaIds as getScoped } from 'src/common/helpers';
 import { MovimientoCajaService } from 'src/movimientoCaja/movimiento-caja.service';
 import { CreditoService } from 'src/credito/credito.service';
 import { ClienteService } from 'src/cliente/cliente.service';
@@ -34,16 +35,14 @@ export class RutaOwnershipService {
     private readonly movimientoCajaService: MovimientoCajaService,
   ) {}
 
-  /** Normaliza ObjectId / documento populate / string a id string. */
+  /** Delega en la función pura compartida. */
   toId(value: unknown): string | null {
-    if (value === null || value === undefined || value === '') return null;
-    if (typeof value === 'string') return value;
-    if (typeof value === 'object') {
-      const obj = value as { _id?: unknown; id?: unknown };
-      if (obj._id) return String(obj._id);
-      if (obj.id) return String(obj.id);
-    }
-    return String(value);
+    return toRutaId(value);
+  }
+
+  /** Delega en la función pura compartida. */
+  getScopedRutaIds(user: AuthUserLike): string[] | null {
+    return getScoped(user);
   }
 
   async resolveRutaId(input: {
@@ -85,7 +84,7 @@ export class RutaOwnershipService {
    */
   async assertCanAccessRuta(user: AuthUserLike, rutaId: string): Promise<void> {
     const rol = user.rol as ValidRoles | undefined;
-    const normalizedRutaId = this.toId(rutaId);
+    const normalizedRutaId = toRutaId(rutaId);
     if (!normalizedRutaId) {
       throw new BadRequestException('rutaId inválido');
     }
@@ -100,7 +99,7 @@ export class RutaOwnershipService {
     }
 
     if (rol === ValidRoles.cobrador) {
-      const userRuta = this.toId(user.ruta);
+      const userRuta = toRutaId(user.ruta);
       if (!userRuta) {
         throw new ForbiddenException('El cobrador no tiene una ruta asignada');
       }
@@ -111,8 +110,8 @@ export class RutaOwnershipService {
     }
 
     if (rol === ValidRoles.admin || rol === ValidRoles.supervisor) {
-      const userEmpresa = this.toId(user.empresa);
-      const rutaEmpresa = this.toId(ruta.empresaId);
+      const userEmpresa = toRutaId(user.empresa);
+      const rutaEmpresa = toRutaId(ruta.empresaId);
       if (!userEmpresa || !rutaEmpresa || userEmpresa !== rutaEmpresa) {
         throw new ForbiddenException('No tienes permiso para operar sobre rutas de otra empresa');
       }
@@ -120,10 +119,9 @@ export class RutaOwnershipService {
       if (rol === ValidRoles.supervisor) {
         const assigned = Array.isArray(user.rutas)
           ? user.rutas
-              .map((r) => this.toId(r))
+              .map((r) => toRutaId(r))
               .filter((id): id is string => !!id)
           : [];
-        // Sin rutas asignadas: denegar (evita operar toda la empresa por omisión).
         if (!assigned.length || !assigned.includes(normalizedRutaId)) {
           throw new ForbiddenException(
             'No tienes permiso para operar sobre esta ruta',
@@ -133,7 +131,6 @@ export class RutaOwnershipService {
       return;
     }
 
-    // Otros roles (p.ej. CLIENTE): denegar mutaciones de cobranza
     throw new ForbiddenException('No tienes permiso para operar sobre esta ruta');
   }
 
@@ -149,7 +146,6 @@ export class RutaOwnershipService {
     const rutaId = await this.resolveRutaId(ids);
     await this.assertCanAccessRuta(user, rutaId);
 
-    // Si vienen IDs adicionales, deben pertenecer a la misma ruta autorizada
     if (ids.creditoId) {
       const credito = await this.creditoService.getRutaByCreditoId(ids.creditoId);
       if (!credito.exists) throw new NotFoundException(`Crédito ${ids.creditoId} no existe`);

@@ -94,4 +94,47 @@ describe('RutaOwnershipService SUPERVISOR', () => {
       ),
     ).resolves.toBeUndefined();
   });
+
+  describe('getScopedRutaIds', () => {
+    it('SUPERADMIN y ADMIN → null (sin restricción de ruta)', () => {
+      expect(
+        service.getScopedRutaIds({ rol: ValidRoles.superAdmin }),
+      ).toBeNull();
+      expect(
+        service.getScopedRutaIds({
+          rol: ValidRoles.admin,
+          empresa: empresaId,
+        }),
+      ).toBeNull();
+    });
+
+    it('SUPERVISOR → ids de rutas asignadas', () => {
+      expect(
+        service.getScopedRutaIds({
+          rol: ValidRoles.supervisor,
+          empresa: empresaId,
+          rutas: [rutaAsignada, { _id: rutaOtra }],
+        }),
+      ).toEqual([rutaAsignada, rutaOtra]);
+    });
+
+    it('SUPERVISOR sin rutas → array vacío', () => {
+      expect(
+        service.getScopedRutaIds({
+          rol: ValidRoles.supervisor,
+          empresa: empresaId,
+          rutas: [],
+        }),
+      ).toEqual([]);
+    });
+
+    it('COBRADOR → su ruta única', () => {
+      expect(
+        service.getScopedRutaIds({
+          rol: ValidRoles.cobrador,
+          ruta: rutaAsignada,
+        }),
+      ).toEqual([rutaAsignada]);
+    });
+  });
 });

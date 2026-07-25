@@ -8,10 +8,10 @@ import { MessageGateway } from './message.gateway';
 
 /**
  * V4b: sin forFeature(User); lectura vía AuthService.
+ * Ownership de ruta supervisor: inline en el gateway (sin importar OwnershipModule).
  */
 @Module({
   imports: [
-    // Auth↔Empresa↔Message: AuthModule puede estar incompleto al evaluar este archivo
     forwardRef(() => AuthModule),
     forwardRef(() => RutaModule),
     forwardRef(() => TrackingModule),
