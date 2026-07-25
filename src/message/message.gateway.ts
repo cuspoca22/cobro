@@ -13,6 +13,7 @@ import { Server, Socket } from 'socket.io';
 
 import { AuthService } from 'src/auth/auth.service';
 import { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
+import { getScopedRutaIds } from 'src/common/helpers';
 import { RutaService } from 'src/ruta/ruta.service';
 import { TrackingService } from 'src/tracking/tracking.service';
 import {
@@ -23,6 +24,7 @@ import {
   isAdminSocketRole,
   isSuperAdminRole,
   isSupervisorRole,
+  rutaRoom,
   superAdminRoom,
 } from './interfaces/socket-auth.interface';
 import { MessageService } from './message.service';
@@ -126,7 +128,13 @@ export class MessageGateway
 
       if (empresaId) {
         await client.join(empresaRoom(empresaId));
-        if (isAdminSocketRole(user.rol)) {
+
+        if (isSupervisorRole(user.rol)) {
+          for (const rid of data.rutaIds ?? []) {
+            if (rid) await client.join(rutaRoom(rid));
+          }
+          await this.sendTrackingSnapshot(client, empresaId, data.rutaIds);
+        } else if (isAdminSocketRole(user.rol)) {
           await client.join(adminRoom(empresaId));
           await this.sendTrackingSnapshot(client, empresaId);
         }
@@ -139,7 +147,7 @@ export class MessageGateway
           nombre: data.nombre,
           rutaId: data.rutaId,
         });
-        this.wss.to(adminRoom(empresaId)).emit('cobrador:presence', {
+        this.emitToAdminAndRuta(empresaId, data.rutaId, 'cobrador:presence', {
           cobradorId: data.userId,
           nombre: data.nombre,
           rutaId: data.rutaId,
@@ -151,14 +159,19 @@ export class MessageGateway
           data.userId,
         );
         if (ultima) {
-          this.wss.to(adminRoom(empresaId)).emit('cobrador:location', {
-            cobradorId: data.userId,
-            nombre: data.nombre,
-            rutaId: data.rutaId ?? ultima.rutaId,
-            lng: ultima.lng,
-            lat: ultima.lat,
-            at: new Date(ultima.at).toISOString(),
-          });
+          this.emitToAdminAndRuta(
+            empresaId,
+            data.rutaId ?? ultima.rutaId,
+            'cobrador:location',
+            {
+              cobradorId: data.userId,
+              nombre: data.nombre,
+              rutaId: data.rutaId ?? ultima.rutaId,
+              lng: ultima.lng,
+              lat: ultima.lat,
+              at: new Date(ultima.at).toISOString(),
+            },
+          );
         }
       }
     } catch (error) {
@@ -177,22 +190,47 @@ export class MessageGateway
     );
     if (!wentOffline) return;
 
-    this.wss.to(adminRoom(String(data.empresaId))).emit('cobrador:presence', {
-      cobradorId: data.userId,
-      nombre: data.nombre,
-      rutaId: data.rutaId,
-      online: false,
-      at: new Date().toISOString(),
-    });
+    this.emitToAdminAndRuta(
+      String(data.empresaId),
+      data.rutaId,
+      'cobrador:presence',
+      {
+        cobradorId: data.userId,
+        nombre: data.nombre,
+        rutaId: data.rutaId,
+        online: false,
+        at: new Date().toISOString(),
+      },
+    );
   }
 
-  private async sendTrackingSnapshot(client: Socket, empresaId: string) {
+  private async sendTrackingSnapshot(
+    client: Socket,
+    empresaId: string,
+    rutaIds?: string[],
+  ) {
     const onlineIds = this.trackingService.getOnlineCobradorIds(empresaId);
     const cobradores = await this.trackingService.getEmpresaHoy(
       empresaId,
       onlineIds,
+      rutaIds,
     );
     client.emit('tracking:snapshot', { empresaId, cobradores });
+  }
+
+  /** Emite a adminRoom(empresa) y, si hay ruta, también a rutaRoom. */
+  private emitToAdminAndRuta(
+    empresaId: string,
+    rutaId: string | undefined,
+    event: string,
+    payload: unknown,
+  ): void {
+    if (empresaId) {
+      this.wss.to(adminRoom(empresaId)).emit(event, payload);
+    }
+    if (rutaId) {
+      this.wss.to(rutaRoom(rutaId)).emit(event, payload);
+    }
   }
 
   emitRutaLockState(payload: RutaLockStatePayload): void {
@@ -204,6 +242,9 @@ export class MessageGateway
     }
     const event = payload.isLocked ? 'block-caja' : 'unblock-caja';
     this.wss.to(empresaRoom(payload.empresa)).emit(event, payload);
+    if (payload.ruta) {
+      this.wss.to(rutaRoom(payload.ruta)).emit(event, payload);
+    }
   }
 
   emitCloseCaja(rutaId: string, empresaId: string): void {
@@ -211,7 +252,11 @@ export class MessageGateway
       this.logger.warn(`emitCloseCaja omitido: ruta=${rutaId} sin empresa`);
       return;
     }
-    this.wss.to(empresaRoom(empresaId)).emit('close-caja', { ruta: rutaId });
+    const payload = { ruta: rutaId };
+    this.wss.to(empresaRoom(empresaId)).emit('close-caja', payload);
+    if (rutaId) {
+      this.wss.to(rutaRoom(rutaId)).emit('close-caja', payload);
+    }
   }
 
   emitOpenCaja(rutaId: string, empresaId: string): void {
@@ -219,7 +264,11 @@ export class MessageGateway
       this.logger.warn(`emitOpenCaja omitido: ruta=${rutaId} sin empresa`);
       return;
     }
-    this.wss.to(empresaRoom(empresaId)).emit('open-caja', { ruta: rutaId });
+    const payload = { ruta: rutaId };
+    this.wss.to(empresaRoom(empresaId)).emit('open-caja', payload);
+    if (rutaId) {
+      this.wss.to(rutaRoom(rutaId)).emit('open-caja', payload);
+    }
   }
 
   emitMoraActualizada(payload: MoraActualizadaPayload): void {
@@ -232,6 +281,9 @@ export class MessageGateway
     this.wss
       .to(empresaRoom(payload.empresa))
       .emit('mora-actualizada', payload);
+    if (payload.ruta) {
+      this.wss.to(rutaRoom(payload.ruta)).emit('mora-actualizada', payload);
+    }
   }
 
   emitMoraConfigActualizada(payload: MoraConfigActualizadaPayload): void {
@@ -262,6 +314,8 @@ export class MessageGateway
     for (const empresaId of empresaIds) {
       if (!empresaId) continue;
       this.wss.to(adminRoom(empresaId)).emit('announcement:new', announcement);
+      // Supervisores no están en adminRoom; reciben vía empresaRoom.
+      this.wss.to(empresaRoom(empresaId)).emit('announcement:new', announcement);
     }
   }
 
@@ -274,10 +328,9 @@ export class MessageGateway
     },
   ): void {
     if (!this.wss || !empresaId) return;
-    this.wss.to(adminRoom(empresaId)).emit('subscription:updated', {
-      empresaId,
-      ...payload,
-    });
+    const body = { empresaId, ...payload };
+    this.wss.to(adminRoom(empresaId)).emit('subscription:updated', body);
+    this.wss.to(empresaRoom(empresaId)).emit('subscription:updated', body);
   }
 
   private extractRutaId(
@@ -324,7 +377,7 @@ export class MessageGateway
       rutaId: data.rutaId,
     });
     if (becameOnline) {
-      this.wss.to(adminRoom(data.empresaId)).emit('cobrador:presence', {
+      this.emitToAdminAndRuta(data.empresaId, data.rutaId, 'cobrador:presence', {
         cobradorId: data.userId,
         nombre: data.nombre,
         rutaId: data.rutaId,
@@ -361,14 +414,19 @@ export class MessageGateway
       return;
     }
 
-    this.wss.to(adminRoom(data.empresaId)).emit('cobrador:location', {
-      cobradorId: saved.cobradorId,
-      nombre: saved.nombre,
-      rutaId: saved.rutaId,
-      lng: saved.lng,
-      lat: saved.lat,
-      at: saved.at.toISOString(),
-    });
+    this.emitToAdminAndRuta(
+      data.empresaId,
+      saved.rutaId,
+      'cobrador:location',
+      {
+        cobradorId: saved.cobradorId,
+        nombre: saved.nombre,
+        rutaId: saved.rutaId,
+        lng: saved.lng,
+        lat: saved.lat,
+        at: saved.at.toISOString(),
+      },
+    );
   }
 
   @SubscribeMessage('tracking:subscribe')
@@ -386,7 +444,8 @@ export class MessageGateway
       );
       return this.ackFail('NO_EMPRESA');
     }
-    await this.sendTrackingSnapshot(client, data.empresaId);
+    const scoped = isSupervisorRole(data.rol) ? data.rutaIds : undefined;
+    await this.sendTrackingSnapshot(client, data.empresaId, scoped);
     return { ok: true };
   }
 
@@ -438,7 +497,7 @@ export class MessageGateway
       return this.ackFail('RUTA_REQUIRED');
     }
 
-    if (!(await this.rutaBelongsToEmpresa(ruta, admin))) {
+    if (!(await this.canAccessRuta(admin, ruta))) {
       this.logger.warn(
         `admin-${action}-caja rechazado: user=${admin.userId} ruta=${ruta} ownership`,
       );
@@ -457,25 +516,33 @@ export class MessageGateway
   }
 
   /**
-   * SUPERADMIN: cualquier ruta.
-   * ADMIN: misma empresa.
-   * SUPERVISOR: misma empresa + ruta en user.rutas.
+   * Verifica ownership de ruta para admin/supervisor/cobrador.
+   * SUPERADMIN tiene acceso a todas.
+   * Los demás: la ruta debe pertenecer a su empresa y estar en sus rutas asignadas.
    */
-  private async rutaBelongsToEmpresa(
-    rutaId: string,
+  private async canAccessRuta(
     admin: SocketUserData,
+    rutaId: string,
   ): Promise<boolean> {
     if (isSuperAdminRole(admin.rol)) return true;
-    if (!admin.empresaId) return false;
 
-    const info = await this.rutaService.getEmpresaIdByRutaId(rutaId);
-    if (!info.exists || info.empresaId !== admin.empresaId) {
+    // Verificar que la ruta pertenece a la empresa del admin
+    const [ruta] = await this.rutaService.findLean(
+      { _id: rutaId },
+      { select: 'empresa' },
+    );
+    if (!ruta || String(ruta.empresa) !== String(admin.empresaId)) {
       return false;
     }
 
-    if (isSupervisorRole(admin.rol)) {
-      const assigned = admin.rutaIds ?? [];
-      return assigned.includes(rutaId);
+    // SUPERVISOR / COBRADOR: verificar scope de rutas asignadas
+    const scoped = getScopedRutaIds({
+      rol: admin.rol,
+      ruta: admin.rutaId,
+      rutas: admin.rutaIds,
+    });
+    if (Array.isArray(scoped) && !scoped.includes(rutaId)) {
+      return false;
     }
 
     return true;

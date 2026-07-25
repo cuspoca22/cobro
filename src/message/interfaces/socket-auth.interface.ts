@@ -36,6 +36,11 @@ export function adminRoom(empresaId: string): string {
   return `admin:${empresaId}`;
 }
 
+/** Room por ruta: supervisores solo reciben eventos de sus rutas asignadas. */
+export function rutaRoom(rutaId: string): string {
+  return `ruta:${rutaId}`;
+}
+
 /** Room global para SUPERADMIN (sin empresa). */
 export function superAdminRoom(): string {
   return 'admin:super';
