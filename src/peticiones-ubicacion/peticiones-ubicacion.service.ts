@@ -72,6 +72,8 @@ export class PeticionesUbicacionService {
     id_empresa?: string;
     fecha_desde?: Date;
     fecha_hasta?: Date;
+    /** Scope de rutas (supervisor/cobrador). Vacío = sin resultados. */
+    rutaIds?: string[];
   }): Promise<PeticionesUbicacionEntity[]> {
     try {
       const query: any = {};
@@ -84,6 +86,11 @@ export class PeticionesUbicacionService {
       }
       if (filters?.id_ruta) {
         query.id_ruta = new Types.ObjectId(filters.id_ruta);
+      } else if (filters?.rutaIds) {
+        if (!filters.rutaIds.length) return [];
+        query.id_ruta = {
+          $in: filters.rutaIds.map((id) => new Types.ObjectId(id)),
+        };
       }
       if (filters?.id_empresa) {
         query.id_empresa = new Types.ObjectId(filters.id_empresa);

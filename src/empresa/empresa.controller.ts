@@ -25,6 +25,7 @@ import { CreateRutaDto } from '../ruta/dto/create-ruta.dto';
 import { UpdateSubscriptionDto } from './dto/update-subscription.dto';
 import { SuspendEmpresaDto } from './dto/suspend-empresa.dto';
 import { AccessSuspendedReason } from './interfaces/subscription-status';
+import { getScopedRutaIds, normalizeId } from 'src/common/helpers';
 
 @Controller('empresa')
 export class EmpresaController {
@@ -38,7 +39,7 @@ export class EmpresaController {
     return this.empresaService.create(createEmpresaDto);
   }
 
-  @Auth()
+  @Auth(ValidRoles.admin, ValidRoles.superAdmin)
   @Get('get-empleados')
   findAll(
     @GetUser() user: any,
@@ -50,8 +51,15 @@ export class EmpresaController {
 
   @Auth(ValidRoles.admin, ValidRoles.superAdmin, ValidRoles.supervisor)
   @Get('get-open-rutas')
-  findEmpresaWithRutasOpened() {
-    return this.empresaService.findEmpresaWithRutasOpened();
+  findEmpresaWithRutasOpened(@GetUser() user: any) {
+    if (user.rol === ValidRoles.superAdmin) {
+      return this.empresaService.findEmpresaWithRutasOpened();
+    }
+    const empresaId = normalizeId(user.empresa);
+    if (!empresaId) {
+      throw new BadRequestException('El usuario no tiene una empresa asignada');
+    }
+    return this.empresaService.findEmpresaWithRutasOpened(empresaId);
   }
 
   @Auth(ValidRoles.superAdmin)
@@ -85,11 +93,14 @@ export class EmpresaController {
       throw new BadRequestException('El usuario no tiene una empresa asignada');
     }
 
-    const empresa =
-      typeof user.empresa === 'object' && user.empresa?._id
-        ? user.empresa._id.toString()
-        : user.empresa.toString();
-    return this.empresaService.findRutasByEmpresa(empresa);
+    const empresa = normalizeId(user.empresa);
+    if (!empresa) {
+      throw new BadRequestException('El usuario no tiene una empresa asignada');
+    }
+
+    const rutaIds = getScopedRutaIds(user);
+    const includeEmployes = user?.rol !== ValidRoles.supervisor;
+    return this.empresaService.findRutasByEmpresa(empresa, { includeEmployes, rutaIds });
   }
 
   @Auth(ValidRoles.superAdmin)
@@ -230,7 +241,9 @@ export class EmpresaController {
     @Param('id', ParseMongoIdPipe) id: string,
   ) {
     this.empresaService.assertCanAccessEmpresa(user, id);
-    return this.empresaService.getEmpresaById(id);
+    const rutaIds = getScopedRutaIds(user);
+    const includeEmployes = user?.rol !== ValidRoles.supervisor;
+    return this.empresaService.getEmpresaById(id, { includeEmployes, rutaIds });
   }
 
   @Auth(ValidRoles.superAdmin)

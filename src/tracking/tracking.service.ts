@@ -376,7 +376,10 @@ export class TrackingService {
   async getEmpresaHoy(
     empresaId: string,
     onlineIds: Set<string>,
+    rutaIds?: string[],
   ): Promise<CobradorTrackingHoyDto[]> {
+    if (rutaIds && rutaIds.length === 0) return [];
+
     const fechas = await this.hoyKeysEmpresa(empresaId);
     const idsToResolve = new Set([...onlineIds]);
 
@@ -384,6 +387,9 @@ export class TrackingService {
       .find({
         empresa: new Types.ObjectId(empresaId),
         fecha: { $in: fechas },
+        ...(rutaIds
+          ? { ruta: { $in: rutaIds.map((id) => new Types.ObjectId(id)) } }
+          : {}),
       })
       .lean();
 
@@ -408,12 +414,17 @@ export class TrackingService {
       ]),
     );
 
+    const allowedRutas = rutaIds ? new Set(rutaIds.map(String)) : null;
     const byCobrador = new Map<string, CobradorTrackingHoyDto>();
 
     for (const doc of docs) {
       const id = doc.cobrador.toString();
       const user = userMap.get(id);
       if (!user) continue;
+      const docRutaId = doc.ruta?.toString() ?? user.rutaId;
+      if (allowedRutas && (!docRutaId || !allowedRutas.has(String(docRutaId)))) {
+        continue;
+      }
       const rawPuntos = (doc.puntos ?? []).map((p) => ({
         coordinates: p.coordinates,
         at: p.at,
@@ -442,7 +453,7 @@ export class TrackingService {
       byCobrador.set(id, {
         cobradorId: id,
         nombre: user.nombre,
-        rutaId: doc.ruta?.toString() ?? user.rutaId,
+        rutaId: docRutaId,
         online: onlineIds.has(id),
         ultimaUbicacion: ultima
           ? {
@@ -465,6 +476,9 @@ export class TrackingService {
       if (byCobrador.has(onlineId)) continue;
       const user = userMap.get(onlineId);
       if (user) {
+        if (allowedRutas && (!user.rutaId || !allowedRutas.has(String(user.rutaId)))) {
+          continue;
+        }
         byCobrador.set(onlineId, {
           cobradorId: onlineId,
           nombre: user.nombre,
@@ -479,6 +493,12 @@ export class TrackingService {
       // lookup por empresa no devolvió el perfil a tiempo).
       const presence = this.getOnlinePresence(onlineId);
       if (!presence || String(presence.empresaId) !== String(empresaId)) {
+        continue;
+      }
+      if (
+        allowedRutas &&
+        (!presence.rutaId || !allowedRutas.has(String(presence.rutaId)))
+      ) {
         continue;
       }
       byCobrador.set(onlineId, {

@@ -28,6 +28,7 @@ import {
   SUBSCRIPTION_PAYMENT_CLEARED,
   SUBSCRIPTION_PAYMENT_DUE,
 } from 'src/common/events/events.module';
+import { normalizeId } from 'src/common/helpers';
 
 const SUBSCRIPTION_UPDATE_FIELDS = [
   'isSubscriptionPaid',
@@ -67,12 +68,7 @@ export class EmpresaService {
     empresaId: string,
   ): void {
     if (user.rol === ValidRoles.superAdmin) return;
-    const userEmpresa =
-      user.empresa == null
-        ? null
-        : typeof user.empresa === 'object' && (user.empresa as any)._id
-          ? String((user.empresa as any)._id)
-          : String(user.empresa);
+    const userEmpresa = normalizeId(user.empresa);
     if (!userEmpresa || userEmpresa !== empresaId) {
       throw new ForbiddenException('No tienes permiso para operar sobre esta empresa');
     }
@@ -94,20 +90,32 @@ export class EmpresaService {
 
   }
 
-  async getEmpresaById(id: string) {
+  async getEmpresaById(
+    id: string,
+    options?: { includeEmployes?: boolean; rutaIds?: string[] | null },
+  ) {
 
     try {
 
-      const empresa = await this.empresaModel.findById(id)
-        .populate('employes')
-        .populate('rutas')
-        .populate('owner')
+      const includeEmployes = options?.includeEmployes !== false;
+      let query = this.empresaModel.findById(id).populate('rutas').populate('owner');
+      if (includeEmployes) {
+        query = query.populate('employes');
+      }
+
+      const empresa = await query;
 
       if (!empresa) {
         throw new NotFoundException(`Empresa con el id ${id} no existe`);
       }
 
-      return EmpresaEntity.fromObject(empresa);
+      const raw = empresa.toObject();
+      if (!includeEmployes) {
+        raw.employes = [];
+      }
+
+      const entity = EmpresaEntity.fromObject(raw);
+      return this.applyEmpresaScope(entity, options);
 
     } catch (error) {
       this.handleExceptions(error);
@@ -116,13 +124,21 @@ export class EmpresaService {
 
   }
 
-  async findEmpresaWithRutasOpened() {
+  async findEmpresaWithRutasOpened(empresaId?: string) {
 
     try {
-      const empresasConRutasAbiertas = await this.empresaModel.aggregate([
+      const pipeline: any[] = [];
+
+      if (empresaId) {
+        pipeline.push({
+          $match: { _id: new Types.ObjectId(empresaId) },
+        });
+      }
+
+      pipeline.push(
         {
           $lookup: {
-            from: 'rutas', // Nombre de la colección de rutas en la base de datos
+            from: 'rutas',
             localField: 'rutas',
             foreignField: '_id',
             as: 'rutas',
@@ -145,9 +161,9 @@ export class EmpresaService {
             rutas: { $push: '$rutas.nombre' },
           },
         },
-      ]);
+      );
 
-      return empresasConRutasAbiertas;
+      return await this.empresaModel.aggregate(pipeline);
     } catch (error) {
       console.error('Error al obtener empresas con rutas abiertas:', error);
       throw error;
@@ -183,19 +199,53 @@ export class EmpresaService {
 
   }
 
-  async findRutasByEmpresa(idEmpresa: string) {
+  async findRutasByEmpresa(
+    idEmpresa: string,
+    options?: { includeEmployes?: boolean; rutaIds?: string[] | null },
+  ) {
 
-    const empresa = await this.empresaModel.findById(idEmpresa)
+    const includeEmployes = options?.includeEmployes !== false;
+    let query = this.empresaModel.findById(idEmpresa)
       .populate('rutas')
-      .populate('employes')
-      .populate('owner')
+      .populate('owner');
+    if (includeEmployes) {
+      query = query.populate('employes');
+    }
+
+    const empresa = await query;
 
     if (!empresa) {
       throw new NotFoundException(`Empresa con el id ${idEmpresa} no existe`);
     }
 
-    return EmpresaEntity.fromObject(empresa);
+    const raw = empresa.toObject();
+    if (!includeEmployes) {
+      raw.employes = [];
+    }
 
+    const entity = EmpresaEntity.fromObject(raw);
+    return this.applyEmpresaScope(entity, options);
+
+  }
+
+  /**
+   * Aplica scoping de supervisor: sin empleados y solo rutas asignadas.
+   * rutaIds === null → sin filtro de ruta; string[] → filtrar.
+   */
+  private applyEmpresaScope(
+    entity: EmpresaEntity,
+    options?: { includeEmployes?: boolean; rutaIds?: string[] | null },
+  ): EmpresaEntity {
+    if (options?.includeEmployes === false) {
+      entity.employes = [];
+    }
+
+    if (Array.isArray(options?.rutaIds)) {
+      const allowed = new Set(options.rutaIds);
+      entity.rutas = (entity.rutas || []).filter((r) => allowed.has(String(r.id)));
+    }
+
+    return entity;
   }
 
   async findOne(id: string) {

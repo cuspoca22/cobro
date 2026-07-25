@@ -27,7 +27,7 @@ export class AuthController {
     return this.authService.login(loginDto, request);
   }
 
-  @Auth(ValidRoles.admin, ValidRoles.superAdmin, ValidRoles.supervisor)
+  @Auth(ValidRoles.admin, ValidRoles.superAdmin)
   @Get("users")
   async findAll(
     @GetUser() user: UserEntity,
@@ -48,12 +48,13 @@ export class AuthController {
     return this.authService.checkStatus(user)
   }
 
-  @Auth()
+  @Auth(ValidRoles.admin, ValidRoles.superAdmin)
   @Get("user/:termino")
   async findOne(
-    @Param("termino") termino: string
+    @GetUser() user: UserEntity,
+    @Param("termino") termino: string,
   ) {
-    return this.authService.findOne(termino)
+    return this.authService.findOne(termino, user);
   }
 
   /** Auto-edición: cualquier usuario autenticado, solo nombre/username/password. */

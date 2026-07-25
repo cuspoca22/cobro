@@ -13,6 +13,7 @@ import { UserEntity } from 'src/auth/entities/user.entity';
 import { ValidRoles } from 'src/auth/interfaces/valid-roles';
 import { AuthService } from 'src/auth/auth.service';
 import { ParseMongoIdPipe } from 'src/common/pipes/parse-mongo-id.pipe';
+import { getScopedRutaIds, normalizeId } from 'src/common/helpers';
 import { TrackingService } from './tracking.service';
 
 @ApiTags('Tracking')
@@ -33,7 +34,12 @@ export class TrackingController {
   ) {
     this.assertSameEmpresa(user, empresaId);
     const onlineIds = this.trackingService.getOnlineCobradorIds(empresaId);
-    return this.trackingService.getEmpresaHoy(empresaId, onlineIds);
+    const rutaIds = getScopedRutaIds(user);
+    return this.trackingService.getEmpresaHoy(
+      empresaId,
+      onlineIds,
+      rutaIds ?? undefined,
+    );
   }
 
   @Get('cobrador/:cobradorId/hoy')
@@ -54,13 +60,24 @@ export class TrackingController {
 
     this.assertSameEmpresa(user, cobrador.empresaId);
 
+    const scoped = getScopedRutaIds(user);
+    if (
+      Array.isArray(scoped) &&
+      (!cobrador.rutaId || !scoped.includes(String(cobrador.rutaId)))
+    ) {
+      throw new ForbiddenException(
+        'No tienes permiso para ver el tracking de este cobrador',
+      );
+    }
+
     const online = this.trackingService.isCobradorOnline(cobradorId);
     return this.trackingService.getCobradorHoy(cobradorId, online);
   }
 
   private assertSameEmpresa(user: UserEntity, empresaId: string): void {
     if (user.rol === ValidRoles.superAdmin) return;
-    if (String(user.empresa) !== String(empresaId)) {
+    const userEmpresa = normalizeId(user.empresa);
+    if (!userEmpresa || userEmpresa !== String(empresaId)) {
       throw new ForbiddenException('No puedes ver tracking de otra empresa');
     }
   }

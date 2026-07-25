@@ -256,12 +256,28 @@ export class AuthService {
       return users.filter((userDb) => userDb._id.toString() !== user.id?.toString());
    }
 
-   async findOne(termino: string) {
+   async findOne(termino: string, actor?: UserEntity) {
 
       let user: User;
 
+      const empresaFilter =
+        actor && actor.rol !== ValidRoles.superAdmin
+          ? (() => {
+              const userEmpresa =
+                (actor.empresa as any)?.toString?.() ??
+                actor.empresa?.toString?.() ??
+                actor.empresa;
+              return userEmpresa ? { empresa: userEmpresa } : null;
+            })()
+          : {};
+
+      if (empresaFilter === null) {
+        throw new ForbiddenException('No tienes una empresa asignada');
+      }
+
       if (isValidObjectId(termino)) {
          user = await this.userModel.findById(termino)
+            .where(empresaFilter)
             .populate(['ruta', 'rutas'])
             .select("-password")
       }
@@ -270,6 +286,7 @@ export class AuthService {
          const regex = new RegExp(termino.trim().toUpperCase(), "i");
          user = await this.userModel.findOne({
             $or: [{ nombre: regex }, { username: regex }],
+            ...empresaFilter,
          })
             .populate(['ruta', 'rutas'])
             .select("-password");

@@ -17,7 +17,11 @@ export class RenovacionService {
     private readonly dateFnsAdapter: DateFnsAdapter,
   ) { }
 
-  async getRenovacionesDiarias(dto: GetRenovacionesDto, empresaId: string): Promise<EmpresaReport> {
+  async getRenovacionesDiarias(
+    dto: GetRenovacionesDto,
+    empresaId: string,
+    scopedRutaIds?: string[],
+  ): Promise<EmpresaReport> {
     const { fecha, rutaId } = dto;
     const startOfDay = this.dateFnsAdapter.startOfDayUtc(new Date(fecha));
     const endOfDay = this.dateFnsAdapter.addDays(startOfDay, 1);
@@ -28,8 +32,13 @@ export class RenovacionService {
     }
 
     // Asegurarnos de que las rutas sean ObjectIds válidos
-    const rutasEmpresa = (empresa.rutas || []).map(id => new Types.ObjectId(id as any));
+    let rutasEmpresa = (empresa.rutas || []).map(id => new Types.ObjectId(id as any));
     const empresaNombre = empresa.name;
+
+    if (scopedRutaIds) {
+      const allowed = new Set(scopedRutaIds.map(String));
+      rutasEmpresa = rutasEmpresa.filter((id) => allowed.has(String(id)));
+    }
 
     if (rutaId) {
       const rutaObjectId = new Types.ObjectId(rutaId);

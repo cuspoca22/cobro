@@ -9,15 +9,17 @@ import { ParseMongoIdPipe } from '../common/pipes/parse-mongo-id.pipe';
 import { CreateCreditoDto, UpdateCreditoDto } from "src/credito/dto";
 import { RutaAbierta } from "src/common/decorators";
 import { RutaOwnership } from "src/common/ownership";
+import { getScopedRutaIds, normalizeId } from "src/common/helpers";
 
 @Auth()
 @Controller("movimiento-caja")
 export class MovimientoCajaController {
 
   constructor(
-    private movimientoCajaService: MovimientoCajaService
+    private movimientoCajaService: MovimientoCajaService,
   ) { }
 
+  @Auth(ValidRoles.admin, ValidRoles.superAdmin, ValidRoles.supervisor, ValidRoles.cobrador)
   @RutaOwnership({
     rutaId: { in: 'query', key: 'rutaId' },
     creditoId: { in: 'query', key: 'creditoId' },
@@ -30,6 +32,7 @@ export class MovimientoCajaController {
     return this.movimientoCajaService.getHistorialPagos(rutaId, creditoId);
   }
 
+  @Auth(ValidRoles.admin, ValidRoles.superAdmin, ValidRoles.supervisor, ValidRoles.cobrador)
   @RutaOwnership({ rutaId: { in: 'query', key: 'rutaId' } })
   @Get("resumen-por-ruta")
   async getResumenDiarioPorRuta(
@@ -46,17 +49,20 @@ export class MovimientoCajaController {
     @GetUser() user: UserEntity,
     @Query('fecha') fecha?: string,
   ) {
-    if (user.rol !== ValidRoles.superAdmin && user.empresa !== empresaId) {
+    if (user.rol !== ValidRoles.superAdmin && normalizeId(user.empresa) !== empresaId) {
       throw new ForbiddenException(
         'No puedes ver ubicaciones de pagos de otra empresa',
       );
     }
+    const rutaIds = getScopedRutaIds(user);
     return this.movimientoCajaService.getPagosConUbicacionEmpresa(
       empresaId,
       fecha,
+      rutaIds ?? undefined,
     );
   }
 
+  @Auth(ValidRoles.admin, ValidRoles.superAdmin, ValidRoles.supervisor, ValidRoles.cobrador)
   @RutaAbierta()
   @RutaOwnership({ rutaId: { in: 'body', key: 'rutaId' } })
   @Post('add')
@@ -66,6 +72,7 @@ export class MovimientoCajaController {
     return this.movimientoCajaService.addPago(createMovimientoCajaDto);
   }
 
+  @Auth(ValidRoles.admin, ValidRoles.superAdmin, ValidRoles.supervisor, ValidRoles.cobrador)
   @RutaAbierta()
   @RutaOwnership({ rutaId: { in: 'body', key: 'rutaId' } })
   @Post('renovacion')
@@ -75,14 +82,15 @@ export class MovimientoCajaController {
     return this.movimientoCajaService.addRenovacion(createCreditoDto);
   }
 
+  @Auth(ValidRoles.admin, ValidRoles.superAdmin, ValidRoles.supervisor, ValidRoles.cobrador)
   @RutaAbierta()
-  @RutaOwnership({ movimientoId: { in: 'params', key: 'movimentoId' } })
-  @Patch('update-pago/:movimentoId')
+  @RutaOwnership({ movimientoId: { in: 'params', key: 'movimientoId' } })
+  @Patch('update-pago/:movimientoId')
   async updatePago(
     @Body() updateMovimientoCajaDto: UpdateMovimientoCajaDto,
-    @Param('movimentoId', ParseMongoIdPipe) movimentoId: string,
+    @Param('movimientoId', ParseMongoIdPipe) movimientoId: string,
   ) {
-    return await this.movimientoCajaService.updatePago(movimentoId, updateMovimientoCajaDto);
+    return await this.movimientoCajaService.updatePago(movimientoId, updateMovimientoCajaDto);
   }
 
   @RutaAbierta()
@@ -95,6 +103,7 @@ export class MovimientoCajaController {
     return this.movimientoCajaService.deletePago(movimientoId);
   }
 
+  @Auth(ValidRoles.admin, ValidRoles.superAdmin, ValidRoles.cobrador)
   @RutaAbierta()
   @RutaOwnership({ rutaId: { in: 'body', key: 'rutaId' } })
   @Post('oficina')
@@ -104,6 +113,7 @@ export class MovimientoCajaController {
     return await this.movimientoCajaService.addOficinaMovimiento(createMovimientoDto);
   }
 
+  @Auth(ValidRoles.admin, ValidRoles.superAdmin, ValidRoles.supervisor)
   @RutaOwnership({ rutaId: { in: 'query', key: 'rutaId' } })
   @Get('oficina/resumen')
   async getResumenOficina(@Query() query: ResumenOficinaQueryDto) {
@@ -111,7 +121,7 @@ export class MovimientoCajaController {
   }
 
   @RutaAbierta()
-  @Auth(ValidRoles.admin, ValidRoles.superAdmin, ValidRoles.supervisor, ValidRoles.cobrador)
+  @Auth(ValidRoles.admin, ValidRoles.superAdmin, ValidRoles.cobrador)
   @RutaOwnership({ movimientoId: { in: 'params', key: 'movimientoId' } })
   @Patch('update/:movimientoId')
   async updateMovimiento(
