@@ -171,12 +171,14 @@ describe('RutaService', () => {
 
     it('should open ruta successfully if not open', async () => {
       const rutaId = new Types.ObjectId().toHexString();
+      const empresaId = new Types.ObjectId();
       const mockRuta = {
         _id: new Types.ObjectId(rutaId),
         status: false,
         timeZone: 'UTC',
         save: jest.fn(),
-        caja_actual: null
+        caja_actual: null,
+        empresa: empresaId,
       };
       const mockNewCaja = { id: new Types.ObjectId().toHexString() };
 
@@ -198,7 +200,7 @@ describe('RutaService', () => {
       expect(mockRuta.status).toBe(true);
       expect(mockRuta.save).toHaveBeenCalledWith({ session: expect.anything() });
       expect(mockSession.commitTransaction).toHaveBeenCalled();
-      expect(mockSocketGateway.emitOpenCaja).toHaveBeenCalledWith(rutaId, '');
+      expect(mockSocketGateway.emitOpenCaja).toHaveBeenCalledWith(rutaId, empresaId.toHexString());
       expect(mockSession.endSession).toHaveBeenCalled();
     });
 
@@ -237,12 +239,14 @@ describe('RutaService', () => {
     it('should reopen existing same-day caja without creating a new one', async () => {
       const rutaId = new Types.ObjectId().toHexString();
       const cajaId = new Types.ObjectId().toHexString();
+      const empresaId = new Types.ObjectId();
       const mockRuta = {
         _id: new Types.ObjectId(rutaId),
         status: false,
         timeZone: 'UTC',
         save: jest.fn(),
         caja_actual: cajaId,
+        empresa: empresaId,
       };
       const cajaDelDia = {
         id: cajaId,
@@ -267,7 +271,7 @@ describe('RutaService', () => {
       expect(mockCajaService.markOpen).toHaveBeenCalledWith(cajaId, expect.anything());
       expect(mockCajaService.create).not.toHaveBeenCalled();
       expect(mockCajaService.getUltimaCaja).not.toHaveBeenCalled();
-      expect(mockSocketGateway.emitOpenCaja).toHaveBeenCalledWith(rutaId, '');
+      expect(mockSocketGateway.emitOpenCaja).toHaveBeenCalledWith(rutaId, empresaId.toHexString());
       expect(mockSession.commitTransaction).toHaveBeenCalled();
     });
   });
@@ -324,12 +328,14 @@ describe('RutaService', () => {
     it('should close ruta successfully', async () => {
       const rutaId = new Types.ObjectId().toHexString();
       const cajaId = new Types.ObjectId().toHexString();
+      const empresaId = new Types.ObjectId();
       const mockRuta = {
         _id: rutaId,
         caja_actual: cajaId,
         status: true,
         save: jest.fn(),
-        ultima_caja: null
+        ultima_caja: null,
+        empresa: empresaId,
       };
 
       mockRutaModel.findById.mockReturnValue({
@@ -349,7 +355,7 @@ describe('RutaService', () => {
       expect(mockCajaService.markClosed).toHaveBeenCalledWith(cajaId, expect.anything());
       expect(mockCajaService.congelarSnapshotCierre).toHaveBeenCalledWith(rutaId, expect.anything());
       expect(mockSession.commitTransaction).toHaveBeenCalled();
-      expect(mockSocketGateway.emitCloseCaja).toHaveBeenCalledWith(rutaId, '');
+      expect(mockSocketGateway.emitCloseCaja).toHaveBeenCalledWith(rutaId, empresaId.toHexString());
       expect(mockSession.endSession).toHaveBeenCalled();
     });
 
@@ -389,11 +395,13 @@ describe('RutaService', () => {
 
     it('should lock ruta and emit block-caja payload', async () => {
       const rutaId = new Types.ObjectId().toHexString();
+      const empresaId = new Types.ObjectId();
       const mockRuta = {
         _id: new Types.ObjectId(rutaId),
         status: true,
         isLocked: false,
         save: jest.fn().mockResolvedValue(undefined),
+        empresa: empresaId,
       };
       mockRutaModel.findById.mockResolvedValue(mockRuta);
 
@@ -409,7 +417,7 @@ describe('RutaService', () => {
       expect(mockSocketGateway.emitRutaLockState).toHaveBeenCalledWith({
         ruta: rutaId,
         isLocked: true,
-        empresa: '',
+        empresa: empresaId.toHexString(),
       });
     });
   });
@@ -436,11 +444,13 @@ describe('RutaService', () => {
 
     it('should unlock ruta and emit unblock-caja payload', async () => {
       const rutaId = new Types.ObjectId().toHexString();
+      const empresaId = new Types.ObjectId();
       const mockRuta = {
         _id: new Types.ObjectId(rutaId),
         status: true,
         isLocked: true,
         save: jest.fn().mockResolvedValue(undefined),
+        empresa: empresaId,
       };
       mockRutaModel.findById.mockResolvedValue(mockRuta);
 
@@ -456,7 +466,7 @@ describe('RutaService', () => {
       expect(mockSocketGateway.emitRutaLockState).toHaveBeenCalledWith({
         ruta: rutaId,
         isLocked: false,
-        empresa: '',
+        empresa: empresaId.toHexString(),
       });
     });
   });

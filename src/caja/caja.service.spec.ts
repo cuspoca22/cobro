@@ -510,12 +510,13 @@ describe('CajaService', () => {
         status: true,
         timeZone: 'UTC',
       });
-      const mockCajaEncontrada = { _id: mockCajaId };
+      const mockCajaEncontrada = { _id: mockCajaId, ruta: mockRutaId };
       cajaModel.aggregate.mockResolvedValue([mockCajaEncontrada]);
 
       const result = await service.findAll(mockRutaId, fechaStr);
 
-      expect(result).toEqual(mockCajaEncontrada);
+      expect(result).toBeInstanceOf(Object);
+      expect(result.id).toBe(mockCajaId);
     });
 
     it('debe lanzar NotFoundException si no encuentra caja', async () => {

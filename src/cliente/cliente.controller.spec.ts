@@ -8,6 +8,12 @@ import { Cliente } from './schema/cliente.schema';
 jest.mock('../auth/decorators/auth.decorator', () => ({
   Auth: () => jest.fn(),
 }));
+jest.mock('../common/decorators', () => ({
+  RutaAbierta: () => jest.fn(),
+}));
+jest.mock('../common/ownership', () => ({
+  RutaOwnership: () => jest.fn(),
+}));
 
 describe('ClienteController', () => {
   let controller: ClienteController;
