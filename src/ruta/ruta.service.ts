@@ -537,15 +537,15 @@ export class RutaService {
 
   /**
    * FIX [P1 cron multi-TZ]:
-   * Antes cerraba/abría todo a las 03:00 / 07:00 America/Sao_Paulo.
-   * Ahora un tick cada 5 min evalúa cada ruta en su `timeZone` local
+   * Tick cada 5 min evalúa cada ruta en su `timeZone` local
    * (Guatemala, México, Colombia, Brasil, etc.).
    *
+   * Cierre: 00:00 local · Apertura: 06:00 local (si autoOpen).
    * Ventana: hora objetivo y minute < 5 (coincide con el intervalo del cron),
    * close/open son idempotentes (si ya está cerrada/abierta, se registra y sigue).
    */
-  private static readonly CRON_CLOSE_HOUR = 3;
-  private static readonly CRON_OPEN_HOUR = 7;
+  private static readonly CRON_CLOSE_HOUR = 0;
+  private static readonly CRON_OPEN_HOUR = 6;
   private static readonly CRON_WINDOW_MINUTES = 5;
   private static readonly DEFAULT_RUTA_TZ = 'America/Mexico_City';
 
