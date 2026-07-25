@@ -217,7 +217,7 @@ describe('CreditoService', () => {
       expect(result.clientStatus).toBe(true);
     });
 
-    it('debe incluir desglose de mora en el comprobante cuando aplica', async () => {
+    it('debe incluir mora en el comprobante solo si la empresa cobra mora', async () => {
       const mockSession = createMockSession();
       const creditoId = 'credito123';
       const clienteId = 'cliente456';
@@ -233,9 +233,12 @@ describe('CreditoService', () => {
         state: 'BUENO',
         abonos: 100,
         total_pagar: 1000,
+        valor_credito: 1000,
         valor_cuota: 100,
+        total_cuotas: 10,
+        frecuencia_cobro: 'Diario',
         fecha_inicio: new Date('2024-01-01'),
-        daysOverdue: 0,
+        daysOverdue: 2,
         ultimo_pago: new Date('2024-01-15'),
         paymentsToday: {
           monto: 120,
@@ -257,12 +260,62 @@ describe('CreditoService', () => {
       );
 
       expect(result.message).toContain('Comprobante de pago');
-      expect(result.message).toContain('Mora adeudada: $\u00A030');
-      expect(result.message).toContain('Mora cobrada: $\u00A020');
+      expect(result.message).toContain('Cliente: Cliente Test');
       expect(result.message).toContain('Abono: $\u00A0100');
+      expect(result.message).toContain('Mora cobrada: $\u00A020');
       expect(result.message).toContain('Total pagado: $\u00A0120');
-      expect(result.message).not.toContain('cuota Abonada');
-      expect(result.message).not.toContain('Clasificación');
+      expect(result.message).toContain('Estado de credito');
+      expect(result.message).toContain('Mora adeudada: $\u00A030');
+      expect(result.message).toContain('Dias de Atraso: 2');
+      expect(result.message).not.toContain('Total a pagar');
+      expect(result.message).not.toContain('Saldo:');
+    });
+
+    it('no debe incluir mora en el comprobante si la empresa no cobra mora', async () => {
+      const mockSession = createMockSession();
+      const creditoId = 'credito123';
+      const clienteId = 'cliente456';
+      const rutaId = 'ruta789';
+
+      jest.spyOn(service, 'getCreditoById').mockResolvedValue({
+        _id: creditoId,
+        saldo: 900,
+        mora_adeudada: 30,
+        mora_cobrada: 20,
+        cobraMora: false,
+        status: true,
+        state: 'BUENO',
+        abonos: 100,
+        total_pagar: 1000,
+        valor_credito: 1000,
+        valor_cuota: 100,
+        frecuencia_cobro: 'Diario',
+        fecha_inicio: new Date('2024-01-01'),
+        daysOverdue: 2,
+        ultimo_pago: new Date('2024-01-15'),
+        paymentsToday: {
+          monto: 120,
+          montoAbono: 100,
+          montoMora: 20,
+          createdAt: new Date('2024-01-15'),
+        },
+        cliente: { _id: clienteId, nombre: 'Cliente Test' },
+      } as any);
+
+      mockClienteService.findByIdLean.mockResolvedValue({
+        _id: clienteId,
+        status: true,
+        nombre: 'Cliente Test',
+      });
+
+      const result = await service.handlePaymentMade(
+        creditoId, rutaId, clienteId, mockSession as ClientSession,
+      );
+
+      expect(result.message).toContain('Monto pagado: $\u00A0120');
+      expect(result.message).not.toContain('Mora adeudada');
+      expect(result.message).not.toContain('Abono:');
+      expect(result.message).not.toContain('Total pagado:');
     });
 
     it('debe manejar precisión decimal considerando crédito pagado con saldo mínimo (0.001)', async () => {

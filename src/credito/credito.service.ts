@@ -476,31 +476,16 @@ export class CreditoService {
       throw error;
     }
 
-    // Construir mensaje informativo, manejando el caso donde paymentsToday es null
+    // Comprobante breve para compartir con el cliente
     const fechaPago = creditDetails.paymentsToday
       ? new Date(creditDetails.paymentsToday.createdAt).toLocaleDateString('es-GT')
       : 'No registrada';
-
     const pagoHoy = creditDetails.paymentsToday;
     const montoTotalHoy = pagoHoy ? Number(pagoHoy.monto) || 0 : 0;
-    const montoMoraHoy = pagoHoy
-      ? Number(pagoHoy.montoMora ?? 0) || 0
-      : 0;
+    const montoMoraHoy = pagoHoy ? Number(pagoHoy.montoMora ?? 0) || 0 : 0;
     const montoAbonoHoy = pagoHoy
-      ? Number(
-          pagoHoy.montoAbono ??
-          (montoTotalHoy - montoMoraHoy),
-        ) || 0
+      ? Number(pagoHoy.montoAbono ?? (montoTotalHoy - montoMoraHoy)) || 0
       : 0;
-
-    const moraAdeudadaFmt = Math.round((creditDetails.mora_adeudada ?? 0) * 100) / 100;
-    const moraCobradaFmt = Math.round((creditDetails.mora_cobrada ?? 0) * 100) / 100;
-    const mostrarMora =
-      !!creditDetails.cobraMora ||
-      moraAdeudadaFmt > 0 ||
-      moraCobradaFmt > 0 ||
-      montoMoraHoy > 0;
-
     const cuotasPendientes = creditDetails.valor_cuota
       ? (creditDetails.saldo / creditDetails.valor_cuota).toFixed(2)
       : '0.00';
@@ -508,52 +493,44 @@ export class CreditoService {
     const rutaCtx = await this.rutaService.findContextById(rutaId, session);
     const currencyCode = rutaCtx?.currency || 'USD';
     const fmt = (n: number) => this.currencyService.formatShareAmount(n, currencyCode);
-
-    const fechaHoy = new Date().toLocaleDateString('es-GT');
     const fechaInicio = new Date(creditDetails.fecha_inicio).toLocaleDateString('es-GT');
+    const cobraMora = !!creditDetails.cobraMora;
 
-    let txtMessage = [
+    const lineas: string[] = [
       `Comprobante de pago`,
       `Cliente: ${cliente.nombre}`,
-      `Fecha: ${fechaHoy}`,
-      `------------`,
-      `Información del pago`,
-      `Fecha de pago: ${fechaPago}`,
-    ].join('\n');
+      `Fecha: ${fechaPago}`,
+    ];
 
-    if (mostrarMora && montoMoraHoy > 0) {
-      txtMessage += `\nAbono: ${fmt(montoAbonoHoy)}`;
-      txtMessage += `\nMora cobrada: ${fmt(montoMoraHoy)}`;
-      txtMessage += `\nTotal pagado: ${fmt(montoTotalHoy)}`;
+    if (cobraMora && montoMoraHoy > 0) {
+      lineas.push(`Abono: ${fmt(montoAbonoHoy)}`);
+      lineas.push(`Mora cobrada: ${fmt(montoMoraHoy)}`);
+      lineas.push(`Total pagado: ${fmt(montoTotalHoy)}`);
     } else {
-      txtMessage += `\nMonto pagado: ${fmt(montoTotalHoy)}`;
+      lineas.push(`Monto pagado: ${fmt(montoTotalHoy)}`);
     }
 
-    txtMessage += [
-      ``,
-      `------------`,
-      `Estado del crédito`,
+    lineas.push(
+      `----------------------`,
+      `Estado de credito`,
       `Fecha inicio: ${fechaInicio}`,
       `Valor prestado: ${fmt(creditDetails.valor_credito)}`,
-      `Total a pagar: ${fmt(creditDetails.total_pagar)}`,
-      `Abonos: ${fmt(creditDetails.abonos)}`,
-      `Saldo: ${fmt(creditDetails.saldo)}`,
       `Cuota: ${fmt(creditDetails.valor_cuota)}`,
-      `Cuotas pendientes: ${cuotasPendientes} / ${creditDetails.total_cuotas}`,
+      `Cuotas pendientes: ${cuotasPendientes}`,
       `Frecuencia: ${creditDetails.frecuencia_cobro}`,
-      `Días de atraso: ${creditDetails.daysOverdue ?? 0}`,
-    ].join('\n');
+      `Dias de Atraso: ${creditDetails.daysOverdue ?? 0}`,
+    );
 
-    if (mostrarMora) {
-      const totalLiquidar =
-        Math.round(
-          ((creditDetails.saldo ?? 0) + (creditDetails.mora_adeudada ?? 0)) * 100,
-        ) / 100;
-      txtMessage += `\n------------`;
-      txtMessage += `\nMora adeudada: ${fmt(moraAdeudadaFmt)}`;
-      txtMessage += `\nMora cobrada: ${fmt(moraCobradaFmt)}`;
-      txtMessage += `\nTotal a liquidar: ${fmt(totalLiquidar)}`;
+    if (cobraMora) {
+      const moraAdeudadaFmt =
+        Math.round((creditDetails.mora_adeudada ?? 0) * 100) / 100;
+      const moraCobradaFmt =
+        Math.round((creditDetails.mora_cobrada ?? 0) * 100) / 100;
+      lineas.push(`Mora adeudada: ${fmt(moraAdeudadaFmt)}`);
+      lineas.push(`Mora cobrada: ${fmt(moraCobradaFmt)}`);
     }
+
+    const txtMessage = lineas.join('\n');
 
     return {
       ok: true,
