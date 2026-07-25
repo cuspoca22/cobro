@@ -66,8 +66,8 @@ describe('AuthController', () => {
       const result = { ...mockUserEntity, ...createUserDto };
       mockAuthService.create.mockResolvedValue(result);
 
-      expect(await controller.create(createUserDto)).toBe(result);
-      expect(mockAuthService.create).toHaveBeenCalledWith(createUserDto);
+      expect(await controller.create(createUserDto, mockUserEntity)).toBe(result);
+      expect(mockAuthService.create).toHaveBeenCalledWith(createUserDto, mockUserEntity);
     });
   });
 
@@ -94,7 +94,7 @@ describe('AuthController', () => {
       mockAuthService.findAll.mockResolvedValue(result);
 
       expect(await controller.findAll(mockUserEntity)).toBe(result);
-      expect(mockAuthService.findAll).toHaveBeenCalledWith(mockUserEntity);
+      expect(mockAuthService.findAll).toHaveBeenCalledWith(mockUserEntity, undefined);
     });
   });
 
@@ -117,8 +117,8 @@ describe('AuthController', () => {
       const result = mockUserEntity;
       mockAuthService.findOne.mockResolvedValue(result);
 
-      expect(await controller.findOne(term)).toBe(result);
-      expect(mockAuthService.findOne).toHaveBeenCalledWith(term);
+      expect(await controller.findOne(mockUserEntity, term)).toBe(result);
+      expect(mockAuthService.findOne).toHaveBeenCalledWith(term, mockUserEntity);
     });
   });
 
@@ -143,8 +143,8 @@ describe('AuthController', () => {
 
       mockAuthService.update.mockResolvedValue(result);
 
-      expect(await controller.update(id, updateUserDto)).toBe(result);
-      expect(mockAuthService.update).toHaveBeenCalledWith(id, updateUserDto);
+      expect(await controller.update(id, updateUserDto, mockUserEntity)).toBe(result);
+      expect(mockAuthService.update).toHaveBeenCalledWith(id, updateUserDto, mockUserEntity);
     });
   });
 

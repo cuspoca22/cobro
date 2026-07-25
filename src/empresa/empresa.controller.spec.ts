@@ -98,18 +98,39 @@ describe('EmpresaController', () => {
       const result = [];
       mockEmpresaService.findEmpresaWithRutasOpened.mockResolvedValue(result);
 
-      expect(await controller.findEmpresaWithRutasOpened()).toBe(result);
-      expect(mockEmpresaService.findEmpresaWithRutasOpened).toHaveBeenCalled();
+      expect(await controller.findEmpresaWithRutasOpened(mockUser)).toBe(result);
+      expect(mockEmpresaService.findEmpresaWithRutasOpened).toHaveBeenCalledWith(
+        mockUser.empresa,
+      );
     });
   });
 
   describe('findOne', () => {
-    it('should return rutas by empresa for user', async () => {
+    it('should return rutas by empresa for ADMIN user', async () => {
       const result = {};
       mockEmpresaService.findRutasByEmpresa.mockResolvedValue(result);
 
       expect(await controller.findOne(mockUser)).toBe(result);
-      expect(mockEmpresaService.findRutasByEmpresa).toHaveBeenCalledWith(mockUser.empresa);
+      expect(mockEmpresaService.findRutasByEmpresa).toHaveBeenCalledWith(
+        mockUser.empresa,
+        { includeEmployes: true, rutaIds: null },
+      );
+    });
+
+    it('SUPERVISOR recibe solo sus rutas y sin empleados', async () => {
+      const supervisor = {
+        empresa: 'empresaId',
+        rol: 'SUPERVISOR',
+        rutas: ['ruta1', 'ruta2'],
+      };
+      const result = {};
+      mockEmpresaService.findRutasByEmpresa.mockResolvedValue(result);
+
+      expect(await controller.findOne(supervisor)).toBe(result);
+      expect(mockEmpresaService.findRutasByEmpresa).toHaveBeenCalledWith(
+        'empresaId',
+        { includeEmployes: false, rutaIds: ['ruta1', 'ruta2'] },
+      );
     });
 
     it('SUPERADMIN sin empresa no hace toString y retorna vacío', async () => {
@@ -123,6 +144,11 @@ describe('EmpresaController', () => {
       });
       expect(mockEmpresaService.findRutasByEmpresa).not.toHaveBeenCalled();
     });
+
+    it('usuario sin empresa lanza BadRequestException', () => {
+      const badUser = { rol: 'ADMIN' };
+      expect(() => controller.findOne(badUser)).toThrow();
+    });
   });
 
   describe('findById', () => {
@@ -133,7 +159,26 @@ describe('EmpresaController', () => {
 
       expect(await controller.findById(sa, 'emp1')).toBe(empresa);
       expect(mockEmpresaService.assertCanAccessEmpresa).toHaveBeenCalledWith(sa, 'emp1');
-      expect(mockEmpresaService.getEmpresaById).toHaveBeenCalledWith('emp1');
+      expect(mockEmpresaService.getEmpresaById).toHaveBeenCalledWith('emp1', {
+        includeEmployes: true,
+        rutaIds: null,
+      });
+    });
+
+    it('SUPERVISOR recibe solo sus rutas y sin empleados en detalle', async () => {
+      const supervisor = {
+        empresa: 'empresaId',
+        rol: 'SUPERVISOR',
+        rutas: [{ _id: 'ruta1' }],
+      };
+      const empresa = { id: 'empresaId', name: 'Test' };
+      mockEmpresaService.getEmpresaById.mockResolvedValue(empresa);
+
+      expect(await controller.findById(supervisor, 'empresaId')).toBe(empresa);
+      expect(mockEmpresaService.getEmpresaById).toHaveBeenCalledWith('empresaId', {
+        includeEmployes: false,
+        rutaIds: ['ruta1'],
+      });
     });
   });
 

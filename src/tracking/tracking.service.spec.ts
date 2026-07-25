@@ -5,8 +5,8 @@ import { Types } from 'mongoose';
 
 import { TrackingService } from './tracking.service';
 import { CobradorTracking } from './schemas/cobrador-tracking.schema';
-import { User } from '../auth/schemas/user.schema';
-import { Ruta } from '../ruta/schema/ruta.schema';
+import { AuthService } from '../auth/auth.service';
+import { RutaService } from '../ruta/ruta.service';
 
 describe('TrackingService', () => {
   let service: TrackingService;
@@ -15,13 +15,12 @@ describe('TrackingService', () => {
     findOne: jest.Mock;
     updateOne: jest.Mock;
   };
-  let mockUserModel: {
-    find: jest.Mock;
-    findById: jest.Mock;
+  let authService: {
+    findTrackingProfilesByIds: jest.Mock;
+    findTrackingProfileById: jest.Mock;
   };
-  let mockRutaModel: {
-    find: jest.Mock;
-    findById: jest.Mock;
+  let rutaService: {
+    findLean: jest.Mock;
   };
 
   const empresaId = new Types.ObjectId().toString();
@@ -34,21 +33,20 @@ describe('TrackingService', () => {
       findOne: jest.fn(),
       updateOne: jest.fn().mockReturnValue({ exec: jest.fn() }),
     };
-    mockUserModel = {
-      find: jest.fn(),
-      findById: jest.fn(),
+    authService = {
+      findTrackingProfilesByIds: jest.fn(),
+      findTrackingProfileById: jest.fn(),
     };
-    mockRutaModel = {
-      find: jest.fn(),
-      findById: jest.fn(),
+    rutaService = {
+      findLean: jest.fn().mockResolvedValue([{ timeZone: 'UTC' }]),
     };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         TrackingService,
         { provide: getModelToken(CobradorTracking.name), useValue: mockTrackingModel },
-        { provide: getModelToken(User.name), useValue: mockUserModel },
-        { provide: getModelToken(Ruta.name), useValue: mockRutaModel },
+        { provide: AuthService, useValue: authService },
+        { provide: RutaService, useValue: rutaService },
       ],
     }).compile();
 
@@ -85,11 +83,7 @@ describe('TrackingService', () => {
 
   describe('getEmpresaHoy', () => {
     it('retorna [] si no hay docs ni online', async () => {
-      mockRutaModel.find.mockReturnValue({
-        select: jest.fn().mockReturnValue({
-          lean: jest.fn().mockResolvedValue([]),
-        }),
-      });
+      rutaService.findLean.mockResolvedValue([]);
       mockTrackingModel.find.mockReturnValue({
         lean: jest.fn().mockResolvedValue([]),
       });
@@ -99,12 +93,6 @@ describe('TrackingService', () => {
     });
 
     it('incluye cobradores con tracking del día y marca online', async () => {
-      mockRutaModel.find.mockReturnValue({
-        select: jest.fn().mockReturnValue({
-          lean: jest.fn().mockResolvedValue([{ timeZone: 'UTC' }]),
-        }),
-      });
-
       const at = new Date('2026-07-22T18:00:00.000Z');
       mockTrackingModel.find.mockReturnValue({
         lean: jest.fn().mockResolvedValue([
@@ -128,17 +116,13 @@ describe('TrackingService', () => {
         ]),
       });
 
-      mockUserModel.find.mockReturnValue({
-        select: jest.fn().mockReturnValue({
-          lean: jest.fn().mockResolvedValue([
-            {
-              _id: new Types.ObjectId(cobradorId),
-              nombre: 'Demo',
-              ruta: rutaId,
-            },
-          ]),
-        }),
-      });
+      authService.findTrackingProfilesByIds.mockResolvedValue([
+        {
+          _id: cobradorId,
+          nombre: 'Demo',
+          rutaId: rutaId.toString(),
+        },
+      ]);
 
       const result = await service.getEmpresaHoy(
         empresaId,
@@ -156,25 +140,16 @@ describe('TrackingService', () => {
     });
 
     it('incluye cobrador online sin puntos del día', async () => {
-      mockRutaModel.find.mockReturnValue({
-        select: jest.fn().mockReturnValue({
-          lean: jest.fn().mockResolvedValue([]),
-        }),
-      });
       mockTrackingModel.find.mockReturnValue({
         lean: jest.fn().mockResolvedValue([]),
       });
-      mockUserModel.find.mockReturnValue({
-        select: jest.fn().mockReturnValue({
-          lean: jest.fn().mockResolvedValue([
-            {
-              _id: new Types.ObjectId(cobradorId),
-              nombre: 'Solo Online',
-              ruta: rutaId,
-            },
-          ]),
-        }),
-      });
+      authService.findTrackingProfilesByIds.mockResolvedValue([
+        {
+          _id: cobradorId,
+          nombre: 'Solo Online',
+          rutaId: rutaId.toString(),
+        },
+      ]);
 
       const result = await service.getEmpresaHoy(
         empresaId,
@@ -190,15 +165,25 @@ describe('TrackingService', () => {
         }),
       ]);
     });
+
+    it('filtra por rutaIds cuando se pasa scope de supervisor', async () => {
+      mockTrackingModel.find.mockReturnValue({
+        lean: jest.fn().mockResolvedValue([]),
+      });
+
+      const result = await service.getEmpresaHoy(
+        empresaId,
+        new Set([cobradorId]),
+        [],
+      );
+      expect(result).toEqual([]);
+      expect(mockTrackingModel.find).not.toHaveBeenCalled();
+    });
   });
 
   describe('getCobradorHoy', () => {
     it('lanza NotFoundException si el cobrador no existe', async () => {
-      mockUserModel.findById.mockReturnValue({
-        select: jest.fn().mockReturnValue({
-          lean: jest.fn().mockResolvedValue(null),
-        }),
-      });
+      authService.findTrackingProfileById.mockResolvedValue(null);
 
       await expect(
         service.getCobradorHoy(cobradorId, false),
