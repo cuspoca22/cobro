@@ -170,9 +170,20 @@ export class MovimientoCajaService {
     const session = await this.connection.startSession();
     session.startTransaction();
 
-    const { tipoMovimiento, rutaId, monto, ...rest } = createMovimientoDto;
+    const { tipoMovimiento: _ignoredTipo, rutaId, monto, subTipo, ...rest } = createMovimientoDto;
 
     try {
+      const oficinaSubTipos = [SubTipo.GASTO, SubTipo.RETIRO, SubTipo.INVERSION];
+      if (!oficinaSubTipos.includes(subTipo as SubTipo)) {
+        throw new BadRequestException(
+          'Solo se permiten movimientos de oficina (gasto, retiro o inversión)',
+        );
+      }
+
+      const tipoMovimiento =
+        subTipo === SubTipo.INVERSION
+          ? TipoMovimiento.INGRESO
+          : TipoMovimiento.EGRESO;
 
       const ruta = await this.rutaService.findOperacionContextById(rutaId, session);
       if (!ruta) throw new NotFoundException(`La ruta con el id ${rutaId} no existe`);
@@ -182,6 +193,7 @@ export class MovimientoCajaService {
         caja: ruta.caja_actual,
         monto,
         tipoMovimiento,
+        subTipo,
         ruta: rutaId,
         fecha: this.dateFnsAdapter.getStartOfTodayInTimeZone(ruta.timeZone),
         ...rest
@@ -653,6 +665,7 @@ export class MovimientoCajaService {
         $project: {
           fecha: 1,
           monto: 1,
+          montoMora: { $ifNull: ['$montoMora', 0] },
           subTipo: 1,
           comentario: 1,
           ubication: 1,
@@ -671,13 +684,23 @@ export class MovimientoCajaService {
   }
 
   /**
-   * Pagos del día con GPS, para todas las rutas de una empresa (mapa Seguimiento).
+   * Pagos del día con GPS, para rutas de una empresa (mapa Seguimiento).
+   * Si se pasa rutaIds, limita el resultado a esas rutas (supervisor/cobrador).
    */
-  async getPagosConUbicacionEmpresa(empresaId: string, fechaIso?: string) {
-    const rutas = await this.rutaService.findLean(
-      { empresa: new Types.ObjectId(empresaId) },
-      { select: '_id timeZone' },
-    );
+  async getPagosConUbicacionEmpresa(
+    empresaId: string,
+    fechaIso?: string,
+    rutaIds?: string[],
+  ) {
+    const filter: Record<string, unknown> = {
+      empresa: new Types.ObjectId(empresaId),
+    };
+    if (rutaIds) {
+      if (!rutaIds.length) return [];
+      filter._id = { $in: rutaIds.map((id) => new Types.ObjectId(id)) };
+    }
+
+    const rutas = await this.rutaService.findLean(filter, { select: '_id timeZone' });
     if (!rutas.length) return [];
 
     const ref = fechaIso
