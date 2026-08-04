@@ -16,6 +16,17 @@ export class UserEntity {
    /** País de la ruta asignada (fallback de moneda). */
    rutaPais?: string;
 
+   /**
+    * Sid del JWT actual (solo en request autenticado; no se serializa en login).
+    */
+   sid?: string;
+
+   /** Indica si hay sesión activa vigente (respuestas admin). */
+   hasActiveSession?: boolean;
+
+   /** Expiración de la sesión activa (respuestas admin). */
+   activeSessionExpiresAt?: Date | string | null;
+
    constructor(data?: Partial<UserEntity>) {
       if (data) {
          Object.assign(this, data);

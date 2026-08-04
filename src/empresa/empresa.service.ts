@@ -177,6 +177,7 @@ export class EmpresaService {
       .populate([
         {
           path: 'employes',
+          select: '-password',
           populate: [
             { path: 'ruta' },
             { path: 'rutas', select: 'nombre' },
@@ -189,7 +190,20 @@ export class EmpresaService {
 
     if (!empresaDB) return [];
 
-    return empresaDB.toObject().employes;
+    const employes = (empresaDB.toObject().employes || []) as any[];
+    return employes.map((e) => {
+      const hasActiveSession = !!(
+        e.activeSessionId
+        && e.activeSessionExpiresAt
+        && new Date(e.activeSessionExpiresAt).getTime() > Date.now()
+      );
+      const { activeSessionId: _sid, ...rest } = e;
+      return {
+        ...rest,
+        hasActiveSession,
+        activeSessionExpiresAt: hasActiveSession ? e.activeSessionExpiresAt : null,
+      };
+    });
 
   }
 

@@ -30,7 +30,15 @@ export class JWTStrategy extends PassportStrategy(Strategy, 'jwt') {
   }
 
   async validate(payload: JwtPayload): Promise<UserEntity> {
-    const { id } = payload;
+    const { id, sid } = payload;
+
+    if (!sid) {
+      throw new UnauthorizedException({
+        statusCode: 401,
+        message: 'Sesión inválida. Inicie sesión nuevamente.',
+        error: 'SESSION_INVALID',
+      });
+    }
 
     let user = await this.userModel.findById(id)
       .populate([
@@ -43,6 +51,23 @@ export class JWTStrategy extends PassportStrategy(Strategy, 'jwt') {
 
     if (!user.estado)
       throw new UnauthorizedException('usuario no esta activo');
+
+    const sessionExpires = user.activeSessionExpiresAt
+      ? new Date(user.activeSessionExpiresAt)
+      : null;
+    const sessionValid =
+      !!user.activeSessionId
+      && user.activeSessionId === sid
+      && !!sessionExpires
+      && sessionExpires.getTime() > Date.now();
+
+    if (!sessionValid) {
+      throw new UnauthorizedException({
+        statusCode: 401,
+        message: 'Sesión inválida o cerrada. Inicie sesión nuevamente.',
+        error: 'SESSION_INVALID',
+      });
+    }
 
     if (user.rol === 'COBRADOR' && user.ruta) {
       const ruta = user.ruta as { status?: boolean; isLocked?: boolean };
@@ -72,7 +97,9 @@ export class JWTStrategy extends PassportStrategy(Strategy, 'jwt') {
       }
     }
 
-    return UserEntity.fromObject(user.toObject());
+    const entity = UserEntity.fromObject(user.toObject());
+    entity.sid = sid;
+    return entity;
   }
 
 }

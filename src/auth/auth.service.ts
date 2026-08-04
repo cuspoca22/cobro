@@ -4,6 +4,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { ClientSession, Model, Types, isValidObjectId } from 'mongoose';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from "bcrypt";
+import { randomUUID } from 'crypto';
 
 import { CreateUserDto, GetUserDto, LoginDto, LoginResponseDto, UpdateProfileDto } from './dto';
 import { JwtPayload, ValidRoles } from './interfaces';
@@ -13,6 +14,10 @@ import { User } from './schemas/user.schema';
 import { UserEntity } from './entities/user.entity';
 import { CajaDayCheckService } from 'src/caja/caja-day-check.service';
 import { EmpresaService } from 'src/empresa/empresa.service';
+import { MessageGateway } from 'src/message/message.gateway';
+
+/** Alineado con JwtModule expiresIn: "12h". */
+export const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 
 @Injectable()
 export class AuthService {
@@ -32,6 +37,9 @@ export class AuthService {
 
       @Inject(forwardRef(() => EmpresaService))
       private readonly empresaService: EmpresaService,
+
+      @Inject(forwardRef(() => MessageGateway))
+      private readonly messageGateway: MessageGateway,
    ) { }
 
    async create(createUserDto: CreateUserDto, actor?: { rol?: string }): Promise<User> {
@@ -102,6 +110,36 @@ export class AuthService {
          throw new UnauthorizedException("Datos Incorrectos")
       }
 
+      if (!user.estado) {
+         await this.logAuth.create({
+            user: user._id,
+            ipAddress: request.ip,
+            userAgent: request.headers['user-agent'],
+            reason: 'User inactive',
+            isSuccessful: false
+         })
+
+         throw new UnauthorizedException("Datos Incorrectos")
+      }
+
+      if (this.isSessionActive(user.activeSessionId, user.activeSessionExpiresAt)) {
+         await this.logAuth.create({
+            user: user._id,
+            ipAddress: request.ip,
+            userAgent: request.headers['user-agent'],
+            reason: 'SESSION_ALREADY_ACTIVE',
+            isSuccessful: false
+         })
+
+         throw new UnauthorizedException({
+            statusCode: 401,
+            message:
+               'Ya hay una sesión activa. Cierre sesión en el otro dispositivo o contacte a un administrador.',
+            error: 'SESSION_ALREADY_ACTIVE',
+            expiresAt: user.activeSessionExpiresAt,
+         })
+      }
+
       if (user.ruta && user.rol === 'COBRADOR') {
          if (!user.ruta.status) {
 
@@ -159,14 +197,27 @@ export class AuthService {
          }
       }
 
+      const sid = randomUUID();
+      const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
+
+      await this.userModel.updateOne(
+         { _id: user._id },
+         {
+            $set: {
+               activeSessionId: sid,
+               activeSessionExpiresAt: expiresAt,
+            },
+         },
+      );
+
       return {
          user: UserEntity.fromObject(user),
-         token: this.getJwtToken({ id: user._id.toString() })
+         token: this.getJwtToken({ id: user._id.toString(), sid })
       }
 
    }
 
-   async checkStatus(user: GetUserDto) {
+   async checkStatus(user: GetUserDto & { sid?: string }) {
       let rutaCurrency: string | undefined;
       let rutaPais: string | undefined;
 
@@ -221,15 +272,73 @@ export class AuthService {
          }
       }
 
+      const sid = user.sid;
+      if (!sid) {
+         throw new UnauthorizedException({
+            statusCode: 401,
+            message: 'Sesión inválida. Inicie sesión nuevamente.',
+            error: 'SESSION_INVALID',
+         });
+      }
+
+      const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
+      await this.userModel.updateOne(
+         { _id: user.id, activeSessionId: sid },
+         { $set: { activeSessionExpiresAt: expiresAt } },
+      );
+
       return {
          user: UserEntity.fromObject({
             ...user,
             rutaCurrency,
             rutaPais,
          }),
-         token: this.getJwtToken({ id: user.id })
+         token: this.getJwtToken({ id: user.id, sid })
       }
 
+   }
+
+   /**
+    * Cierra la sesión del JWT actual si el sid coincide (idempotente).
+    */
+   async logout(user: UserEntity & { sid?: string }): Promise<{ ok: true }> {
+      if (user.sid) {
+         await this.userModel.updateOne(
+            { _id: user.id, activeSessionId: user.sid },
+            {
+               $set: {
+                  activeSessionId: null,
+                  activeSessionExpiresAt: null,
+               },
+            },
+         );
+      }
+      return { ok: true };
+   }
+
+   /**
+    * Libera la sesión activa de un usuario (ADMIN/SUPERADMIN).
+    * Emite WS session-revoked para cerrar el cliente conectado.
+    */
+   async clearSession(id: string, actor: UserEntity): Promise<{ ok: true }> {
+      const user = await this.findOne(id, actor);
+      const userId = (user as any)._id?.toString?.() ?? (user as any).id?.toString?.();
+
+      await this.userModel.updateOne(
+         { _id: userId },
+         {
+            $set: {
+               activeSessionId: null,
+               activeSessionExpiresAt: null,
+            },
+         },
+      );
+
+      this.messageGateway.emitSessionRevoked(userId, {
+         reason: 'ADMIN_CLEAR',
+      });
+
+      return { ok: true };
    }
 
    async findAll(user: UserEntity, empresaId?: string) {
@@ -253,7 +362,9 @@ export class AuthService {
          .select('-password')
          .populate(['ruta', 'rutas', 'empresa']);
 
-      return users.filter((userDb) => userDb._id.toString() !== user.id?.toString());
+      return users
+         .filter((userDb) => userDb._id.toString() !== user.id?.toString())
+         .map((userDb) => this.withSessionMeta(userDb));
    }
 
    async findOne(termino: string, actor?: UserEntity) {
@@ -297,7 +408,7 @@ export class AuthService {
          throw new NotFoundException(`No existe un usuario con el termino ${termino}`)
       }
 
-      return user;
+      return this.withSessionMeta(user) as User;
    }
 
    /**
@@ -333,6 +444,8 @@ export class AuthService {
             throw new BadRequestException('La contraseña tiene que tener minimo 6 caracteres');
          }
          patch.password = bcrypt.hashSync(dto.password, 10);
+         patch.activeSessionId = null;
+         patch.activeSessionExpiresAt = null;
       }
 
       if (Object.keys(patch).length === 0) {
@@ -403,9 +516,15 @@ export class AuthService {
       };
       if (updateUserDto.password) {
          patch.password = updateUserDto.password;
+         patch.activeSessionId = null;
+         patch.activeSessionExpiresAt = null;
       }
       if (updateUserDto.puedeActualizarUbicacion !== undefined) {
          patch.puedeActualizarUbicacion = updateUserDto.puedeActualizarUbicacion;
+      }
+      if (updateUserDto.estado === false) {
+         patch.activeSessionId = null;
+         patch.activeSessionExpiresAt = null;
       }
 
       try {
@@ -638,6 +757,22 @@ export class AuthService {
       await user.save();
    }
 
+   /** MessageGateway: handshake WS (activo + entidad + sesión). */
+   async findActiveEntityBySession(
+      id: string,
+      sid: string,
+   ): Promise<UserEntity | null> {
+      const userDoc = await this.userModel
+         .findById(id)
+         .populate([{ path: 'ruta' }, { path: 'rutas', select: '_id' }]);
+      if (!userDoc || !userDoc.estado) return null;
+      if (!this.isSessionActive(userDoc.activeSessionId, userDoc.activeSessionExpiresAt)) {
+         return null;
+      }
+      if (userDoc.activeSessionId !== sid) return null;
+      return UserEntity.fromObject(userDoc.toObject());
+   }
+
    /** MessageGateway: handshake WS (activo + entidad). */
    async findActiveEntityById(id: string): Promise<UserEntity | null> {
       const userDoc = await this.userModel
@@ -731,6 +866,37 @@ export class AuthService {
    private getJwtToken(payload: JwtPayload): string {
       const token = this.jwtService.sign(payload);
       return token;
+   }
+
+   private isSessionActive(
+      activeSessionId?: string | null,
+      activeSessionExpiresAt?: Date | string | null,
+   ): boolean {
+      if (!activeSessionId || !activeSessionExpiresAt) return false;
+      return new Date(activeSessionExpiresAt).getTime() > Date.now();
+   }
+
+   /**
+    * Expone hasActiveSession / activeSessionExpiresAt y oculta activeSessionId.
+    */
+   private withSessionMeta(userDoc: any) {
+      const obj = typeof userDoc.toObject === 'function'
+         ? userDoc.toObject()
+         : { ...userDoc };
+      const hasActiveSession = this.isSessionActive(
+         obj.activeSessionId,
+         obj.activeSessionExpiresAt,
+      );
+      const activeSessionExpiresAt = hasActiveSession
+         ? obj.activeSessionExpiresAt
+         : null;
+      delete obj.activeSessionId;
+      delete obj.password;
+      return {
+         ...obj,
+         hasActiveSession,
+         activeSessionExpiresAt,
+      };
    }
 
    private async checkCaja(idRuta: string, timeZone: string) {

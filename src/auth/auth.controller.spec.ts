@@ -23,6 +23,8 @@ describe('AuthController', () => {
     update: jest.fn(),
     updateProfile: jest.fn(),
     deleteUser: jest.fn(),
+    logout: jest.fn(),
+    clearSession: jest.fn(),
   };
 
   const mockUserEntity: UserEntity = {
@@ -145,6 +147,29 @@ describe('AuthController', () => {
 
       expect(await controller.update(id, updateUserDto, mockUserEntity)).toBe(result);
       expect(mockAuthService.update).toHaveBeenCalledWith(id, updateUserDto, mockUserEntity);
+    });
+  });
+
+  describe('logout', () => {
+    it('should logout the current user', async () => {
+      mockAuthService.logout.mockResolvedValue({ ok: true });
+
+      expect(await controller.logout(mockUserEntity)).toEqual({ ok: true });
+      expect(mockAuthService.logout).toHaveBeenCalledWith(mockUserEntity);
+    });
+  });
+
+  describe('clearSession', () => {
+    it('should clear session for a user', async () => {
+      mockAuthService.clearSession.mockResolvedValue({ ok: true });
+
+      expect(await controller.clearSession('someId', mockUserEntity)).toEqual({
+        ok: true,
+      });
+      expect(mockAuthService.clearSession).toHaveBeenCalledWith(
+        'someId',
+        mockUserEntity,
+      );
     });
   });
 

@@ -48,6 +48,21 @@ export class AuthController {
     return this.authService.checkStatus(user)
   }
 
+  @Auth()
+  @Post('logout')
+  async logout(@GetUser() user: UserEntity) {
+    return this.authService.logout(user);
+  }
+
+  @Auth(ValidRoles.admin, ValidRoles.superAdmin)
+  @Post('clear-session/:id')
+  async clearSession(
+    @Param('id') id: string,
+    @GetUser() actor: UserEntity,
+  ) {
+    return this.authService.clearSession(id, actor);
+  }
+
   @Auth(ValidRoles.admin, ValidRoles.superAdmin)
   @Get("user/:termino")
   async findOne(

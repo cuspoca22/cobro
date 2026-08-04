@@ -73,6 +73,20 @@ export class User extends Document {
    })
    puedeActualizarUbicacion: boolean;
 
+   /** Id de la única sesión activa (JWT claim `sid`). */
+   @Prop({
+      type: String,
+      default: null,
+   })
+   activeSessionId: string | null;
+
+   /** Expiración de la sesión activa (alineada al JWT ~12h). */
+   @Prop({
+      type: Date,
+      default: null,
+   })
+   activeSessionExpiresAt: Date | null;
+
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

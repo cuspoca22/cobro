@@ -5,6 +5,7 @@ import {
   empresaRoom,
   adminRoom,
   rutaRoom,
+  userRoom,
 } from './socket-auth.interface';
 
 describe('socket-auth.interface', () => {
@@ -20,9 +21,10 @@ describe('socket-auth.interface', () => {
     expect(isSuperAdminRole('SUPERADMIN')).toBe(true);
   });
 
-  it('arma rooms de empresa, admin y ruta', () => {
+  it('arma rooms de empresa, admin, ruta y usuario', () => {
     expect(empresaRoom('abc')).toBe('empresa:abc');
     expect(adminRoom('abc')).toBe('admin:abc');
     expect(rutaRoom('r1')).toBe('ruta:r1');
+    expect(userRoom('u1')).toBe('user:u1');
   });
 });

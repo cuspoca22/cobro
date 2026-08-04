@@ -45,3 +45,8 @@ export function rutaRoom(rutaId: string): string {
 export function superAdminRoom(): string {
   return 'admin:super';
 }
+
+/** Room por usuario: force-logout / session-revoked. */
+export function userRoom(userId: string): string {
+  return `user:${userId}`;
+}

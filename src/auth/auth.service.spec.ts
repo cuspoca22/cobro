@@ -11,6 +11,11 @@ import { LogAuth } from 'src/log-auth/entities/log-auth.entity';
 import { CajaDayCheckService } from 'src/caja/caja-day-check.service';
 import { EmpresaService } from 'src/empresa/empresa.service';
 import { ValidRoles } from './interfaces';
+import { MessageGateway } from 'src/message/message.gateway';
+
+const messageGatewayMock = {
+  emitSessionRevoked: jest.fn(),
+};
 
 describe('AuthService.normalizeRoleAssignment', () => {
   let service: AuthService;
@@ -81,6 +86,7 @@ describe('AuthService.updateProfile', () => {
         { provide: JwtService, useValue: { sign: jest.fn() } },
         { provide: CajaDayCheckService, useValue: {} },
         { provide: EmpresaService, useValue: {} },
+        { provide: MessageGateway, useValue: messageGatewayMock },
       ],
     }).compile();
 
@@ -138,7 +144,11 @@ describe('AuthService.updateProfile', () => {
 
     expect(hashSpy).toHaveBeenCalledWith('secreto1', 10);
     expect(doc.updateOne).toHaveBeenCalledWith(
-      { password: 'hashed-pwd' },
+      {
+        password: 'hashed-pwd',
+        activeSessionId: null,
+        activeSessionExpiresAt: null,
+      },
       { returnDocument: 'after' },
     );
     hashSpy.mockRestore();
@@ -237,6 +247,7 @@ describe('AuthService.deleteUser', () => {
         { provide: JwtService, useValue: { sign: jest.fn() } },
         { provide: CajaDayCheckService, useValue: {} },
         { provide: EmpresaService, useValue: mockEmpresaService },
+        { provide: MessageGateway, useValue: messageGatewayMock },
       ],
     }).compile();
 
@@ -302,6 +313,228 @@ describe('AuthService.deleteUser', () => {
   it('rechaza id inválido', async () => {
     await expect(service.deleteUser('no-es-objectid')).rejects.toThrow(
       BadRequestException,
+    );
+  });
+});
+
+describe('AuthService sesión única', () => {
+  let service: AuthService;
+  let mockUserModel: {
+    findOne: jest.Mock;
+    findById: jest.Mock;
+    updateOne: jest.Mock;
+  };
+  let mockLogAuth: { create: jest.Mock };
+  let mockJwt: { sign: jest.Mock };
+  let mockMessageGateway: { emitSessionRevoked: jest.Mock };
+  let mockEmpresaService: { isAccessSuspended: jest.Mock };
+
+  const userId = new Types.ObjectId();
+
+  beforeEach(async () => {
+    mockUserModel = {
+      findOne: jest.fn(),
+      findById: jest.fn(),
+      updateOne: jest.fn().mockResolvedValue({ matchedCount: 1 }),
+    };
+    mockLogAuth = { create: jest.fn().mockResolvedValue({}) };
+    mockJwt = { sign: jest.fn().mockReturnValue('jwt-token') };
+    mockMessageGateway = { emitSessionRevoked: jest.fn() };
+    mockEmpresaService = { isAccessSuspended: jest.fn().mockResolvedValue(false) };
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        AuthService,
+        { provide: getModelToken(User.name), useValue: mockUserModel },
+        { provide: getModelToken(LogAuth.name), useValue: mockLogAuth },
+        { provide: JwtService, useValue: mockJwt },
+        { provide: CajaDayCheckService, useValue: {} },
+        { provide: EmpresaService, useValue: mockEmpresaService },
+        { provide: MessageGateway, useValue: mockMessageGateway },
+      ],
+    }).compile();
+
+    service = module.get(AuthService);
+    jest.clearAllMocks();
+    mockJwt.sign.mockReturnValue('jwt-token');
+    mockUserModel.updateOne.mockResolvedValue({ matchedCount: 1 });
+    mockLogAuth.create.mockResolvedValue({});
+    mockEmpresaService.isAccessSuspended.mockResolvedValue(false);
+  });
+
+  function leanAdmin(overrides: Record<string, unknown> = {}) {
+    return {
+      _id: userId,
+      nombre: 'Admin',
+      username: 'ADMIN1',
+      password: bcrypt.hashSync('secret12', 10),
+      rol: ValidRoles.admin,
+      estado: true,
+      empresa: new Types.ObjectId(),
+      ruta: null,
+      rutas: [],
+      activeSessionId: null,
+      activeSessionExpiresAt: null,
+      ...overrides,
+    };
+  }
+
+  it('login crea sesión y firma JWT con sid', async () => {
+    const user = leanAdmin();
+    mockUserModel.findOne.mockReturnValue({
+      populate: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue(user),
+      }),
+    });
+
+    const result = await service.login(
+      { username: 'admin1', password: 'secret12' },
+      { ip: '1.1.1.1', headers: { 'user-agent': 'jest' } } as any,
+    );
+
+    expect(result.token).toBe('jwt-token');
+    expect(mockUserModel.updateOne).toHaveBeenCalledWith(
+      { _id: userId },
+      expect.objectContaining({
+        $set: expect.objectContaining({
+          activeSessionId: expect.any(String),
+          activeSessionExpiresAt: expect.any(Date),
+        }),
+      }),
+    );
+    expect(mockJwt.sign).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: userId.toString(),
+        sid: expect.any(String),
+      }),
+    );
+  });
+
+  it('login rechaza si ya hay sesión activa', async () => {
+    const user = leanAdmin({
+      activeSessionId: 'sid-previo',
+      activeSessionExpiresAt: new Date(Date.now() + 60_000),
+    });
+    mockUserModel.findOne.mockReturnValue({
+      populate: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue(user),
+      }),
+    });
+
+    await expect(
+      service.login(
+        { username: 'admin1', password: 'secret12' },
+        { ip: '1.1.1.1', headers: { 'user-agent': 'jest' } } as any,
+      ),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({ error: 'SESSION_ALREADY_ACTIVE' }),
+    });
+
+    expect(mockLogAuth.create).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: 'SESSION_ALREADY_ACTIVE' }),
+    );
+    expect(mockUserModel.updateOne).not.toHaveBeenCalled();
+  });
+
+  it('login permite si la sesión previa expiró', async () => {
+    const user = leanAdmin({
+      activeSessionId: 'sid-viejo',
+      activeSessionExpiresAt: new Date(Date.now() - 60_000),
+    });
+    mockUserModel.findOne.mockReturnValue({
+      populate: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue(user),
+      }),
+    });
+
+    const result = await service.login(
+      { username: 'admin1', password: 'secret12' },
+      { ip: '1.1.1.1', headers: { 'user-agent': 'jest' } } as any,
+    );
+
+    expect(result.token).toBe('jwt-token');
+    expect(mockUserModel.updateOne).toHaveBeenCalled();
+  });
+
+  it('logout limpia sesión si el sid coincide', async () => {
+    const result = await service.logout({
+      id: userId.toString(),
+      sid: 'sid-actual',
+    } as any);
+
+    expect(result).toEqual({ ok: true });
+    expect(mockUserModel.updateOne).toHaveBeenCalledWith(
+      { _id: userId.toString(), activeSessionId: 'sid-actual' },
+      {
+        $set: {
+          activeSessionId: null,
+          activeSessionExpiresAt: null,
+        },
+      },
+    );
+  });
+
+  it('checkStatus reutiliza sid y renueva expiresAt', async () => {
+    const result = await service.checkStatus({
+      id: userId.toString(),
+      sid: 'sid-actual',
+      rol: ValidRoles.admin,
+      empresa: new Types.ObjectId().toString(),
+    } as any);
+
+    expect(result.token).toBe('jwt-token');
+    expect(mockUserModel.updateOne).toHaveBeenCalledWith(
+      { _id: userId.toString(), activeSessionId: 'sid-actual' },
+      { $set: { activeSessionExpiresAt: expect.any(Date) } },
+    );
+    expect(mockJwt.sign).toHaveBeenCalledWith({
+      id: userId.toString(),
+      sid: 'sid-actual',
+    });
+  });
+
+  it('clearSession limpia y emite session-revoked', async () => {
+    const doc = {
+      _id: userId,
+      nombre: 'Admin',
+      username: 'ADMIN1',
+      rol: ValidRoles.admin,
+      estado: true,
+      empresa: new Types.ObjectId(),
+      activeSessionId: 'sid-x',
+      activeSessionExpiresAt: new Date(Date.now() + 60_000),
+      toObject: function () {
+        return { ...this };
+      },
+    };
+    mockUserModel.findById.mockReturnValue({
+      where: jest.fn().mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          select: jest.fn().mockResolvedValue(doc),
+        }),
+      }),
+    });
+
+    const actor = {
+      id: new Types.ObjectId().toString(),
+      rol: ValidRoles.superAdmin,
+    } as any;
+
+    const result = await service.clearSession(userId.toString(), actor);
+
+    expect(result).toEqual({ ok: true });
+    expect(mockUserModel.updateOne).toHaveBeenCalledWith(
+      { _id: userId.toString() },
+      {
+        $set: {
+          activeSessionId: null,
+          activeSessionExpiresAt: null,
+        },
+      },
+    );
+    expect(mockMessageGateway.emitSessionRevoked).toHaveBeenCalledWith(
+      userId.toString(),
+      { reason: 'ADMIN_CLEAR' },
     );
   });
 });

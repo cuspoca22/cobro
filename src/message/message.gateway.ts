@@ -26,6 +26,7 @@ import {
   isSupervisorRole,
   rutaRoom,
   superAdminRoom,
+  userRoom,
 } from './interfaces/socket-auth.interface';
 import { MessageService } from './message.service';
 
@@ -94,10 +95,19 @@ export class MessageGateway
       }
 
       const payload = this.jwtService.verify<JwtPayload>(token);
-      const user = await this.authService.findActiveEntityById(payload.id);
+      if (!payload?.sid) {
+        this.logger.warn('WS rechazado: token sin sid');
+        client.disconnect(true);
+        return;
+      }
+
+      const user = await this.authService.findActiveEntityBySession(
+        payload.id,
+        payload.sid,
+      );
 
       if (!user) {
-        this.logger.warn('WS rechazado: usuario inactivo o inexistente');
+        this.logger.warn('WS rechazado: usuario inactivo, inexistente o sesión inválida');
         client.disconnect(true);
         return;
       }
@@ -121,6 +131,8 @@ export class MessageGateway
         nombre: user.nombre,
       };
       client.data.user = data;
+
+      await client.join(userRoom(data.userId));
 
       if (isSuperAdmin) {
         await client.join(superAdminRoom());
@@ -231,6 +243,18 @@ export class MessageGateway
     if (rutaId) {
       this.wss.to(rutaRoom(rutaId)).emit(event, payload);
     }
+  }
+
+  /** Cierra sesión en el cliente (liberación admin / revocación). */
+  emitSessionRevoked(
+    userId: string,
+    payload: { reason?: string } = {},
+  ): void {
+    if (!this.wss || !userId) return;
+    this.wss.to(userRoom(userId)).emit('session-revoked', {
+      reason: payload.reason ?? 'SESSION_REVOKED',
+      at: new Date().toISOString(),
+    });
   }
 
   emitRutaLockState(payload: RutaLockStatePayload): void {

@@ -12,6 +12,7 @@ import { User, UserSchema } from './schemas/user.schema';
 import { DateFnsAdapter } from '../common/wrappers/date-fns.adapter';
 import { CajaDayCheckModule } from 'src/caja/caja-day-check.module';
 import { EmpresaModule } from 'src/empresa/empresa.module';
+import { MessageModule } from 'src/message/message.module';
 
 /**
  * V4b: solo registra User/LogAuth. Empresa vía EmpresaModule (forwardRef ciclo Auth↔Empresa).
@@ -22,6 +23,7 @@ import { EmpresaModule } from 'src/empresa/empresa.module';
     ConfigModule,
     CajaDayCheckModule,
     forwardRef(() => EmpresaModule),
+    forwardRef(() => MessageModule),
     MongooseModule.forFeature([
       {
         name: User.name,
