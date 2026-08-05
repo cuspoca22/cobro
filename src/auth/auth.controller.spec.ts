@@ -86,7 +86,37 @@ describe('AuthController', () => {
       mockAuthService.login.mockResolvedValue(result);
 
       expect(await controller.login(loginDto, req)).toBe(result);
-      expect(mockAuthService.login).toHaveBeenCalledWith(loginDto, req);
+      expect(mockAuthService.login).toHaveBeenCalledWith(loginDto, req, {
+        client: undefined,
+      });
+    });
+
+    it('should pass cobrador client hint from query', async () => {
+      const loginDto: LoginDto = {
+        username: 'COBRADOR1',
+        password: 'password123',
+      };
+      const req = { ip: '127.0.0.1', headers: { 'user-agent': 'jest' } } as Request;
+      mockAuthService.login.mockResolvedValue({ token: 't' });
+
+      await controller.login(loginDto, req, 'COBRADOR');
+      expect(mockAuthService.login).toHaveBeenCalledWith(loginDto, req, {
+        client: 'cobrador',
+      });
+    });
+
+    it('should pass admin client hint from query', async () => {
+      const loginDto: LoginDto = {
+        username: 'ADMIN1',
+        password: 'password123',
+      };
+      const req = { ip: '127.0.0.1', headers: { 'user-agent': 'jest' } } as Request;
+      mockAuthService.login.mockResolvedValue({ token: 't' });
+
+      await controller.login(loginDto, req, undefined, 'true');
+      expect(mockAuthService.login).toHaveBeenCalledWith(loginDto, req, {
+        client: 'admin',
+      });
     });
   });
 

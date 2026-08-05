@@ -10,9 +10,7 @@ import { Model } from 'mongoose';
 
 import { AuthService } from 'src/auth/auth.service';
 import { ValidRoles } from 'src/auth/interfaces';
-import { User } from 'src/auth/schemas/user.schema';
 import { EmpresaService } from 'src/empresa/empresa.service';
-import { Empresa } from 'src/empresa/schemas/empresa.schema';
 import { ConvertLeadDto, CreateLeadDto, UpdateLeadDto } from './dto';
 import { Lead, LeadStatus } from './schemas/lead.schema';
 
@@ -23,10 +21,6 @@ export class LeadsService {
   constructor(
     @InjectModel(Lead.name)
     private readonly leadModel: Model<Lead>,
-    @InjectModel(User.name)
-    private readonly userModel: Model<User>,
-    @InjectModel(Empresa.name)
-    private readonly empresaModel: Model<Empresa>,
     private readonly empresaService: EmpresaService,
     private readonly authService: AuthService,
   ) {}
@@ -174,17 +168,11 @@ export class LeadsService {
 
       userId = user._id.toString();
 
-      // Solo dueño (como addOwner): no va en employes
-      const empresaDoc = await this.empresaModel.findById(empresaId);
-      if (!empresaDoc) {
-        throw new NotFoundException(`Empresa ${empresaId} no encontrada`);
-      }
-
-      empresaDoc.owner = user._id as any;
-      await empresaDoc.save();
+      // V4b: owner vía EmpresaService (sin @InjectModel Empresa).
+      await this.empresaService.addOwner(empresaId, userId);
 
       lead.status = LeadStatus.CONVERTED;
-      lead.empresaId = empresaDoc._id as any;
+      lead.empresaId = empresa._id as any;
       lead.userId = user._id as any;
       await lead.save();
 
@@ -204,10 +192,10 @@ export class LeadsService {
       // Compensación ligera (sin cascada pesada que cuelga el request)
       try {
         if (userId) {
-          await this.userModel.findByIdAndDelete(userId);
+          await this.authService.deleteUser(userId);
         }
         if (empresaId) {
-          await this.empresaModel.findByIdAndDelete(empresaId);
+          await this.empresaService.hardDeleteById(empresaId);
         }
       } catch (cleanupError: any) {
         this.logger.error(

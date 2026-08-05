@@ -288,6 +288,8 @@ export class MessageGateway
       at: new Date().toISOString(),
     };
 
+    // userRoom: respaldo de cierre remoto (cobrador/admin) si se pierde session-revoked.
+    this.wss.to(userRoom(payload.userId)).emit('session:state', body);
     this.wss.to(superAdminRoom()).emit('session:state', body);
     if (body.empresaId) {
       this.wss.to(adminRoom(body.empresaId)).emit('session:state', body);

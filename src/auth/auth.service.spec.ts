@@ -514,6 +514,45 @@ describe('AuthService sesión única', () => {
     expect(mockUserModel.updateOne).toHaveBeenCalled();
   });
 
+  it('login rechaza ADMIN en cliente cobrador', async () => {
+    const user = leanAdmin();
+    mockUserModel.findOne.mockReturnValue({
+      populate: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue(user),
+      }),
+    });
+
+    await expect(
+      service.login(
+        { username: 'admin1', password: 'secret12' },
+        { ip: '1.1.1.1', headers: { 'user-agent': 'jest' } } as any,
+        { client: 'cobrador' },
+      ),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({ error: 'ROLE_CLIENT_MISMATCH' }),
+    });
+    expect(mockUserModel.updateOne).not.toHaveBeenCalled();
+  });
+
+  it('login rechaza COBRADOR en cliente admin', async () => {
+    const user = leanAdmin({ rol: ValidRoles.cobrador, ruta: null });
+    mockUserModel.findOne.mockReturnValue({
+      populate: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue(user),
+      }),
+    });
+
+    await expect(
+      service.login(
+        { username: 'admin1', password: 'secret12' },
+        { ip: '1.1.1.1', headers: { 'user-agent': 'jest' } } as any,
+        { client: 'admin' },
+      ),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({ error: 'ROLE_CLIENT_MISMATCH' }),
+    });
+  });
+
   it('logout limpia sesión si el sid coincide', async () => {
     const result = await service.logout({
       id: userId.toString(),

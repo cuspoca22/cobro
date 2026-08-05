@@ -23,8 +23,17 @@ export class AuthController {
   async login(
     @Body() loginDto: LoginDto,
     @Req() request: Request,
+    @Query('rol') rol?: string,
+    @Query('admin') admin?: string,
   ) {
-    return this.authService.login(loginDto, request);
+    // Query hints enviados por clientes (cobrov2: rol=COBRADOR, admin-app: admin=true).
+    const client =
+      admin === 'true' || admin === '1'
+        ? 'admin' as const
+        : rol?.toUpperCase() === 'COBRADOR'
+          ? 'cobrador' as const
+          : undefined;
+    return this.authService.login(loginDto, request, { client });
   }
 
   @Auth(ValidRoles.admin, ValidRoles.superAdmin)

@@ -67,7 +67,14 @@ export class AuthService {
 
    }
 
-   async login(loginDto: LoginDto, request: Request): Promise<LoginResponseDto> {
+   /**
+    * @param options.client Hint del cliente (`cobrador` / `admin`) para validar rol en servidor.
+    */
+   async login(
+      loginDto: LoginDto,
+      request: Request,
+      options?: { client?: 'cobrador' | 'admin' },
+   ): Promise<LoginResponseDto> {
 
       const { username, password } = loginDto;
 
@@ -126,6 +133,8 @@ export class AuthService {
             error: 'USER_BLOCKED',
          })
       }
+
+      this.assertLoginClientRole(user.rol, options?.client, user._id, request);
 
       const hadActiveSession = this.isSessionActive(
          user.activeSessionId,
@@ -941,6 +950,46 @@ export class AuthService {
    private getJwtToken(payload: JwtPayload): string {
       const token = this.jwtService.sign(payload);
       return token;
+   }
+
+   /** Valida que el rol del usuario coincida con el cliente que inicia sesión. */
+   private assertLoginClientRole(
+      rol: string,
+      client: 'cobrador' | 'admin' | undefined,
+      userId: Types.ObjectId | string,
+      request: Request,
+   ): void {
+      if (!client) return;
+
+      const adminRoles = [
+         ValidRoles.admin,
+         ValidRoles.superAdmin,
+         ValidRoles.supervisor,
+      ] as string[];
+
+      const allowed =
+         client === 'cobrador'
+            ? rol === ValidRoles.cobrador
+            : adminRoles.includes(rol);
+
+      if (allowed) return;
+
+      void this.logAuth.create({
+         user: userId as any,
+         ipAddress: request.ip,
+         userAgent: request.headers['user-agent'],
+         reason: 'ROLE_CLIENT_MISMATCH',
+         isSuccessful: false,
+      });
+
+      throw new UnauthorizedException({
+         statusCode: 401,
+         message:
+            client === 'cobrador'
+               ? 'Este usuario no puede iniciar sesión en la app de cobro.'
+               : 'Este usuario no puede iniciar sesión en el panel administrativo.',
+         error: 'ROLE_CLIENT_MISMATCH',
+      });
    }
 
    private isSessionActive(

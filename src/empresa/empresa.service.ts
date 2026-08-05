@@ -666,6 +666,15 @@ export class EmpresaService {
 
   }
 
+  /**
+   * Borrado físico sin cascada (compensación / cleanup).
+   * Preferir `remove()` en flujos normales de negocio.
+   */
+  async hardDeleteById(id: string): Promise<boolean> {
+    const result = await this.empresaModel.findByIdAndDelete(id);
+    return !!result;
+  }
+
   async remove(id: string): Promise<{ message: string }> {
     const empresa = await this.empresaModel.findById(id);
     if (!empresa) {
