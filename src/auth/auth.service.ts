@@ -115,30 +115,22 @@ export class AuthService {
             user: user._id,
             ipAddress: request.ip,
             userAgent: request.headers['user-agent'],
-            reason: 'User inactive',
-            isSuccessful: false
-         })
-
-         throw new UnauthorizedException("Datos Incorrectos")
-      }
-
-      if (this.isSessionActive(user.activeSessionId, user.activeSessionExpiresAt)) {
-         await this.logAuth.create({
-            user: user._id,
-            ipAddress: request.ip,
-            userAgent: request.headers['user-agent'],
-            reason: 'SESSION_ALREADY_ACTIVE',
+            reason: 'USER_BLOCKED',
             isSuccessful: false
          })
 
          throw new UnauthorizedException({
             statusCode: 401,
             message:
-               'Ya hay una sesión activa. Cierre sesión en el otro dispositivo o contacte a un administrador.',
-            error: 'SESSION_ALREADY_ACTIVE',
-            expiresAt: user.activeSessionExpiresAt,
+               'Tu usuario está bloqueado. Contacta a un administrador.',
+            error: 'USER_BLOCKED',
          })
       }
+
+      const hadActiveSession = this.isSessionActive(
+         user.activeSessionId,
+         user.activeSessionExpiresAt,
+      );
 
       if (user.ruta && user.rol === 'COBRADOR') {
          if (!user.ruta.status) {
@@ -197,6 +189,42 @@ export class AuthService {
          }
       }
 
+      if (hadActiveSession) {
+         const previousUserId = user._id.toString();
+         const hasLiveClient =
+            this.messageGateway.hasActiveUserConnection(previousUserId);
+
+         if (hasLiveClient) {
+            await this.logAuth.create({
+               user: user._id,
+               ipAddress: request.ip,
+               userAgent: request.headers['user-agent'],
+               reason: 'SESSION_ALREADY_ACTIVE',
+               isSuccessful: false,
+            });
+
+            throw new UnauthorizedException({
+               statusCode: 401,
+               message:
+                  'Ya hay una sesión activa. Cierre sesión en el otro dispositivo o contacte a un administrador.',
+               error: 'SESSION_ALREADY_ACTIVE',
+               expiresAt: user.activeSessionExpiresAt,
+            });
+         }
+
+         // Sesión fantasma (p. ej. tras reinicio del API sin WS vivo).
+         await this.logAuth.create({
+            user: user._id,
+            ipAddress: request.ip,
+            userAgent: request.headers['user-agent'],
+            reason: 'SESSION_ORPHAN_RECLAIM',
+            isSuccessful: true,
+         });
+         this.messageGateway.emitSessionRevoked(previousUserId, {
+            reason: 'ORPHAN_RECLAIM',
+         });
+      }
+
       const sid = randomUUID();
       const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
 
@@ -209,6 +237,14 @@ export class AuthService {
             },
          },
       );
+
+      this.messageGateway.emitSessionState({
+         userId: user._id.toString(),
+         hasActiveSession: true,
+         activeSessionExpiresAt: expiresAt,
+         empresaId: this.resolveEmpresaId(user.empresa),
+         reason: 'LOGIN',
+      });
 
       return {
          user: UserEntity.fromObject(user),
@@ -303,7 +339,7 @@ export class AuthService {
     */
    async logout(user: UserEntity & { sid?: string }): Promise<{ ok: true }> {
       if (user.sid) {
-         await this.userModel.updateOne(
+         const result = await this.userModel.updateOne(
             { _id: user.id, activeSessionId: user.sid },
             {
                $set: {
@@ -312,6 +348,16 @@ export class AuthService {
                },
             },
          );
+
+         if ((result as any).matchedCount > 0) {
+            this.messageGateway.emitSessionState({
+               userId: user.id,
+               hasActiveSession: false,
+               activeSessionExpiresAt: null,
+               empresaId: this.resolveEmpresaId(user.empresa),
+               reason: 'LOGOUT',
+            });
+         }
       }
       return { ok: true };
    }
@@ -335,6 +381,18 @@ export class AuthService {
       );
 
       this.messageGateway.emitSessionRevoked(userId, {
+         reason: 'ADMIN_CLEAR',
+      });
+
+      // Emitir estado después del revoke para que clientes en adminRoom
+      // también cierren si no recibieron session-revoked.
+      this.messageGateway.emitSessionState({
+         userId,
+         hasActiveSession: false,
+         activeSessionExpiresAt: null,
+         empresaId: this.resolveEmpresaId(
+            (user as any).empresa ?? (user as any).empresaId,
+         ),
          reason: 'ADMIN_CLEAR',
       });
 
@@ -516,19 +574,36 @@ export class AuthService {
       };
       if (updateUserDto.password) {
          patch.password = updateUserDto.password;
-         patch.activeSessionId = null;
-         patch.activeSessionExpiresAt = null;
       }
       if (updateUserDto.puedeActualizarUbicacion !== undefined) {
          patch.puedeActualizarUbicacion = updateUserDto.puedeActualizarUbicacion;
       }
-      if (updateUserDto.estado === false) {
+
+      const shouldRevokeSession =
+         updateUserDto.estado === false || !!updateUserDto.password;
+      if (shouldRevokeSession) {
          patch.activeSessionId = null;
          patch.activeSessionExpiresAt = null;
       }
 
       try {
          await user.updateOne(patch, { returnDocument: 'after' });
+
+         if (shouldRevokeSession) {
+            const userId = user._id.toString();
+            const revokeReason =
+               updateUserDto.estado === false ? 'USER_BLOCKED' : 'PASSWORD_CHANGED';
+            this.messageGateway.emitSessionRevoked(userId, {
+               reason: revokeReason,
+            });
+            this.messageGateway.emitSessionState({
+               userId,
+               hasActiveSession: false,
+               activeSessionExpiresAt: null,
+               empresaId: this.resolveEmpresaId(user.empresa),
+               reason: revokeReason,
+            });
+         }
 
          return {
             ...user.toJSON(),
@@ -874,6 +949,15 @@ export class AuthService {
    ): boolean {
       if (!activeSessionId || !activeSessionExpiresAt) return false;
       return new Date(activeSessionExpiresAt).getTime() > Date.now();
+   }
+
+   private resolveEmpresaId(empresa: unknown): string | null {
+      if (!empresa) return null;
+      if (typeof empresa === 'string') return empresa;
+      if (empresa instanceof Types.ObjectId) return empresa.toString();
+      const raw = empresa as { _id?: unknown; id?: unknown };
+      const id = raw._id ?? raw.id;
+      return id != null ? String(id) : null;
    }
 
    /**

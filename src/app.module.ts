@@ -23,6 +23,8 @@ import { ReportesModule } from './reportes/reportes.module';
 import { TrackingModule } from './tracking/tracking.module';
 import { AnnouncementModule } from './announcement/announcement.module';
 import { EventsModule } from './common/events/events.module';
+import { LeadsModule } from './leads/leads.module';
+import { ThrottlerModule } from '@nestjs/throttler';
 
 const environment = process.env.NODE_ENV || 'development';
 const envFile = `.env.${environment}`;
@@ -31,6 +33,12 @@ const envFile = `.env.${environment}`;
   imports: [
     ConfigModule.forRoot({ isGlobal: true, envFilePath: [envFile, '.env'] }),
     ScheduleModule.forRoot(),
+    ThrottlerModule.forRoot([
+      {
+        ttl: 60000,
+        limit: 100,
+      },
+    ]),
     EventsModule,
     MongooseModule.forRoot(process.env.MONGO_URL, {
       dbName: process.env.MONGO_DB_NAME,
@@ -56,6 +64,7 @@ const envFile = `.env.${environment}`;
     ReportesModule,
     TrackingModule,
     AnnouncementModule,
+    LeadsModule,
   ],
   controllers: [],
   providers: [],

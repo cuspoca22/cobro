@@ -12,7 +12,24 @@ async function bootstrap() {
 
   app.setGlobalPrefix("api");
 
-  app.enableCors();
+  const corsOrigins = process.env.CORS_ORIGINS
+    ?.split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
+
+  app.enableCors({
+    origin: (origin, callback) => {
+      // Sin Origin (curl/Postman) o lista vacía en dev → permitir
+      if (!origin || !corsOrigins?.length) {
+        return callback(null, true);
+      }
+      if (corsOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      return callback(new Error(`CORS blocked for origin: ${origin}`), false);
+    },
+    credentials: true,
+  });
 
   app.useGlobalPipes(
     new ValidationPipe({

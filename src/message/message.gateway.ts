@@ -245,6 +245,13 @@ export class MessageGateway
     }
   }
 
+  /** True si hay al menos un socket en la room del usuario. */
+  hasActiveUserConnection(userId: string): boolean {
+    if (!this.wss || !userId) return false;
+    const room = this.wss.sockets?.adapter?.rooms?.get(userRoom(userId));
+    return !!room && room.size > 0;
+  }
+
   /** Cierra sesión en el cliente (liberación admin / revocación). */
   emitSessionRevoked(
     userId: string,
@@ -255,6 +262,36 @@ export class MessageGateway
       reason: payload.reason ?? 'SESSION_REVOKED',
       at: new Date().toISOString(),
     });
+  }
+
+  /**
+   * Notifica a SUPERADMIN y ADMIN de empresa el cambio de sesión de un usuario
+   * (login / logout / liberar), para actualizar UI en tiempo real.
+   */
+  emitSessionState(payload: {
+    userId: string;
+    hasActiveSession: boolean;
+    activeSessionExpiresAt?: string | Date | null;
+    empresaId?: string | null;
+    reason?: string;
+  }): void {
+    if (!this.wss || !payload.userId) return;
+
+    const body = {
+      userId: payload.userId,
+      hasActiveSession: !!payload.hasActiveSession,
+      activeSessionExpiresAt: payload.activeSessionExpiresAt
+        ? new Date(payload.activeSessionExpiresAt).toISOString()
+        : null,
+      empresaId: payload.empresaId ? String(payload.empresaId) : null,
+      reason: payload.reason ?? 'SESSION_STATE',
+      at: new Date().toISOString(),
+    };
+
+    this.wss.to(superAdminRoom()).emit('session:state', body);
+    if (body.empresaId) {
+      this.wss.to(adminRoom(body.empresaId)).emit('session:state', body);
+    }
   }
 
   emitRutaLockState(payload: RutaLockStatePayload): void {

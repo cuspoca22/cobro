@@ -42,6 +42,7 @@
     "@nestjs/schedule": "^6.1.1",
     "@nestjs/serve-static": "^5.0.4",
     "@nestjs/swagger": "^11.2.6",
+    "@nestjs/throttler": "^6.5.0",
     "@nestjs/websockets": "^11.1.13",
     "@types/nodemailer": "^7.0.10",
     "bcrypt": "^6.0.0",

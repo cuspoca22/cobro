@@ -15,6 +15,8 @@ import { MessageGateway } from 'src/message/message.gateway';
 
 const messageGatewayMock = {
   emitSessionRevoked: jest.fn(),
+  hasActiveUserConnection: jest.fn().mockReturnValue(false),
+  emitSessionState: jest.fn(),
 };
 
 describe('AuthService.normalizeRoleAssignment', () => {
@@ -326,7 +328,11 @@ describe('AuthService sesión única', () => {
   };
   let mockLogAuth: { create: jest.Mock };
   let mockJwt: { sign: jest.Mock };
-  let mockMessageGateway: { emitSessionRevoked: jest.Mock };
+  let mockMessageGateway: {
+    emitSessionRevoked: jest.Mock;
+    hasActiveUserConnection: jest.Mock;
+    emitSessionState: jest.Mock;
+  };
   let mockEmpresaService: { isAccessSuspended: jest.Mock };
 
   const userId = new Types.ObjectId();
@@ -339,7 +345,11 @@ describe('AuthService sesión única', () => {
     };
     mockLogAuth = { create: jest.fn().mockResolvedValue({}) };
     mockJwt = { sign: jest.fn().mockReturnValue('jwt-token') };
-    mockMessageGateway = { emitSessionRevoked: jest.fn() };
+    mockMessageGateway = {
+      emitSessionRevoked: jest.fn(),
+      hasActiveUserConnection: jest.fn().mockReturnValue(false),
+      emitSessionState: jest.fn(),
+    };
     mockEmpresaService = { isAccessSuspended: jest.fn().mockResolvedValue(false) };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -402,6 +412,13 @@ describe('AuthService sesión única', () => {
         }),
       }),
     );
+    expect(mockMessageGateway.emitSessionState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: userId.toString(),
+        hasActiveSession: true,
+        reason: 'LOGIN',
+      }),
+    );
     expect(mockJwt.sign).toHaveBeenCalledWith(
       expect.objectContaining({
         id: userId.toString(),
@@ -410,7 +427,7 @@ describe('AuthService sesión única', () => {
     );
   });
 
-  it('login rechaza si ya hay sesión activa', async () => {
+  it('login rechaza si hay sesión activa con cliente WS vivo', async () => {
     const user = leanAdmin({
       activeSessionId: 'sid-previo',
       activeSessionExpiresAt: new Date(Date.now() + 60_000),
@@ -420,6 +437,7 @@ describe('AuthService sesión única', () => {
         lean: jest.fn().mockResolvedValue(user),
       }),
     });
+    mockMessageGateway.hasActiveUserConnection.mockReturnValue(true);
 
     await expect(
       service.login(
@@ -434,6 +452,46 @@ describe('AuthService sesión única', () => {
       expect.objectContaining({ reason: 'SESSION_ALREADY_ACTIVE' }),
     );
     expect(mockUserModel.updateOne).not.toHaveBeenCalled();
+    expect(mockMessageGateway.emitSessionRevoked).not.toHaveBeenCalled();
+  });
+
+  it('login recupera sesión huérfana si no hay cliente WS', async () => {
+    const user = leanAdmin({
+      activeSessionId: 'sid-previo',
+      activeSessionExpiresAt: new Date(Date.now() + 60_000),
+    });
+    mockUserModel.findOne.mockReturnValue({
+      populate: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue(user),
+      }),
+    });
+    mockMessageGateway.hasActiveUserConnection.mockReturnValue(false);
+
+    const result = await service.login(
+      { username: 'admin1', password: 'secret12' },
+      { ip: '1.1.1.1', headers: { 'user-agent': 'jest' } } as any,
+    );
+
+    expect(result.token).toBe('jwt-token');
+    expect(mockLogAuth.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reason: 'SESSION_ORPHAN_RECLAIM',
+        isSuccessful: true,
+      }),
+    );
+    expect(mockMessageGateway.emitSessionRevoked).toHaveBeenCalledWith(
+      userId.toString(),
+      { reason: 'ORPHAN_RECLAIM' },
+    );
+    expect(mockUserModel.updateOne).toHaveBeenCalledWith(
+      { _id: user._id },
+      {
+        $set: {
+          activeSessionId: expect.any(String),
+          activeSessionExpiresAt: expect.any(Date),
+        },
+      },
+    );
   });
 
   it('login permite si la sesión previa expiró', async () => {
@@ -471,6 +529,13 @@ describe('AuthService sesión única', () => {
           activeSessionExpiresAt: null,
         },
       },
+    );
+    expect(mockMessageGateway.emitSessionState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: userId.toString(),
+        hasActiveSession: false,
+        reason: 'LOGOUT',
+      }),
     );
   });
 
@@ -535,6 +600,13 @@ describe('AuthService sesión única', () => {
     expect(mockMessageGateway.emitSessionRevoked).toHaveBeenCalledWith(
       userId.toString(),
       { reason: 'ADMIN_CLEAR' },
+    );
+    expect(mockMessageGateway.emitSessionState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: userId.toString(),
+        hasActiveSession: false,
+        reason: 'ADMIN_CLEAR',
+      }),
     );
   });
 });
