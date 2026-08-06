@@ -113,7 +113,9 @@ export class TotalesFinancieroEmpresaDto {
 
   @ApiProperty({
     example: 8500,
-    description: 'Interés cobrado en el periodo (prorrateo sobre pagos). Difiere de ganancia_total en GET /ruta/:id',
+    description:
+      'Interés cobrado en el periodo (prorrateo sobre montoAbono, sin mora). ' +
+      'Difiere de interesContractual/gananciaPotencial en cartera.',
   })
   interesCobrado: number;
 
@@ -125,6 +127,12 @@ export class TotalesFinancieroEmpresaDto {
 
   @ApiProperty({ example: 5000 })
   inversiones: number;
+
+  @ApiProperty({
+    example: 5300,
+    description: 'Resultado del periodo: interesCobrado - gastos',
+  })
+  resultadoPeriodo: number;
 }
 
 export class SerieDiariaFinancieroDto {
@@ -205,14 +213,52 @@ export class TotalesCarteraEmpresaDto {
   @ApiProperty({ example: 125400, description: 'Saldo pendiente total de créditos activos' })
   cartera: number;
 
-  @ApiProperty({ example: 98000, description: 'Capital prestado en créditos activos' })
+  @ApiProperty({ example: 98000, description: 'Capital prestado en créditos activos (valor_credito original)' })
   capitalPrestado: number;
 
   @ApiProperty({
     example: 27400,
-    description: 'Interés teórico pendiente en cartera activa (ganancia potencial)',
+    description:
+      'Alias de interesContractual: interés contractual total de créditos activos ' +
+      '(total_pagar - valor_credito). No descuenta lo ya cobrado.',
   })
   gananciaPotencial: number;
+
+  @ApiProperty({
+    example: 27400,
+    description:
+      'Interés contractual total de créditos activos (total_pagar - valor_credito). ' +
+      'Igual a gananciaPotencial.',
+  })
+  interesContractual: number;
+
+  @ApiProperty({
+    example: 12000,
+    description:
+      'Interés aún pendiente de cobrar, prorrateado por saldo: ' +
+      'interesContractual * (saldo / total_pagar)',
+  })
+  interesPendiente: number;
+
+  @ApiProperty({
+    example: 15400,
+    description:
+      'Interés ya cobrado en créditos activos (acumulado): ' +
+      'interesContractual * (abonos / total_pagar)',
+  })
+  interesCobradoAcumulado: number;
+
+  @ApiProperty({
+    example: 8500,
+    description: 'Suma de caja_final actual (última caja conocida) de todas las rutas',
+  })
+  cajaTotalEmpresa: number;
+
+  @ApiProperty({
+    example: 133900,
+    description: 'Liquidez operativa: cajaTotalEmpresa + cartera (efectivo en rutas + saldo por cobrar)',
+  })
+  liquidezOperativa: number;
 
   @ApiProperty({ example: 45 })
   totalClientes: number;
@@ -220,10 +266,22 @@ export class TotalesCarteraEmpresaDto {
   @ApiProperty({ example: 38 })
   clientesActivos: number;
 
-  @ApiProperty({ example: 8, description: 'Créditos activos con estado REGULAR o MALO' })
+  @ApiProperty({
+    example: 40,
+    description: 'Total de créditos activos (BUENO + REGULAR + MALO)',
+  })
+  creditosActivos: number;
+
+  @ApiProperty({
+    example: 8,
+    description: 'Créditos activos con estado REGULAR o MALO (nombre histórico: clientesMorosos)',
+  })
   clientesMorosos: number;
 
-  @ApiProperty({ example: 21.05, description: 'Porcentaje de morosos sobre clientes activos' })
+  @ApiProperty({
+    example: 20,
+    description: 'Porcentaje de créditos morosos sobre créditos activos',
+  })
   porcentajeMorosidad: number;
 
   @ApiProperty({ type: DistribucionEstadoDto })
@@ -243,14 +301,38 @@ export class ReporteCarteraRutaDto {
   @ApiProperty({ example: 50000 })
   capitalPrestado: number;
 
-  @ApiProperty({ example: 15000 })
+  @ApiProperty({ example: 15000, description: 'Alias de interesContractual' })
   gananciaPotencial: number;
+
+  @ApiProperty({ example: 15000 })
+  interesContractual: number;
+
+  @ApiProperty({ example: 7000 })
+  interesPendiente: number;
+
+  @ApiProperty({ example: 8000 })
+  interesCobradoAcumulado: number;
+
+  @ApiProperty({
+    example: 4200,
+    description: 'caja_final de la última caja conocida de la ruta',
+  })
+  cajaActual: number;
+
+  @ApiProperty({
+    example: 69200,
+    description: 'cajaActual + cartera de la ruta',
+  })
+  liquidezOperativa: number;
 
   @ApiProperty({ example: 25 })
   totalClientes: number;
 
   @ApiProperty({ example: 20 })
   clientesActivos: number;
+
+  @ApiProperty({ example: 22 })
+  creditosActivos: number;
 
   @ApiProperty({ example: 4 })
   clientesMorosos: number;
@@ -311,6 +393,13 @@ export class TotalesCajaHistoricoEmpresaDto {
 
   @ApiProperty({ example: 5000 })
   inversion: number;
+
+  @ApiProperty({
+    example: 18500,
+    description:
+      'Suma de caja_final del último día con snapshot en el periodo (por ruta, luego sumadas)',
+  })
+  cajaFinalUltimoDia: number;
 
   @ApiProperty({ example: 78.5, description: 'Promedio de eficiencia de cobro en días con pretendido > 0' })
   promedioEficienciaCobro: number;

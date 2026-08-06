@@ -72,9 +72,10 @@ export class ReportesController {
   @ApiOperation({
     summary: 'Reporte financiero por periodo',
     description:
-      'Calcula el interés cobrado (ganancia por fecha) a partir de pagos de crédito en el rango seleccionado. ' +
-      'Incluye cobros, préstamos otorgados, gastos, retiros, inversiones y series diarias para gráficos. ' +
-      'El campo interesCobrado difiere de ganancia_total en GET /ruta/:id, que representa ganancia potencial en cartera activa.',
+      'Calcula el interés cobrado (prorrateo sobre montoAbono, sin mora) a partir de pagos de crédito. ' +
+      'Incluye cobros, préstamos otorgados, gastos, retiros, inversiones, resultado del periodo ' +
+      '(interesCobrado - gastos) y series diarias para gráficos. ' +
+      'El campo interesCobrado difiere de interesContractual/gananciaPotencial en cartera.',
   })
   @ApiResponse({ status: 200, type: ReporteFinancieroResponseDto })
   @ApiResponse({ status: 400, description: 'Rango de fechas inválido o ruta no pertenece a la empresa' })
@@ -90,10 +91,11 @@ export class ReportesController {
   @Get('cartera')
   @Auth(ValidRoles.admin, ValidRoles.superAdmin)
   @ApiOperation({
-    summary: 'Snapshot de cartera y riesgo',
+    summary: 'Snapshot de cartera, riesgo y liquidez',
     description:
-      'Métricas actuales de cartera: saldo pendiente, capital prestado, ganancia potencial, ' +
-      'distribución por estado (BUENO/REGULAR/MALO) y porcentaje de morosidad. No depende de un rango de fechas.',
+      'Métricas actuales: cartera, capital prestado, interés contractual/pendiente/cobrado, ' +
+      'caja actual por ruta, liquidez operativa (caja + cartera), ' +
+      'distribución por estado y morosidad sobre créditos activos. Sin rango de fechas.',
   })
   @ApiResponse({ status: 200, type: ReporteCarteraResponseDto })
   @ApiResponse({ status: 400, description: 'Ruta no pertenece a la empresa' })
@@ -112,7 +114,7 @@ export class ReportesController {
     summary: 'Histórico de caja por periodo',
     description:
       'Tendencia operativa diaria a partir de snapshots de caja: cobros, préstamos, gastos, ' +
-      'caja final, pretendido y eficiencia de cobro (cobro/pretendido).',
+      'caja final, pretendido, eficiencia de cobro y cajaFinalUltimoDia del periodo.',
   })
   @ApiResponse({ status: 200, type: ReporteCajaHistoricoResponseDto })
   @ApiResponse({ status: 400, description: 'Rango de fechas inválido o ruta no pertenece a la empresa' })

@@ -293,7 +293,12 @@ export class ReportesService {
       empresaId: contexto.empresaId.toString(),
       nombre: contexto.nombre,
       periodo: { fechaInicio, fechaFin },
-      totalesEmpresa,
+      totalesEmpresa: {
+        ...totalesEmpresa,
+        resultadoPeriodo: Number(
+          (totalesEmpresa.interesCobrado - totalesEmpresa.gastos).toFixed(2),
+        ),
+      },
       seriesDiarias,
       rutas,
     };
@@ -311,14 +316,17 @@ export class ReportesService {
 
     const rutaIds = contexto.rutas.map((r) => r.rutaId);
 
-    const [metricasCreditos, conteosClientes] = await Promise.all([
+    const [metricasCreditos, conteosClientes, ultimasCajas] = await Promise.all([
       this.creditoService.aggregatePipeline<{
         _id: Types.ObjectId;
         cartera: number;
         capitalPrestado: number;
-        gananciaPotencial: number;
+        interesContractual: number;
+        interesPendiente: number;
+        interesCobradoAcumulado: number;
         distribucionEstado: DistribucionEstadoDto;
         clientesMorosos: number;
+        creditosActivos: number;
       }>(this.pipelineCartera(rutaIds)),
       this.clienteService.aggregatePipeline<{
         _id: Types.ObjectId;
@@ -336,10 +344,14 @@ export class ReportesService {
           },
         },
       ]),
+      this.cajaService.findUltimaCajaPorRutas(rutaIds),
     ]);
 
     const clientesMap = new Map(
       conteosClientes.map((c) => [c._id.toString(), c]),
+    );
+    const cajaMap = new Map(
+      ultimasCajas.map((c) => [c.ruta.toString(), c.caja_final ?? 0]),
     );
 
     const rutas = contexto.rutas.map((ruta) => {
@@ -354,15 +366,31 @@ export class ReportesService {
       };
       const clientesActivos = clientes?.clientesActivos ?? 0;
       const clientesMorosos = metrica?.clientesMorosos ?? 0;
+      const creditosActivos =
+        metrica?.creditosActivos ??
+        distribucionEstado.BUENO +
+          distribucionEstado.REGULAR +
+          distribucionEstado.MALO;
+      const interesContractual = metrica?.interesContractual ?? 0;
+      const interesPendiente = metrica?.interesPendiente ?? 0;
+      const interesCobradoAcumulado = metrica?.interesCobradoAcumulado ?? 0;
+      const cartera = metrica?.cartera ?? 0;
+      const cajaActual = cajaMap.get(key) ?? 0;
 
       return {
         rutaId: key,
         nombre: ruta.nombre,
-        cartera: metrica?.cartera ?? 0,
+        cartera,
         capitalPrestado: metrica?.capitalPrestado ?? 0,
-        gananciaPotencial: metrica?.gananciaPotencial ?? 0,
+        gananciaPotencial: interesContractual,
+        interesContractual,
+        interesPendiente,
+        interesCobradoAcumulado,
+        cajaActual,
+        liquidezOperativa: Number((cajaActual + cartera).toFixed(2)),
         totalClientes: clientes?.totalClientes ?? 0,
         clientesActivos,
+        creditosActivos,
         clientesMorosos,
         distribucionEstado,
       };
@@ -373,8 +401,13 @@ export class ReportesService {
         acc.cartera += r.cartera;
         acc.capitalPrestado += r.capitalPrestado;
         acc.gananciaPotencial += r.gananciaPotencial;
+        acc.interesContractual += r.interesContractual;
+        acc.interesPendiente += r.interesPendiente;
+        acc.interesCobradoAcumulado += r.interesCobradoAcumulado;
+        acc.cajaTotalEmpresa += r.cajaActual;
         acc.totalClientes += r.totalClientes;
         acc.clientesActivos += r.clientesActivos;
+        acc.creditosActivos += r.creditosActivos;
         acc.clientesMorosos += r.clientesMorosos;
         acc.distribucionEstado.BUENO += r.distribucionEstado.BUENO;
         acc.distribucionEstado.REGULAR += r.distribucionEstado.REGULAR;
@@ -385,24 +418,35 @@ export class ReportesService {
         cartera: 0,
         capitalPrestado: 0,
         gananciaPotencial: 0,
+        interesContractual: 0,
+        interesPendiente: 0,
+        interesCobradoAcumulado: 0,
+        cajaTotalEmpresa: 0,
         totalClientes: 0,
         clientesActivos: 0,
+        creditosActivos: 0,
         clientesMorosos: 0,
         distribucionEstado: { BUENO: 0, REGULAR: 0, MALO: 0 },
       },
     );
 
     const porcentajeMorosidad =
-      totales.clientesActivos > 0
+      totales.creditosActivos > 0
         ? Number(
-            ((totales.clientesMorosos / totales.clientesActivos) * 100).toFixed(2),
+            ((totales.clientesMorosos / totales.creditosActivos) * 100).toFixed(2),
           )
         : 0;
 
     return {
       empresaId: contexto.empresaId.toString(),
       nombre: contexto.nombre,
-      totalesEmpresa: { ...totales, porcentajeMorosidad },
+      totalesEmpresa: {
+        ...totales,
+        liquidezOperativa: Number(
+          (totales.cajaTotalEmpresa + totales.cartera).toFixed(2),
+        ),
+        porcentajeMorosidad,
+      },
       rutas,
     };
   }
@@ -519,6 +563,14 @@ export class ReportesService {
           )
         : 0;
 
+    const cajaFinalUltimoDia = rutasSeries.reduce((sum, rutaReporte) => {
+      const serie = rutaReporte.seriesDiarias;
+      if (serie.length === 0) {
+        return sum;
+      }
+      return sum + (serie[serie.length - 1].cajaFinal ?? 0);
+    }, 0);
+
     return {
       empresaId: contexto.empresaId.toString(),
       nombre: contexto.nombre,
@@ -529,6 +581,7 @@ export class ReportesService {
         gasto: totalGasto,
         retiro: totalRetiro,
         inversion: totalInversion,
+        cajaFinalUltimoDia: Number(cajaFinalUltimoDia.toFixed(2)),
         promedioEficienciaCobro: promedioEficienciaCobro,
       },
       seriesDiarias,
@@ -608,7 +661,17 @@ export class ReportesService {
               },
               {
                 $multiply: [
-                  '$monto',
+                  {
+                    $ifNull: [
+                      '$montoAbono',
+                      {
+                        $subtract: [
+                          '$monto',
+                          { $ifNull: ['$montoMora', 0] },
+                        ],
+                      },
+                    ],
+                  },
                   {
                     $divide: [
                       {
@@ -663,9 +726,28 @@ export class ReportesService {
       },
       {
         $addFields: {
-          abonos: { $sum: '$allPayments.monto' },
-          saldo: { $subtract: ['$total_pagar', { $sum: '$allPayments.monto' }] },
-          ganancia_credito: { $subtract: ['$total_pagar', '$valor_credito'] },
+          abonos: {
+            $sum: {
+              $map: {
+                input: '$allPayments',
+                as: 'p',
+                in: {
+                  $ifNull: [
+                    '$$p.montoAbono',
+                    {
+                      $subtract: [
+                        '$$p.monto',
+                        { $ifNull: ['$$p.montoMora', 0] },
+                      ],
+                    },
+                  ],
+                },
+              },
+            },
+          },
+          interesContractual: {
+            $subtract: ['$total_pagar', '$valor_credito'],
+          },
           esMoroso: {
             $in: [
               '$state',
@@ -675,11 +757,57 @@ export class ReportesService {
         },
       },
       {
+        $addFields: {
+          saldo: { $subtract: ['$total_pagar', '$abonos'] },
+          interesPendiente: {
+            $cond: [
+              { $gt: ['$total_pagar', 0] },
+              {
+                $max: [
+                  0,
+                  {
+                    $multiply: [
+                      '$interesContractual',
+                      {
+                        $divide: [
+                          { $subtract: ['$total_pagar', '$abonos'] },
+                          '$total_pagar',
+                        ],
+                      },
+                    ],
+                  },
+                ],
+              },
+              0,
+            ],
+          },
+          interesCobradoAcumulado: {
+            $cond: [
+              { $gt: ['$total_pagar', 0] },
+              {
+                $max: [
+                  0,
+                  {
+                    $multiply: [
+                      '$interesContractual',
+                      { $divide: ['$abonos', '$total_pagar'] },
+                    ],
+                  },
+                ],
+              },
+              0,
+            ],
+          },
+        },
+      },
+      {
         $group: {
           _id: '$ruta',
           cartera: { $sum: '$saldo' },
           capitalPrestado: { $sum: '$valor_credito' },
-          gananciaPotencial: { $sum: '$ganancia_credito' },
+          interesContractual: { $sum: '$interesContractual' },
+          interesPendiente: { $sum: '$interesPendiente' },
+          interesCobradoAcumulado: { $sum: '$interesCobradoAcumulado' },
           BUENO: {
             $sum: { $cond: [{ $eq: ['$state', ClasificacionCliente.BUENO] }, 1, 0] },
           },
@@ -694,6 +822,7 @@ export class ReportesService {
           clientesMorosos: {
             $sum: { $cond: ['$esMoroso', 1, 0] },
           },
+          creditosActivos: { $sum: 1 },
         },
       },
       {
@@ -701,8 +830,11 @@ export class ReportesService {
           _id: 1,
           cartera: 1,
           capitalPrestado: 1,
-          gananciaPotencial: 1,
+          interesContractual: 1,
+          interesPendiente: 1,
+          interesCobradoAcumulado: 1,
           clientesMorosos: 1,
+          creditosActivos: 1,
           distribucionEstado: {
             BUENO: '$BUENO',
             REGULAR: '$REGULAR',
@@ -812,6 +944,7 @@ export class ReportesService {
         gastos: 0,
         retiros: 0,
         inversiones: 0,
+        resultadoPeriodo: 0,
       },
       seriesDiarias: [],
       rutas: [],
@@ -826,8 +959,14 @@ export class ReportesService {
         cartera: 0,
         capitalPrestado: 0,
         gananciaPotencial: 0,
+        interesContractual: 0,
+        interesPendiente: 0,
+        interesCobradoAcumulado: 0,
+        cajaTotalEmpresa: 0,
+        liquidezOperativa: 0,
         totalClientes: 0,
         clientesActivos: 0,
+        creditosActivos: 0,
         clientesMorosos: 0,
         porcentajeMorosidad: 0,
         distribucionEstado: { BUENO: 0, REGULAR: 0, MALO: 0 },
@@ -851,6 +990,7 @@ export class ReportesService {
         gasto: 0,
         retiro: 0,
         inversion: 0,
+        cajaFinalUltimoDia: 0,
         promedioEficienciaCobro: 0,
       },
       seriesDiarias: [],

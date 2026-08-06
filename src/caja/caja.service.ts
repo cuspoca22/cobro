@@ -329,6 +329,38 @@ export class CajaService {
     return query.lean();
   }
 
+  /**
+   * Última caja conocida por ruta (por fecha desc).
+   * Usado por reportes de liquidez / cartera.
+   */
+  async findUltimaCajaPorRutas(
+    rutaIds: Types.ObjectId[],
+  ): Promise<{ ruta: Types.ObjectId; caja_final: number; fecha: Date }[]> {
+    if (rutaIds.length === 0) {
+      return [];
+    }
+
+    return this.cajaModel.aggregate([
+      { $match: { ruta: { $in: rutaIds } } },
+      { $sort: { fecha: -1 } },
+      {
+        $group: {
+          _id: '$ruta',
+          caja_final: { $first: '$caja_final' },
+          fecha: { $first: '$fecha' },
+        },
+      },
+      {
+        $project: {
+          _id: 0,
+          ruta: '$_id',
+          caja_final: { $ifNull: ['$caja_final', 0] },
+          fecha: 1,
+        },
+      },
+    ]);
+  }
+
   /** Hot path MovimientoCaja: caja por id (ruta + _id) con session. */
   async findByIdLean(
     cajaId: string | Types.ObjectId,
