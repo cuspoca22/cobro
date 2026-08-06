@@ -1,4 +1,4 @@
-import { IsString } from "class-validator";
+import { IsBoolean, IsOptional, IsString } from "class-validator";
 
 export class LoginDto {
    
@@ -7,5 +7,10 @@ export class LoginDto {
 
    @IsString()
    password: string;
+
+   /** Si true, revoca la sesión WS viva y crea una nueva (mismo usuario). */
+   @IsOptional()
+   @IsBoolean()
+   force?: boolean;
 
 }

@@ -455,6 +455,45 @@ describe('AuthService sesión única', () => {
     expect(mockMessageGateway.emitSessionRevoked).not.toHaveBeenCalled();
   });
 
+  it('login con force=true revoca sesión WS viva y crea sid nuevo', async () => {
+    const user = leanAdmin({
+      activeSessionId: 'sid-previo',
+      activeSessionExpiresAt: new Date(Date.now() + 60_000),
+    });
+    mockUserModel.findOne.mockReturnValue({
+      populate: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue(user),
+      }),
+    });
+    mockMessageGateway.hasActiveUserConnection.mockReturnValue(true);
+
+    const result = await service.login(
+      { username: 'admin1', password: 'secret12', force: true },
+      { ip: '1.1.1.1', headers: { 'user-agent': 'jest' } } as any,
+    );
+
+    expect(result.token).toBe('jwt-token');
+    expect(mockLogAuth.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reason: 'SESSION_FORCE_LOGIN',
+        isSuccessful: true,
+      }),
+    );
+    expect(mockMessageGateway.emitSessionRevoked).toHaveBeenCalledWith(
+      userId.toString(),
+      { reason: 'FORCE_LOGIN' },
+    );
+    expect(mockUserModel.updateOne).toHaveBeenCalledWith(
+      { _id: user._id },
+      {
+        $set: {
+          activeSessionId: expect.any(String),
+          activeSessionExpiresAt: expect.any(Date),
+        },
+      },
+    );
+  });
+
   it('login recupera sesión huérfana si no hay cliente WS', async () => {
     const user = leanAdmin({
       activeSessionId: 'sid-previo',

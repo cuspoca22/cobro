@@ -312,4 +312,55 @@ describe('Auth session release (e2e)', () => {
     },
     20_000,
   );
+
+  it(
+    'force=true permite login aunque haya WS vivo y revoca la sesión previa',
+    async () => {
+      const loginRes = await request(app.getHttpServer())
+        .post('/auth/login')
+        .query({ admin: 'true' })
+        .send({
+          username: `sess_e2e_admin_${stamp}`,
+          password,
+        } satisfies LoginDto)
+        .expect(201);
+
+      const socket = await connectWs(loginRes.body.token);
+      const revoked = new Promise<void>((resolve) => {
+        socket.once('session-revoked', () => resolve());
+      });
+
+      const forced = await request(app.getHttpServer())
+        .post('/auth/login')
+        .query({ admin: 'true' })
+        .send({
+          username: `sess_e2e_admin_${stamp}`,
+          password,
+          force: true,
+        } satisfies LoginDto)
+        .expect(201);
+
+      expect(forced.body.token).toBeDefined();
+      expect(forced.body.token).not.toBe(loginRes.body.token);
+
+      await Promise.race([
+        revoked,
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('timeout session-revoked')), 5_000),
+        ),
+      ]);
+
+      socket.close();
+
+      await request(app.getHttpServer())
+        .get('/auth/revalidar')
+        .set('Authorization', `Bearer ${forced.body.token}`)
+        .expect(200);
+
+      await request(app.getHttpServer())
+        .post(`/auth/clear-session/${targetAdminId}`)
+        .set('Authorization', `Bearer ${superAdminToken}`);
+    },
+    20_000,
+  );
 });

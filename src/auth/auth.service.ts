@@ -203,7 +203,7 @@ export class AuthService {
          const hasLiveClient =
             this.messageGateway.hasActiveUserConnection(previousUserId);
 
-         if (hasLiveClient) {
+         if (hasLiveClient && !loginDto.force) {
             await this.logAuth.create({
                user: user._id,
                ipAddress: request.ip,
@@ -221,17 +221,30 @@ export class AuthService {
             });
          }
 
-         // Sesión fantasma (p. ej. tras reinicio del API sin WS vivo).
-         await this.logAuth.create({
-            user: user._id,
-            ipAddress: request.ip,
-            userAgent: request.headers['user-agent'],
-            reason: 'SESSION_ORPHAN_RECLAIM',
-            isSuccessful: true,
-         });
-         this.messageGateway.emitSessionRevoked(previousUserId, {
-            reason: 'ORPHAN_RECLAIM',
-         });
+         if (hasLiveClient && loginDto.force) {
+            await this.logAuth.create({
+               user: user._id,
+               ipAddress: request.ip,
+               userAgent: request.headers['user-agent'],
+               reason: 'SESSION_FORCE_LOGIN',
+               isSuccessful: true,
+            });
+            this.messageGateway.emitSessionRevoked(previousUserId, {
+               reason: 'FORCE_LOGIN',
+            });
+         } else {
+            // Sesión fantasma (p. ej. tras reinicio del API sin WS vivo).
+            await this.logAuth.create({
+               user: user._id,
+               ipAddress: request.ip,
+               userAgent: request.headers['user-agent'],
+               reason: 'SESSION_ORPHAN_RECLAIM',
+               isSuccessful: true,
+            });
+            this.messageGateway.emitSessionRevoked(previousUserId, {
+               reason: 'ORPHAN_RECLAIM',
+            });
+         }
       }
 
       const sid = randomUUID();
