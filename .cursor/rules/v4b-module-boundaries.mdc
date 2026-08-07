@@ -27,6 +27,8 @@ alwaysApply: false
 | MovimientoCaja | MovimientoCajaModule | MovimientoCajaService |
 | Announcement* | AnnouncementModule | AnnouncementService / eventos |
 | CobradorTracking | TrackingModule | TrackingService |
+| WsAuthEvent | WsAuthEventModule | WsAuthEventService |
+| Lead | LeadsModule | LeadsService |
 
 ## Ejemplos
 

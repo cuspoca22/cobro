@@ -24,7 +24,9 @@ import { TrackingModule } from './tracking/tracking.module';
 import { AnnouncementModule } from './announcement/announcement.module';
 import { EventsModule } from './common/events/events.module';
 import { LeadsModule } from './leads/leads.module';
+import { WsAuthEventModule } from './ws-auth-event/ws-auth-event.module';
 import { ThrottlerModule } from '@nestjs/throttler';
+
 
 const environment = process.env.NODE_ENV || 'development';
 const envFile = `.env.${environment}`;
@@ -65,6 +67,7 @@ const envFile = `.env.${environment}`;
     TrackingModule,
     AnnouncementModule,
     LeadsModule,
+    WsAuthEventModule,
   ],
   controllers: [],
   providers: [],

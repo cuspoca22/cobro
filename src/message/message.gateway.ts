@@ -17,6 +17,11 @@ import { getScopedRutaIds } from 'src/common/helpers';
 import { RutaService } from 'src/ruta/ruta.service';
 import { TrackingService } from 'src/tracking/tracking.service';
 import {
+  WsAuthEventService,
+  RecordWsAuthFailureInput,
+} from 'src/ws-auth-event/ws-auth-event.service';
+import { WsAuthFailureReason } from 'src/ws-auth-event/schemas/ws-auth-event.schema';
+import {
   SocketUserData,
   WsCommandAck,
   adminRoom,
@@ -77,9 +82,12 @@ export class MessageGateway
     private readonly jwtService: JwtService,
     @Inject(forwardRef(() => AuthService))
     private readonly authService: AuthService,
+    private readonly wsAuthEventService: WsAuthEventService,
   ) {}
 
   async handleConnection(client: Socket) {
+    const meta = this.extractClientMeta(client);
+
     try {
       const token =
         (client.handshake.auth?.token as string | undefined) ||
@@ -89,35 +97,120 @@ export class MessageGateway
         ) as string | undefined);
 
       if (!token) {
-        this.logger.warn('WS rechazado: sin token');
-        client.disconnect(true);
+        this.rejectWs(client, {
+          reason: WsAuthFailureReason.NO_TOKEN,
+          message: 'WS rechazado: sin token',
+          ...meta,
+        });
         return;
       }
 
-      const payload = this.jwtService.verify<JwtPayload>(token);
+      let payload: JwtPayload;
+      try {
+        payload = this.jwtService.verify<JwtPayload>(token);
+      } catch (error) {
+        const errMsg = (error as Error).message || 'invalid token';
+        const decoded = this.safeDecodeJwt(token);
+        const isExpired = /jwt expired/i.test(errMsg);
+        const reason = isExpired
+          ? WsAuthFailureReason.JWT_EXPIRED
+          : WsAuthFailureReason.JWT_INVALID;
+
+        let snapshot:
+          | Awaited<ReturnType<AuthService['diagnoseWsSession']>>['snapshot']
+          | undefined;
+        if (decoded?.id) {
+          const diagnosis = await this.authService.diagnoseWsSession(
+            decoded.id,
+            decoded.sid || '',
+          );
+          snapshot = diagnosis.snapshot;
+        }
+
+        this.rejectWs(client, {
+          reason,
+          message: `WS auth fallida: ${errMsg}`,
+          userId: decoded?.id || snapshot?.userId,
+          tokenSid: decoded?.sid,
+          username: snapshot?.username,
+          userNombre: snapshot?.userNombre,
+          userRol: snapshot?.userRol,
+          empresaId: snapshot?.empresaId,
+          userEstado: snapshot?.userEstado,
+          hasActiveSession: snapshot?.hasActiveSession,
+          activeSessionExpiresAt: snapshot?.activeSessionExpiresAt,
+          ...meta,
+        });
+        return;
+      }
+
       if (!payload?.sid) {
-        this.logger.warn('WS rechazado: token sin sid');
-        client.disconnect(true);
+        this.rejectWs(client, {
+          reason: WsAuthFailureReason.NO_SID,
+          message: 'WS rechazado: token sin sid',
+          userId: payload?.id,
+          ...meta,
+        });
         return;
       }
 
-      const user = await this.authService.findActiveEntityBySession(
+      const diagnosis = await this.authService.diagnoseWsSession(
         payload.id,
         payload.sid,
       );
+      const user = diagnosis.user;
+      const snap = diagnosis.snapshot;
 
       if (!user) {
-        this.logger.warn('WS rechazado: usuario inactivo, inexistente o sesión inválida');
-        client.disconnect(true);
+        const reasonMap: Record<
+          Exclude<typeof diagnosis.reason, 'OK'>,
+          WsAuthFailureReason
+        > = {
+          USER_NOT_FOUND: WsAuthFailureReason.USER_NOT_FOUND,
+          USER_INACTIVE: WsAuthFailureReason.USER_INACTIVE,
+          NO_ACTIVE_SESSION: WsAuthFailureReason.NO_ACTIVE_SESSION,
+          SESSION_MISMATCH: WsAuthFailureReason.SESSION_MISMATCH,
+        };
+        const reason =
+          diagnosis.reason === 'OK'
+            ? WsAuthFailureReason.USER_NOT_FOUND
+            : reasonMap[diagnosis.reason];
+        const who =
+          snap?.userNombre ||
+          snap?.username ||
+          payload.id ||
+          'desconocido';
+        this.rejectWs(client, {
+          reason,
+          message: `WS rechazado: ${diagnosis.reason} (${who})`,
+          userId: snap?.userId || payload.id,
+          tokenSid: payload.sid,
+          username: snap?.username,
+          userNombre: snap?.userNombre,
+          userRol: snap?.userRol,
+          empresaId: snap?.empresaId,
+          userEstado: snap?.userEstado,
+          hasActiveSession: snap?.hasActiveSession,
+          activeSessionExpiresAt: snap?.activeSessionExpiresAt,
+          ...meta,
+        });
         return;
       }
 
       const isSuperAdmin = isSuperAdminRole(user.rol);
       if (!user.empresa && !isSuperAdmin) {
-        this.logger.warn(
-          `WS rechazado: usuario ${user.id} (${user.rol}) sin empresa`,
-        );
-        client.disconnect(true);
+        this.rejectWs(client, {
+          reason: WsAuthFailureReason.NO_EMPRESA,
+          message: `WS rechazado: usuario ${user.id} (${user.rol}) sin empresa`,
+          userId: String(user.id),
+          tokenSid: payload.sid,
+          username: snap?.username,
+          userNombre: user.nombre,
+          userRol: user.rol,
+          userEstado: true,
+          hasActiveSession: true,
+          ...meta,
+        });
         return;
       }
 
@@ -187,9 +280,50 @@ export class MessageGateway
         }
       }
     } catch (error) {
-      this.logger.warn(`WS auth fallida: ${(error as Error).message}`);
-      client.disconnect(true);
+      this.rejectWs(client, {
+        reason: WsAuthFailureReason.JWT_INVALID,
+        message: `WS auth fallida: ${(error as Error).message}`,
+        ...meta,
+      });
     }
+  }
+
+  private extractClientMeta(client: Socket): {
+    socketId: string;
+    ipAddress?: string;
+    userAgent?: string;
+  } {
+    const forwarded = client.handshake.headers?.['x-forwarded-for'];
+    const forwardedIp = Array.isArray(forwarded)
+      ? forwarded[0]
+      : typeof forwarded === 'string'
+        ? forwarded.split(',')[0]?.trim()
+        : undefined;
+    const ua = client.handshake.headers?.['user-agent'];
+    return {
+      socketId: client.id,
+      ipAddress: forwardedIp || client.handshake.address,
+      userAgent: Array.isArray(ua) ? ua[0] : ua,
+    };
+  }
+
+  private safeDecodeJwt(token: string): JwtPayload | null {
+    try {
+      const decoded = this.jwtService.decode(token) as JwtPayload | null;
+      if (!decoded || typeof decoded !== 'object') return null;
+      return decoded;
+    } catch {
+      return null;
+    }
+  }
+
+  private rejectWs(
+    client: Socket,
+    input: RecordWsAuthFailureInput,
+  ): void {
+    this.logger.warn(input.message);
+    void this.wsAuthEventService.recordFailure(input);
+    client.disconnect(true);
   }
 
   handleDisconnect(client: Socket) {

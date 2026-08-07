@@ -859,15 +859,78 @@ export class AuthService {
       id: string,
       sid: string,
    ): Promise<UserEntity | null> {
+      const diagnosis = await this.diagnoseWsSession(id, sid);
+      return diagnosis.user;
+   }
+
+   /**
+    * MessageGateway / NOC: detalla por qué un handshake WS falla la validación de sesión.
+    * V4b: dueño de User; no exponer activeSessionId.
+    */
+   async diagnoseWsSession(
+      id: string,
+      sid: string,
+   ): Promise<{
+      user: UserEntity | null;
+      reason:
+         | 'OK'
+         | 'USER_NOT_FOUND'
+         | 'USER_INACTIVE'
+         | 'NO_ACTIVE_SESSION'
+         | 'SESSION_MISMATCH';
+      snapshot?: {
+         userId: string;
+         username?: string;
+         userNombre?: string;
+         userRol?: string;
+         empresaId?: string;
+         userEstado: boolean;
+         hasActiveSession: boolean;
+         activeSessionExpiresAt?: Date | null;
+      };
+   }> {
       const userDoc = await this.userModel
          .findById(id)
          .populate([{ path: 'ruta' }, { path: 'rutas', select: '_id' }]);
-      if (!userDoc || !userDoc.estado) return null;
-      if (!this.isSessionActive(userDoc.activeSessionId, userDoc.activeSessionExpiresAt)) {
-         return null;
+
+      if (!userDoc) {
+         return { user: null, reason: 'USER_NOT_FOUND' };
       }
-      if (userDoc.activeSessionId !== sid) return null;
-      return UserEntity.fromObject(userDoc.toObject());
+
+      const hasActiveSession = this.isSessionActive(
+         userDoc.activeSessionId,
+         userDoc.activeSessionExpiresAt,
+      );
+      const snapshot = {
+         userId: String(userDoc._id),
+         username: userDoc.username as string | undefined,
+         userNombre: userDoc.nombre as string | undefined,
+         userRol: userDoc.rol as string | undefined,
+         empresaId: this.resolveEmpresaId(userDoc.empresa) ?? undefined,
+         userEstado: !!userDoc.estado,
+         hasActiveSession,
+         activeSessionExpiresAt: hasActiveSession
+            ? (userDoc.activeSessionExpiresAt as Date)
+            : userDoc.activeSessionExpiresAt
+              ? (userDoc.activeSessionExpiresAt as Date)
+              : null,
+      };
+
+      if (!userDoc.estado) {
+         return { user: null, reason: 'USER_INACTIVE', snapshot };
+      }
+      if (!hasActiveSession) {
+         return { user: null, reason: 'NO_ACTIVE_SESSION', snapshot };
+      }
+      if (userDoc.activeSessionId !== sid) {
+         return { user: null, reason: 'SESSION_MISMATCH', snapshot };
+      }
+
+      return {
+         user: UserEntity.fromObject(userDoc.toObject()),
+         reason: 'OK',
+         snapshot,
+      };
    }
 
    /** MessageGateway: handshake WS (activo + entidad). */
