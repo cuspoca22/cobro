@@ -198,53 +198,37 @@ export class AuthService {
          }
       }
 
-      if (hadActiveSession) {
+      // Sesión única: solo Mongo. El WS no decide el login (presencia/kick aparte).
+      if (hadActiveSession && !loginDto.force) {
+         await this.logAuth.create({
+            user: user._id,
+            ipAddress: request.ip,
+            userAgent: request.headers['user-agent'],
+            reason: 'SESSION_ALREADY_ACTIVE',
+            isSuccessful: false,
+         });
+
+         throw new UnauthorizedException({
+            statusCode: 401,
+            message:
+               'Ya hay una sesión activa. Cierre sesión en el otro dispositivo o contacte a un administrador.',
+            error: 'SESSION_ALREADY_ACTIVE',
+            expiresAt: user.activeSessionExpiresAt,
+         });
+      }
+
+      if (hadActiveSession && loginDto.force) {
          const previousUserId = user._id.toString();
-         const hasLiveClient =
-            this.messageGateway.hasActiveUserConnection(previousUserId);
-
-         if (hasLiveClient && !loginDto.force) {
-            await this.logAuth.create({
-               user: user._id,
-               ipAddress: request.ip,
-               userAgent: request.headers['user-agent'],
-               reason: 'SESSION_ALREADY_ACTIVE',
-               isSuccessful: false,
-            });
-
-            throw new UnauthorizedException({
-               statusCode: 401,
-               message:
-                  'Ya hay una sesión activa. Cierre sesión en el otro dispositivo o contacte a un administrador.',
-               error: 'SESSION_ALREADY_ACTIVE',
-               expiresAt: user.activeSessionExpiresAt,
-            });
-         }
-
-         if (hasLiveClient && loginDto.force) {
-            await this.logAuth.create({
-               user: user._id,
-               ipAddress: request.ip,
-               userAgent: request.headers['user-agent'],
-               reason: 'SESSION_FORCE_LOGIN',
-               isSuccessful: true,
-            });
-            this.messageGateway.emitSessionRevoked(previousUserId, {
-               reason: 'FORCE_LOGIN',
-            });
-         } else {
-            // Sesión fantasma (p. ej. tras reinicio del API sin WS vivo).
-            await this.logAuth.create({
-               user: user._id,
-               ipAddress: request.ip,
-               userAgent: request.headers['user-agent'],
-               reason: 'SESSION_ORPHAN_RECLAIM',
-               isSuccessful: true,
-            });
-            this.messageGateway.emitSessionRevoked(previousUserId, {
-               reason: 'ORPHAN_RECLAIM',
-            });
-         }
+         await this.logAuth.create({
+            user: user._id,
+            ipAddress: request.ip,
+            userAgent: request.headers['user-agent'],
+            reason: 'SESSION_FORCE_LOGIN',
+            isSuccessful: true,
+         });
+         this.messageGateway.emitSessionRevoked(previousUserId, {
+            reason: 'FORCE_LOGIN',
+         });
       }
 
       const sid = randomUUID();
@@ -357,31 +341,73 @@ export class AuthService {
    }
 
    /**
-    * Cierra la sesión del JWT actual si el sid coincide (idempotente).
+    * Cierra la sesión ligada al JWT aunque esté expirado.
+    * Sin AuthGuard: verifica firma con ignoreExpiration y solo limpia
+    * si activeSessionId === sid del token (no roba sesión de otro login).
     */
-   async logout(user: UserEntity & { sid?: string }): Promise<{ ok: true }> {
-      if (user.sid) {
-         const result = await this.userModel.updateOne(
-            { _id: user.id, activeSessionId: user.sid },
-            {
-               $set: {
-                  activeSessionId: null,
-                  activeSessionExpiresAt: null,
-               },
-            },
-         );
-
-         if ((result as any).matchedCount > 0) {
-            this.messageGateway.emitSessionState({
-               userId: user.id,
-               hasActiveSession: false,
-               activeSessionExpiresAt: null,
-               empresaId: this.resolveEmpresaId(user.empresa),
-               reason: 'LOGOUT',
-            });
-         }
+   async logout(
+      authorization?: string,
+   ): Promise<{ ok: true; released: boolean }> {
+      const token = this.extractBearerToken(authorization);
+      if (!token) {
+         throw new UnauthorizedException({
+            statusCode: 401,
+            message: 'Token requerido.',
+            error: 'NO_TOKEN',
+         });
       }
-      return { ok: true };
+
+      let payload: JwtPayload;
+      try {
+         payload = this.jwtService.verify<JwtPayload>(token, {
+            ignoreExpiration: true,
+         });
+      } catch {
+         throw new UnauthorizedException({
+            statusCode: 401,
+            message: 'Token no válido.',
+            error: 'JWT_INVALID',
+         });
+      }
+
+      if (!payload?.id || !payload?.sid) {
+         return { ok: true, released: false };
+      }
+
+      const user = await this.userModel.findById(payload.id).select(
+         'activeSessionId empresa',
+      );
+      if (!user || user.activeSessionId !== payload.sid) {
+         return { ok: true, released: false };
+      }
+
+      await this.userModel.updateOne(
+         { _id: payload.id, activeSessionId: payload.sid },
+         {
+            $set: {
+               activeSessionId: null,
+               activeSessionExpiresAt: null,
+            },
+         },
+      );
+
+      this.messageGateway.emitSessionState({
+         userId: String(payload.id),
+         hasActiveSession: false,
+         activeSessionExpiresAt: null,
+         empresaId: this.resolveEmpresaId((user as any).empresa),
+         reason: 'LOGOUT',
+      });
+
+      return { ok: true, released: true };
+   }
+
+   private extractBearerToken(authorization?: string): string | null {
+      if (!authorization || typeof authorization !== 'string') {
+         return null;
+      }
+      const match = /^Bearer\s+(.+)$/i.exec(authorization.trim());
+      return match?.[1]?.trim() || null;
    }
 
    /**
@@ -419,6 +445,66 @@ export class AuthService {
       });
 
       return { ok: true };
+   }
+
+   /**
+    * Invalida sesiones activas de cobradores asignados a la ruta (p. ej. al cerrar caja).
+    * Fuente de verdad: limpia Mongo; WS solo acelera el cierre en clientes vivos.
+    */
+   async revokeCobradorSessionsByRuta(
+      rutaId: string,
+      reason = 'RUTA_CLOSED',
+   ): Promise<{ revoked: number }> {
+      if (!rutaId) {
+         return { revoked: 0 };
+      }
+
+      const rutaQuery = isValidObjectId(rutaId)
+         ? new Types.ObjectId(rutaId)
+         : rutaId;
+
+      const users = await this.userModel
+         .find({
+            rol: ValidRoles.cobrador,
+            ruta: rutaQuery,
+            activeSessionId: { $ne: null },
+         })
+         .select('_id empresa')
+         .lean();
+
+      if (!users.length) {
+         return { revoked: 0 };
+      }
+
+      const ids = users.map((u) => u._id);
+
+      await this.userModel.updateMany(
+         { _id: { $in: ids } },
+         {
+            $set: {
+               activeSessionId: null,
+               activeSessionExpiresAt: null,
+            },
+         },
+      );
+
+      for (const user of users) {
+         const userId = String(user._id);
+         this.messageGateway.emitSessionRevoked(userId, { reason });
+         this.messageGateway.emitSessionState({
+            userId,
+            hasActiveSession: false,
+            activeSessionExpiresAt: null,
+            empresaId: this.resolveEmpresaId((user as any).empresa),
+            reason,
+         });
+      }
+
+      this.logger.log(
+         `Sesiones cobrador revocadas por ${reason}: ruta=${rutaId} count=${users.length}`,
+      );
+
+      return { revoked: users.length };
    }
 
    async findAll(user: UserEntity, empresaId?: string) {

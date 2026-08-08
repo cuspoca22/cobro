@@ -332,6 +332,19 @@ export class RutaService {
       // Confirma la transacción. Si esta línea no se ejecuta, NINGÚN cambio se guardará.
       await session.commitTransaction();
 
+      // Cierre de ruta = fin de jornada: invalidar sesiones de cobradores (Mongo + WS).
+      try {
+        await this.authService.revokeCobradorSessionsByRuta(
+          ruta._id.toString(),
+          'RUTA_CLOSED',
+        );
+      } catch (revokeError) {
+        this.logger.error(
+          `closeRuta: fallo al revocar sesiones ruta=${ruta._id}`,
+          revokeError instanceof Error ? revokeError.stack : revokeError,
+        );
+      }
+
       const empresaId = ruta.empresa?.toString();
       if (empresaId) {
         this.socketRuta.emitCloseCaja(ruta._id.toString(), empresaId);

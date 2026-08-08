@@ -88,6 +88,7 @@ describe('RutaService', () => {
       findOneByRuta: jest.fn().mockResolvedValue(null),
       unsetRuta: jest.fn(),
       clearAssignmentsToRuta: jest.fn(),
+      revokeCobradorSessionsByRuta: jest.fn().mockResolvedValue({ revoked: 0 }),
     };
 
     mockEmpresaService = {
@@ -355,6 +356,10 @@ describe('RutaService', () => {
       expect(mockCajaService.markClosed).toHaveBeenCalledWith(cajaId, expect.anything());
       expect(mockCajaService.congelarSnapshotCierre).toHaveBeenCalledWith(rutaId, expect.anything());
       expect(mockSession.commitTransaction).toHaveBeenCalled();
+      expect(mockAuthService.revokeCobradorSessionsByRuta).toHaveBeenCalledWith(
+        rutaId,
+        'RUTA_CLOSED',
+      );
       expect(mockSocketGateway.emitCloseCaja).toHaveBeenCalledWith(rutaId, empresaId.toHexString());
       expect(mockSession.endSession).toHaveBeenCalled();
     });

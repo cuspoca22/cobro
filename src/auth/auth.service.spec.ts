@@ -324,10 +324,12 @@ describe('AuthService sesión única', () => {
   let mockUserModel: {
     findOne: jest.Mock;
     findById: jest.Mock;
+    find: jest.Mock;
     updateOne: jest.Mock;
+    updateMany: jest.Mock;
   };
   let mockLogAuth: { create: jest.Mock };
-  let mockJwt: { sign: jest.Mock };
+  let mockJwt: { sign: jest.Mock; verify: jest.Mock };
   let mockMessageGateway: {
     emitSessionRevoked: jest.Mock;
     hasActiveUserConnection: jest.Mock;
@@ -341,10 +343,15 @@ describe('AuthService sesión única', () => {
     mockUserModel = {
       findOne: jest.fn(),
       findById: jest.fn(),
+      find: jest.fn(),
       updateOne: jest.fn().mockResolvedValue({ matchedCount: 1 }),
+      updateMany: jest.fn().mockResolvedValue({ modifiedCount: 0 }),
     };
     mockLogAuth = { create: jest.fn().mockResolvedValue({}) };
-    mockJwt = { sign: jest.fn().mockReturnValue('jwt-token') };
+    mockJwt = {
+      sign: jest.fn().mockReturnValue('jwt-token'),
+      verify: jest.fn(),
+    };
     mockMessageGateway = {
       emitSessionRevoked: jest.fn(),
       hasActiveUserConnection: jest.fn().mockReturnValue(false),
@@ -427,7 +434,7 @@ describe('AuthService sesión única', () => {
     );
   });
 
-  it('login rechaza si hay sesión activa con cliente WS vivo', async () => {
+  it('login rechaza si hay sesión activa en Mongo (sin mirar WS)', async () => {
     const user = leanAdmin({
       activeSessionId: 'sid-previo',
       activeSessionExpiresAt: new Date(Date.now() + 60_000),
@@ -437,7 +444,7 @@ describe('AuthService sesión única', () => {
         lean: jest.fn().mockResolvedValue(user),
       }),
     });
-    mockMessageGateway.hasActiveUserConnection.mockReturnValue(true);
+    mockMessageGateway.hasActiveUserConnection.mockReturnValue(false);
 
     await expect(
       service.login(
@@ -453,9 +460,10 @@ describe('AuthService sesión única', () => {
     );
     expect(mockUserModel.updateOne).not.toHaveBeenCalled();
     expect(mockMessageGateway.emitSessionRevoked).not.toHaveBeenCalled();
+    expect(mockMessageGateway.hasActiveUserConnection).not.toHaveBeenCalled();
   });
 
-  it('login con force=true revoca sesión WS viva y crea sid nuevo', async () => {
+  it('login con force=true revoca y crea sid nuevo aunque no haya WS', async () => {
     const user = leanAdmin({
       activeSessionId: 'sid-previo',
       activeSessionExpiresAt: new Date(Date.now() + 60_000),
@@ -465,7 +473,7 @@ describe('AuthService sesión única', () => {
         lean: jest.fn().mockResolvedValue(user),
       }),
     });
-    mockMessageGateway.hasActiveUserConnection.mockReturnValue(true);
+    mockMessageGateway.hasActiveUserConnection.mockReturnValue(false);
 
     const result = await service.login(
       { username: 'admin1', password: 'secret12', force: true },
@@ -482,45 +490,6 @@ describe('AuthService sesión única', () => {
     expect(mockMessageGateway.emitSessionRevoked).toHaveBeenCalledWith(
       userId.toString(),
       { reason: 'FORCE_LOGIN' },
-    );
-    expect(mockUserModel.updateOne).toHaveBeenCalledWith(
-      { _id: user._id },
-      {
-        $set: {
-          activeSessionId: expect.any(String),
-          activeSessionExpiresAt: expect.any(Date),
-        },
-      },
-    );
-  });
-
-  it('login recupera sesión huérfana si no hay cliente WS', async () => {
-    const user = leanAdmin({
-      activeSessionId: 'sid-previo',
-      activeSessionExpiresAt: new Date(Date.now() + 60_000),
-    });
-    mockUserModel.findOne.mockReturnValue({
-      populate: jest.fn().mockReturnValue({
-        lean: jest.fn().mockResolvedValue(user),
-      }),
-    });
-    mockMessageGateway.hasActiveUserConnection.mockReturnValue(false);
-
-    const result = await service.login(
-      { username: 'admin1', password: 'secret12' },
-      { ip: '1.1.1.1', headers: { 'user-agent': 'jest' } } as any,
-    );
-
-    expect(result.token).toBe('jwt-token');
-    expect(mockLogAuth.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        reason: 'SESSION_ORPHAN_RECLAIM',
-        isSuccessful: true,
-      }),
-    );
-    expect(mockMessageGateway.emitSessionRevoked).toHaveBeenCalledWith(
-      userId.toString(),
-      { reason: 'ORPHAN_RECLAIM' },
     );
     expect(mockUserModel.updateOne).toHaveBeenCalledWith(
       { _id: user._id },
@@ -592,15 +561,27 @@ describe('AuthService sesión única', () => {
     });
   });
 
-  it('logout limpia sesión si el sid coincide', async () => {
-    const result = await service.logout({
+  it('logout limpia sesión si el sid del JWT (aunque expirado) coincide', async () => {
+    mockJwt.verify.mockReturnValue({
       id: userId.toString(),
-      sid: 'sid-actual',
-    } as any);
+      sid: 'sid-expirado',
+    });
+    mockUserModel.findById.mockReturnValue({
+      select: jest.fn().mockResolvedValue({
+        activeSessionId: 'sid-expirado',
+        empresa: new Types.ObjectId(),
+      }),
+    });
+    mockUserModel.updateOne.mockResolvedValue({ matchedCount: 1 });
 
-    expect(result).toEqual({ ok: true });
+    const result = await service.logout('Bearer token-expirado');
+
+    expect(result).toEqual({ ok: true, released: true });
+    expect(mockJwt.verify).toHaveBeenCalledWith('token-expirado', {
+      ignoreExpiration: true,
+    });
     expect(mockUserModel.updateOne).toHaveBeenCalledWith(
-      { _id: userId.toString(), activeSessionId: 'sid-actual' },
+      { _id: userId.toString(), activeSessionId: 'sid-expirado' },
       {
         $set: {
           activeSessionId: null,
@@ -615,6 +596,24 @@ describe('AuthService sesión única', () => {
         reason: 'LOGOUT',
       }),
     );
+  });
+
+  it('logout no limpia si el sid ya no es el activo', async () => {
+    mockJwt.verify.mockReturnValue({
+      id: userId.toString(),
+      sid: 'sid-viejo',
+    });
+    mockUserModel.findById.mockReturnValue({
+      select: jest.fn().mockResolvedValue({
+        activeSessionId: 'sid-nuevo',
+        empresa: new Types.ObjectId(),
+      }),
+    });
+
+    const result = await service.logout('Bearer token-viejo');
+
+    expect(result).toEqual({ ok: true, released: false });
+    expect(mockUserModel.updateOne).not.toHaveBeenCalled();
   });
 
   it('checkStatus reutiliza sid y renueva expiresAt', async () => {
@@ -684,6 +683,48 @@ describe('AuthService sesión única', () => {
         userId: userId.toString(),
         hasActiveSession: false,
         reason: 'ADMIN_CLEAR',
+      }),
+    );
+  });
+
+  it('revokeCobradorSessionsByRuta limpia sesiones y emite revoke', async () => {
+    const rutaId = new Types.ObjectId();
+    const cobradorId = new Types.ObjectId();
+    const empresaId = new Types.ObjectId();
+
+    mockUserModel.find.mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue([
+          { _id: cobradorId, empresa: empresaId },
+        ]),
+      }),
+    });
+    mockUserModel.updateMany.mockResolvedValue({ modifiedCount: 1 });
+
+    const result = await service.revokeCobradorSessionsByRuta(
+      rutaId.toString(),
+      'RUTA_CLOSED',
+    );
+
+    expect(result).toEqual({ revoked: 1 });
+    expect(mockUserModel.updateMany).toHaveBeenCalledWith(
+      { _id: { $in: [cobradorId] } },
+      {
+        $set: {
+          activeSessionId: null,
+          activeSessionExpiresAt: null,
+        },
+      },
+    );
+    expect(mockMessageGateway.emitSessionRevoked).toHaveBeenCalledWith(
+      cobradorId.toString(),
+      { reason: 'RUTA_CLOSED' },
+    );
+    expect(mockMessageGateway.emitSessionState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: cobradorId.toString(),
+        hasActiveSession: false,
+        reason: 'RUTA_CLOSED',
       }),
     );
   });

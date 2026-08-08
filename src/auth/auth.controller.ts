@@ -57,10 +57,18 @@ export class AuthController {
     return this.authService.checkStatus(user)
   }
 
-  @Auth()
+  /**
+   * Libera la sesión ligada al JWT aunque esté expirado.
+   * Sin AuthGuard: el servicio verifica firma con ignoreExpiration
+   * y solo limpia si el sid del token sigue siendo el activo.
+   */
   @Post('logout')
-  async logout(@GetUser() user: UserEntity) {
-    return this.authService.logout(user);
+  async logout(@Req() request: Request) {
+    const authorization =
+      typeof request.headers['authorization'] === 'string'
+        ? request.headers['authorization']
+        : undefined;
+    return this.authService.logout(authorization);
   }
 
   @Auth(ValidRoles.admin, ValidRoles.superAdmin)

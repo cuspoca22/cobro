@@ -379,7 +379,7 @@ export class MessageGateway
     }
   }
 
-  /** True si hay al menos un socket en la room del usuario. */
+  /** True si hay al menos un socket en la room del usuario (presencia UI; no decide login). */
   hasActiveUserConnection(userId: string): boolean {
     if (!this.wss || !userId) return false;
     const room = this.wss.sockets?.adapter?.rooms?.get(userRoom(userId));

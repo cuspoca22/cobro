@@ -181,11 +181,20 @@ describe('AuthController', () => {
   });
 
   describe('logout', () => {
-    it('should logout the current user', async () => {
-      mockAuthService.logout.mockResolvedValue({ ok: true });
+    it('should logout from Authorization header', async () => {
+      mockAuthService.logout.mockResolvedValue({
+        ok: true,
+        released: true,
+      });
+      const req = {
+        headers: { authorization: 'Bearer abc' },
+      } as any;
 
-      expect(await controller.logout(mockUserEntity)).toEqual({ ok: true });
-      expect(mockAuthService.logout).toHaveBeenCalledWith(mockUserEntity);
+      expect(await controller.logout(req)).toEqual({
+        ok: true,
+        released: true,
+      });
+      expect(mockAuthService.logout).toHaveBeenCalledWith('Bearer abc');
     });
   });
 
