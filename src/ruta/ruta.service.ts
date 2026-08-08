@@ -536,20 +536,18 @@ export class RutaService {
   }
 
   /**
-   * FIX [P1 cron multi-TZ]:
-   * Tick cada 5 min evalúa cada ruta en su `timeZone` local
+   * Tick cada hora en :00 evalúa cada ruta en su `timeZone` local
    * (Guatemala, México, Colombia, Brasil, etc.).
    *
-   * Cierre: 00:00 local · Apertura: 06:00 local (si autoOpen).
-   * Ventana: hora objetivo y minute < 5 (coincide con el intervalo del cron),
+   * Cierre: 00:00 local (todos los días).
+   * Apertura: 06:00 local lun–sáb (si autoOpen); no abre en domingo.
    * close/open son idempotentes (si ya está cerrada/abierta, se registra y sigue).
    */
   private static readonly CRON_CLOSE_HOUR = 0;
   private static readonly CRON_OPEN_HOUR = 6;
-  private static readonly CRON_WINDOW_MINUTES = 5;
   private static readonly DEFAULT_RUTA_TZ = 'America/Mexico_City';
 
-  @Cron('0 */5 * * * *', {
+  @Cron('0 0 * * * *', {
     name: 'syncRutasPorZonaHoraria',
   })
   async syncRutasPorZonaHoraria() {
@@ -564,9 +562,8 @@ export class RutaService {
       const timeZone = ruta.timeZone || RutaService.DEFAULT_RUTA_TZ;
 
       let hours: number;
-      let minutes: number;
       try {
-        ({ hours, minutes } = this.dateFnsAdapter.getLocalTimeParts(timeZone));
+        ({ hours } = this.dateFnsAdapter.getLocalTimeParts(timeZone));
       } catch (error) {
         this.logger.error(
           `TZ inválida en ruta ${rutaId} (${timeZone}): ${error.message}`,
@@ -574,12 +571,10 @@ export class RutaService {
         continue;
       }
 
-      const inCloseWindow =
-        hours === RutaService.CRON_CLOSE_HOUR &&
-        minutes < RutaService.CRON_WINDOW_MINUTES;
+      const inCloseWindow = hours === RutaService.CRON_CLOSE_HOUR;
       const inOpenWindow =
         hours === RutaService.CRON_OPEN_HOUR &&
-        minutes < RutaService.CRON_WINDOW_MINUTES;
+        !this.dateFnsAdapter.isSunday(this.dateFnsAdapter.nowUtc(), timeZone);
 
       if (inCloseWindow && ruta.status === true) {
         try {
