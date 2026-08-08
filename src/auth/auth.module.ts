@@ -10,6 +10,7 @@ import { JWTStrategy } from './strategies/jwt.strategy';
 import { LogAuth, LogAuthSchema } from '../log-auth/entities/log-auth.entity';
 import { User, UserSchema } from './schemas/user.schema';
 import { DateFnsAdapter } from '../common/wrappers/date-fns.adapter';
+import { AppConfigModule } from 'src/app-config/app-config.module';
 import { CajaDayCheckModule } from 'src/caja/caja-day-check.module';
 import { EmpresaModule } from 'src/empresa/empresa.module';
 import { MessageModule } from 'src/message/message.module';
@@ -22,6 +23,7 @@ import { MessageModule } from 'src/message/message.module';
   imports: [
     ConfigModule,
     CajaDayCheckModule,
+    forwardRef(() => AppConfigModule),
     forwardRef(() => EmpresaModule),
     forwardRef(() => MessageModule),
     MongooseModule.forFeature([

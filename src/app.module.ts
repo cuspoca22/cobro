@@ -22,6 +22,7 @@ import { PeticionesUbicacionModule } from './peticiones-ubicacion/peticiones-ubi
 import { ReportesModule } from './reportes/reportes.module';
 import { TrackingModule } from './tracking/tracking.module';
 import { AnnouncementModule } from './announcement/announcement.module';
+import { AppConfigModule } from './app-config/app-config.module';
 import { EventsModule } from './common/events/events.module';
 import { LeadsModule } from './leads/leads.module';
 import { WsAuthEventModule } from './ws-auth-event/ws-auth-event.module';
@@ -66,6 +67,7 @@ const envFile = `.env.${environment}`;
     ReportesModule,
     TrackingModule,
     AnnouncementModule,
+    AppConfigModule,
     LeadsModule,
     WsAuthEventModule,
   ],

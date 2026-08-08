@@ -1,14 +1,40 @@
-import { Body, Controller, Post, Param, Get, Patch, Delete, Query, Req } from '@nestjs/common';
-import { AuthService } from './auth.service';
-import { LoginDto, UpdateUserDto, UpdateProfileDto, CreateUserDto, GetUserDto } from './dto';
-import { Auth, GetUser } from './decorators';
-import { ValidRoles } from './interfaces';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Headers,
+  HttpException,
+  Inject,
+  Param,
+  Patch,
+  Post,
+  Query,
+  Req,
+  forwardRef,
+} from '@nestjs/common';
 import { Request } from 'express';
+
+import { AppConfigService } from 'src/app-config/app-config.service';
+import { Auth, GetUser } from './decorators';
+import {
+  CreateUserDto,
+  GetUserDto,
+  LoginDto,
+  UpdateProfileDto,
+  UpdateUserDto,
+} from './dto';
 import { UserEntity } from './entities/user.entity';
+import { ValidRoles } from './interfaces';
+import { AuthService } from './auth.service';
 
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    @Inject(forwardRef(() => AppConfigService))
+    private readonly appConfigService: AppConfigService,
+  ) {}
 
   @Auth(ValidRoles.admin, ValidRoles.superAdmin)
   @Post("new-user")
@@ -25,6 +51,7 @@ export class AuthController {
     @Req() request: Request,
     @Query('rol') rol?: string,
     @Query('admin') admin?: string,
+    @Headers('x-app-version-code') appVersionCode?: string,
   ) {
     // Query hints enviados por clientes (cobrov2: rol=COBRADOR, admin-app: admin=true).
     const client =
@@ -33,6 +60,11 @@ export class AuthController {
         : rol?.toUpperCase() === 'COBRADOR'
           ? 'cobrador' as const
           : undefined;
+
+    if (client === 'cobrador') {
+      await this.assertAppVersionAllowed(appVersionCode);
+    }
+
     return this.authService.login(loginDto, request, { client });
   }
 
@@ -52,9 +84,29 @@ export class AuthController {
   @Auth()
   @Get("revalidar")
   async checkStatus(
-    @GetUser() user: GetUserDto
+    @GetUser() user: GetUserDto,
+    @Headers('x-app-version-code') appVersionCode?: string,
   ) {
+    if (user.rol === ValidRoles.cobrador) {
+      await this.assertAppVersionAllowed(appVersionCode);
+    }
     return this.authService.checkStatus(user)
+  }
+
+  private async assertAppVersionAllowed(appVersionCode?: string) {
+    const { force, config } =
+      await this.appConfigService.shouldForceUpdate(appVersionCode);
+    if (force) {
+      const statusCode = 426;
+      throw new HttpException(
+        {
+          statusCode,
+          message: config.message,
+          ...config,
+        },
+        statusCode,
+      );
+    }
   }
 
   /**

@@ -4,6 +4,7 @@ import { AuthService } from './auth.service';
 import { CreateUserDto, LoginDto, UpdateUserDto, GetUserDto } from './dto';
 import { UserEntity } from './entities/user.entity';
 import { Request } from 'express';
+import { AppConfigService } from 'src/app-config/app-config.service';
 
 jest.mock('./decorators', () => ({
   Auth: () => jest.fn(),
@@ -44,6 +45,22 @@ describe('AuthController', () => {
         {
           provide: AuthService,
           useValue: mockAuthService,
+        },
+        {
+          provide: AppConfigService,
+          useValue: {
+            shouldForceUpdate: jest.fn().mockResolvedValue({
+              force: false,
+              config: {
+                platform: 'android',
+                minVersionCode: 24,
+                latestVersionCode: 24,
+                forceUpdate: true,
+                storeUrl: 'https://play.google.com/store/apps/details?id=lat.nathyappv2.cobrador',
+                message: 'Debes actualizar',
+              },
+            }),
+          },
         },
       ],
     }).compile();
