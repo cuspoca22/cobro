@@ -41,7 +41,7 @@ describe('CreditCalculatorService', () => {
       ).toBe(0);
     });
 
-    it('debe ser 0 el día del primer vencimiento (20/07)', () => {
+    it('debe ser 1 el día del primer vencimiento (20/07)', () => {
       const paidUntil = service.calculatePaidUntilDate(
         fechaInicio,
         FrecuenciaCobro.SEMANAL,
@@ -53,10 +53,10 @@ describe('CreditCalculatorService', () => {
 
       expect(
         service.calculateDaysOverdue(paidUntil, FrecuenciaCobro.SEMANAL, today, timeZone),
-      ).toBe(0);
+      ).toBe(1);
     });
 
-    it('debe ser 1 el día siguiente al primer vencimiento (21/07)', () => {
+    it('debe ser 2 el día siguiente al primer vencimiento (21/07)', () => {
       const paidUntil = service.calculatePaidUntilDate(
         fechaInicio,
         FrecuenciaCobro.SEMANAL,
@@ -68,7 +68,7 @@ describe('CreditCalculatorService', () => {
 
       expect(
         service.calculateDaysOverdue(paidUntil, FrecuenciaCobro.SEMANAL, today, timeZone),
-      ).toBe(1);
+      ).toBe(2);
     });
 
     it('con 1 cuota pagada, el 21/07 aún no tiene atraso (siguiente vencimiento 27/07)', () => {
@@ -90,27 +90,8 @@ describe('CreditCalculatorService', () => {
     });
   });
 
-  describe('calculateDaysOverdue - diario (regresión)', () => {
-    it('con 0 abonos, el 15/07 debe tener 1 día de atraso (vencimiento 14/07)', () => {
-      const paidUntil = service.calculatePaidUntilDate(
-        fechaInicio,
-        FrecuenciaCobro.DIARIO,
-        valorCuota,
-        0,
-        timeZone,
-      );
-      const today = new Date('2026-07-15T06:00:00.000Z');
-
-      // Semántica previa: countBusinessDays(fechaInicio, 15/07) = 1 (cuenta el 14)
-      expect(
-        dateFnsAdapter.countBusinessDays(paidUntil, today, timeZone),
-      ).toBe(1);
-      expect(
-        service.calculateDaysOverdue(paidUntil, FrecuenciaCobro.DIARIO, today, timeZone),
-      ).toBe(1);
-    });
-
-    it('con 0 abonos, el día del vencimiento (14/07) debe ser 0', () => {
+  describe('calculateDaysOverdue - diario', () => {
+    it('con 0 abonos, el día del vencimiento (14/07) debe ser 1', () => {
       const paidUntil = service.calculatePaidUntilDate(
         fechaInicio,
         FrecuenciaCobro.DIARIO,
@@ -122,64 +103,159 @@ describe('CreditCalculatorService', () => {
 
       expect(
         service.calculateDaysOverdue(paidUntil, FrecuenciaCobro.DIARIO, today, timeZone),
-      ).toBe(0);
+      ).toBe(1);
     });
-  });
 
-  describe('calculateDaysOverdue - diario con includeToday (no pago)', () => {
-    // Cubierto hasta 11/07 → nextDue salta domingo 12 → 13/07
-    // Sin includeToday: cuenta 13,14,15 = 3; con includeToday: +16 = 4
-    const paidUntil = new Date('2026-07-11T06:00:00.000Z');
-    const today = new Date('2026-07-16T06:00:00.000Z');
+    it('con 0 abonos, el 15/07 debe tener 2 días de atraso (vencimiento 14/07)', () => {
+      const paidUntil = service.calculatePaidUntilDate(
+        fechaInicio,
+        FrecuenciaCobro.DIARIO,
+        valorCuota,
+        0,
+        timeZone,
+      );
+      const today = new Date('2026-07-15T06:00:00.000Z');
 
-    it('sin no pago: 3 días de atraso (excluye hoy)', () => {
+      expect(
+        service.calculateDaysOverdue(paidUntil, FrecuenciaCobro.DIARIO, today, timeZone),
+      ).toBe(2);
+    });
+
+    it('atraso multi-día incluye hoy sin depender de no-pago', () => {
+      // Cubierto hasta 11/07 → nextDue salta domingo 12 → 13/07
+      // Hoy 16/07 → cuenta 13,14,15,16 = 4
+      const paidUntil = new Date('2026-07-11T06:00:00.000Z');
+      const today = new Date('2026-07-16T06:00:00.000Z');
+
       expect(
         service.calculateDaysOverdue(
           paidUntil,
           FrecuenciaCobro.DIARIO,
           today,
           timeZone,
-          false,
-        ),
-      ).toBe(3);
-    });
-
-    it('con no pago: 4 días de atraso (incluye hoy)', () => {
-      expect(
-        service.calculateDaysOverdue(
-          paidUntil,
-          FrecuenciaCobro.DIARIO,
-          today,
-          timeZone,
-          true,
         ),
       ).toBe(4);
     });
 
-    it('día de vencimiento sin no pago: 0', () => {
-      const dueToday = new Date('2026-07-14T06:00:00.000Z');
+    it('pago que deja nextDue mañana → 0', () => {
+      const paidUntil = service.calculatePaidUntilDate(
+        fechaInicio,
+        FrecuenciaCobro.DIARIO,
+        valorCuota,
+        valorCuota, // 1 cuota → paidUntil 14/07
+        timeZone,
+      );
+      const today = new Date('2026-07-14T06:00:00.000Z');
+
       expect(
-        service.calculateDaysOverdue(
-          fechaInicio,
-          FrecuenciaCobro.DIARIO,
-          dueToday,
-          timeZone,
-          false,
-        ),
+        service.calculateDaysOverdue(paidUntil, FrecuenciaCobro.DIARIO, today, timeZone),
       ).toBe(0);
     });
+  });
 
-    it('día de vencimiento con no pago: 1', () => {
-      const dueToday = new Date('2026-07-14T06:00:00.000Z');
+  /**
+   * Fixture producción: LUIS LAZO — 13/8/2026
+   * Inicio 31/7, diario, cuota 150, 10 abonos → nextDue = hoy → daysOverdue = 1
+   * @see docs/adr/001-days-overdue.md
+   */
+  describe('calculateDaysOverdue - fixture Luis Lazo', () => {
+    const fechaInicioLuis = new Date('2026-07-31T06:00:00.000Z');
+    const cuotaLuis = 150;
+    const abonosLuis = 1500; // 10 cuotas
+    const todayLuis = new Date('2026-08-13T06:00:00.000Z');
+
+    const expectedScheduleLabels = [
+      '01/08',
+      '03/08',
+      '04/08',
+      '05/08',
+      '06/08',
+      '07/08',
+      '08/08',
+      '10/08',
+      '11/08',
+      '12/08',
+      '13/08',
+    ];
+
+    function formatDdMm(date: Date): string {
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone,
+        day: '2-digit',
+        month: '2-digit',
+      }).formatToParts(date);
+      const day = parts.find((p) => p.type === 'day')?.value;
+      const month = parts.find((p) => p.type === 'month')?.value;
+      return `${day}/${month}`;
+    }
+
+    it('paidUntil tras 10 cuotas es 12/08 y nextDue es 13/08', () => {
+      const paidUntil = service.calculatePaidUntilDate(
+        fechaInicioLuis,
+        FrecuenciaCobro.DIARIO,
+        cuotaLuis,
+        abonosLuis,
+        timeZone,
+      );
+      const nextDue = service.getNextDueDate(
+        paidUntil,
+        FrecuenciaCobro.DIARIO,
+        timeZone,
+      );
+
+      expect(formatDdMm(paidUntil)).toBe('12/08');
+      expect(formatDdMm(nextDue)).toBe('13/08');
+    });
+
+    it('el 13/08 con 10 pagos y cuota de hoy descubierta → daysOverdue = 1', () => {
+      const paidUntil = service.calculatePaidUntilDate(
+        fechaInicioLuis,
+        FrecuenciaCobro.DIARIO,
+        cuotaLuis,
+        abonosLuis,
+        timeZone,
+      );
+
       expect(
         service.calculateDaysOverdue(
-          fechaInicio,
+          paidUntil,
           FrecuenciaCobro.DIARIO,
-          dueToday,
+          todayLuis,
           timeZone,
-          true,
         ),
       ).toBe(1);
+    });
+
+    it('cronograma de primeras 11 cuotas coincide con tarjeta (omite domingos)', () => {
+      const labels: string[] = [];
+      let cursor = new Date(fechaInicioLuis);
+
+      for (let i = 0; i < 11; i++) {
+        cursor = service.getNextDueDate(cursor, FrecuenciaCobro.DIARIO, timeZone);
+        labels.push(formatDdMm(cursor));
+      }
+
+      expect(labels).toEqual(expectedScheduleLabels);
+    });
+
+    it('con 11 pagos el 13/08 → al día (daysOverdue = 0)', () => {
+      const paidUntil = service.calculatePaidUntilDate(
+        fechaInicioLuis,
+        FrecuenciaCobro.DIARIO,
+        cuotaLuis,
+        cuotaLuis * 11,
+        timeZone,
+      );
+
+      expect(formatDdMm(paidUntil)).toBe('13/08');
+      expect(
+        service.calculateDaysOverdue(
+          paidUntil,
+          FrecuenciaCobro.DIARIO,
+          todayLuis,
+          timeZone,
+        ),
+      ).toBe(0);
     });
   });
 
@@ -251,6 +327,20 @@ describe('CreditCalculatorService', () => {
           daysOverdue: 0,
         }),
       ).toBe(0);
+    });
+
+    it('VALOR_CUOTA el día de vencimiento con 1 atraso → mora > 0', () => {
+      expect(
+        service.calcularMoraSugerida({
+          cobraMora: true,
+          porcentajeMora: 10,
+          baseCalculoMora: 'VALOR_CUOTA',
+          valorCuota: 150,
+          saldo: 1500,
+          valorCredito: 2500,
+          daysOverdue: 1,
+        }),
+      ).toBe(15);
     });
 
     it('VALOR_CUOTA acumula por días de atraso', () => {

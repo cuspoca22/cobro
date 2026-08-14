@@ -1275,17 +1275,13 @@ export class CreditoService {
         timeZone
       );
 
-      // No pago = movimiento de pago con monto 0; el día aún no concluyó pero ya se visitó.
-      const includeToday =
-        credit.paymentsToday != null &&
-        Number(credit.paymentsToday.monto) === 0;
-
+      // Contrato: today >= nextDue ya cuenta atraso (incluye día de vencimiento).
+      // @see docs/adr/001-days-overdue.md
       daysOverdue = this.creditCalculatorSvc.calculateDaysOverdue(
         paidUntilDate,
         credit.frecuencia_cobro,
         today,
         timeZone,
-        includeToday,
       );
     }
 

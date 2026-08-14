@@ -181,16 +181,15 @@ export class CreditCalculatorService {
 
   /**
    * Calcula los días de atraso respecto a la siguiente cuota vencida.
-   * Por defecto el día de vencimiento cuenta como 0 y hoy no se incluye
-   * (el día aún no concluyó). Con `includeToday` (p. ej. tras un no pago)
-   * se cuenta también el día actual si la cuota ya venció o vence hoy.
+   * Si `today >= nextDue`, el día de vencimiento ya cuenta (incluido hoy).
+   * No requiere “no pago” para que el día de vencimiento sume atraso.
+   * @see docs/adr/001-days-overdue.md
    */
   calculateDaysOverdue(
     paidUntilDate: Date,
     frecuenciaCobro: string,
     today: Date,
     timeZone: string,
-    includeToday = false,
   ): number {
     const nextDueDate = this.getNextDueDate(paidUntilDate, frecuenciaCobro, timeZone);
 
@@ -199,20 +198,11 @@ export class CreditCalculatorService {
       return 0;
     }
 
-    // Día de vencimiento sin no pago: no cuenta atraso todavía
-    if (
-      this.dateFnsAdapter.isEqual(today, nextDueDate) &&
-      !includeToday
-    ) {
-      return 0;
-    }
-
-    // countBusinessDays trata dateLeft como último día cubierto y empieza al día siguiente.
-    // Usamos el día previo al vencimiento. Si includeToday, endDate = today+1 para incluir hoy.
+    // countBusinessDays: dateLeft exclusivo, dateRight exclusivo.
+    // lastCoveredBeforeDue = día previo a nextDue → empieza a contar en nextDue.
+    // endDate = today+1 → incluye hoy como día hábil de atraso.
     const lastCoveredBeforeDue = this.dateFnsAdapter.addDays(nextDueDate, -1);
-    const endDate = includeToday
-      ? this.dateFnsAdapter.addDays(today, 1)
-      : today;
+    const endDate = this.dateFnsAdapter.addDays(today, 1);
 
     const daysOverdue = this.dateFnsAdapter.countBusinessDays(
       lastCoveredBeforeDue,
