@@ -13,7 +13,7 @@ import { Server, Socket } from 'socket.io';
 
 import { AuthService } from 'src/auth/auth.service';
 import { JwtPayload } from 'src/auth/interfaces/jwt-payload.interface';
-import { getScopedRutaIds } from 'src/common/helpers';
+import { getClientIpFromHeaders, getScopedRutaIds } from 'src/common/helpers';
 import { RutaService } from 'src/ruta/ruta.service';
 import { TrackingService } from 'src/tracking/tracking.service';
 import {
@@ -293,16 +293,13 @@ export class MessageGateway
     ipAddress?: string;
     userAgent?: string;
   } {
-    const forwarded = client.handshake.headers?.['x-forwarded-for'];
-    const forwardedIp = Array.isArray(forwarded)
-      ? forwarded[0]
-      : typeof forwarded === 'string'
-        ? forwarded.split(',')[0]?.trim()
-        : undefined;
     const ua = client.handshake.headers?.['user-agent'];
     return {
       socketId: client.id,
-      ipAddress: forwardedIp || client.handshake.address,
+      ipAddress: getClientIpFromHeaders(
+        client.handshake.headers,
+        client.handshake.address,
+      ),
       userAgent: Array.isArray(ua) ? ua[0] : ua,
     };
   }

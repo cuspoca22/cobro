@@ -15,6 +15,7 @@ import { UserEntity } from './entities/user.entity';
 import { CajaDayCheckService } from 'src/caja/caja-day-check.service';
 import { EmpresaService } from 'src/empresa/empresa.service';
 import { MessageGateway } from 'src/message/message.gateway';
+import { getClientIpFromHeaders } from 'src/common/helpers';
 
 /** Alineado con JwtModule expiresIn: "12h". */
 export const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
@@ -95,7 +96,7 @@ export class AuthService {
       if (!user) {
 
          await this.logAuth.create({
-            ipAddress: request.ip,
+            ipAddress: this.resolveClientIp(request),
             userAgent: request.headers['user-agent'],
             reason: 'User does not exist',
             isSuccessful: false
@@ -108,7 +109,7 @@ export class AuthService {
 
          await this.logAuth.create({
             user: user._id,
-            ipAddress: request.ip,
+            ipAddress: this.resolveClientIp(request),
             userAgent: request.headers['user-agent'],
             reason: 'Incorrect credentials',
             isSuccessful: false
@@ -120,7 +121,7 @@ export class AuthService {
       if (!user.estado) {
          await this.logAuth.create({
             user: user._id,
-            ipAddress: request.ip,
+            ipAddress: this.resolveClientIp(request),
             userAgent: request.headers['user-agent'],
             reason: 'USER_BLOCKED',
             isSuccessful: false
@@ -146,7 +147,7 @@ export class AuthService {
 
             await this.logAuth.create({
                user: user._id,
-               ipAddress: request.ip,
+               ipAddress: this.resolveClientIp(request),
                userAgent: request.headers['user-agent'],
                reason: 'Ruta cerrada',
                isSuccessful: false
@@ -159,7 +160,7 @@ export class AuthService {
 
             await this.logAuth.create({
                user: user._id,
-               ipAddress: request.ip,
+               ipAddress: this.resolveClientIp(request),
                userAgent: request.headers['user-agent'],
                reason: 'Ruta bloqueada',
                isSuccessful: false
@@ -184,7 +185,7 @@ export class AuthService {
          if (suspended) {
             await this.logAuth.create({
                user: user._id,
-               ipAddress: request.ip,
+               ipAddress: this.resolveClientIp(request),
                userAgent: request.headers['user-agent'],
                reason: 'SUBSCRIPTION_SUSPENDED',
                isSuccessful: false,
@@ -202,7 +203,7 @@ export class AuthService {
       if (hadActiveSession && !loginDto.force) {
          await this.logAuth.create({
             user: user._id,
-            ipAddress: request.ip,
+            ipAddress: this.resolveClientIp(request),
             userAgent: request.headers['user-agent'],
             reason: 'SESSION_ALREADY_ACTIVE',
             isSuccessful: false,
@@ -221,7 +222,7 @@ export class AuthService {
          const previousUserId = user._id.toString();
          await this.logAuth.create({
             user: user._id,
-            ipAddress: request.ip,
+            ipAddress: this.resolveClientIp(request),
             userAgent: request.headers['user-agent'],
             reason: 'SESSION_FORCE_LOGIN',
             isSuccessful: true,
@@ -1138,7 +1139,7 @@ export class AuthService {
 
       void this.logAuth.create({
          user: userId as any,
-         ipAddress: request.ip,
+         ipAddress: this.resolveClientIp(request),
          userAgent: request.headers['user-agent'],
          reason: 'ROLE_CLIENT_MISMATCH',
          isSuccessful: false,
@@ -1152,6 +1153,10 @@ export class AuthService {
                : 'Este usuario no puede iniciar sesión en el panel administrativo.',
          error: 'ROLE_CLIENT_MISMATCH',
       });
+   }
+
+   private resolveClientIp(request: Request): string | undefined {
+      return getClientIpFromHeaders(request.headers, request.ip);
    }
 
    private isSessionActive(

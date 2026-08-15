@@ -1,14 +1,36 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
-import { INestApplication, ValidationPipe } from '@nestjs/common';
-import { ExpressAdapter } from '@nestjs/platform-express';
+import { ValidationPipe } from '@nestjs/common';
+import { ExpressAdapter, NestExpressApplication } from '@nestjs/platform-express';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
+import { NextFunction, Request, Response } from 'express';
 import Decimal from 'decimal.js';
+import { firstForwardedIp } from './common/helpers';
+const express = require('express');
 const dns = require('dns');
 dns.setDefaultResultOrder('ipv4first');
 
 async function bootstrap() {
-  const app = await NestFactory.create<INestApplication>(AppModule, new ExpressAdapter());
+  const server = express();
+  // Cloudflare solo → 1; Cloudflare + nginx → 2 (TRUST_PROXY_HOPS).
+  const trustProxyHops = Number(process.env.TRUST_PROXY_HOPS ?? 1);
+  server.set(
+    'trust proxy',
+    Number.isFinite(trustProxyHops) && trustProxyHops > 0 ? trustProxyHops : 1,
+  );
+  // Antes de Nest: Cloudflare pone la IP real aquí; X-Forwarded-For se puede falsear.
+  server.use((req: Request, _res: Response, next: NextFunction) => {
+    const cfIp = firstForwardedIp(req.headers['cf-connecting-ip']);
+    if (cfIp) {
+      req.headers['x-forwarded-for'] = cfIp;
+    }
+    next();
+  });
+
+  const app = await NestFactory.create<NestExpressApplication>(
+    AppModule,
+    new ExpressAdapter(server),
+  );
 
   app.setGlobalPrefix("api");
 
@@ -72,9 +94,6 @@ async function bootstrap() {
       },
     });
   }
-
-  const expressApp = app.getHttpAdapter().getInstance();
-  expressApp.set('trust proxy', true);
 
   await app.listen(+process.env.PORT);
 }
