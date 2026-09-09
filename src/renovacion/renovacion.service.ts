@@ -94,6 +94,8 @@ export class RenovacionService {
       },
       // SOLUCIÓN: Si no hay cliente, no descartar el documento
       { $unwind: { path: '$clienteInfo', preserveNullAndEmptyArrays: true } },
+      // Ocultar renovaciones de clientes desactivados
+      { $match: { 'clienteInfo.state': { $ne: false } } },
 
       // OPTIMIZACIÓN: Inyectar la empresa directamente sin hacer otro $lookup
       {

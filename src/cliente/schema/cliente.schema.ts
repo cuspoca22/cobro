@@ -109,3 +109,5 @@ export class Cliente extends Document {
 }
 
 export const ClienteSchema = SchemaFactory.createForClass(Cliente)
+
+ClienteSchema.index({ ruta: 1, state: 1, status: 1 })

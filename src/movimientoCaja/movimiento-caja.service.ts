@@ -661,6 +661,7 @@ export class MovimientoCajaService {
           preserveNullAndEmptyArrays: true
         }
       },
+      { $match: { 'clienteInfo.state': { $ne: false } } },
       {
         $project: {
           fecha: 1,
@@ -764,6 +765,7 @@ export class MovimientoCajaService {
           preserveNullAndEmptyArrays: true,
         },
       },
+      { $match: { 'clienteInfo.state': { $ne: false } } },
       {
         $project: {
           fecha: 1,

@@ -70,6 +70,8 @@ export class CreditoService {
         valor_cuota,
       } = createCreditoDto;
 
+      await this.clienteService.assertClienteOperativo(clienteId, session);
+
       let calculatedTotalPagar: number;
       let calculatedInteres: number;
       let calculatedValorCuota: number;
@@ -372,10 +374,11 @@ export class CreditoService {
       }
     });
 
-    // Proyeccion y ordenamiento final
+    // Proyeccion y ordenamiento final (oculta créditos de clientes desactivados)
     pipeline.push(
       this.getLookupClienteStage(),
       { $unwind: { path: '$clienteDetail', preserveNullAndEmptyArrays: true } },
+      { $match: { 'clienteDetail.state': { $ne: false } } },
       this.getFinalProjectStage(),
       { $sort: { "cliente.turno": 1 } }
     );
@@ -432,6 +435,7 @@ export class CreditoService {
   // Este método es invocado después de un pago para actualizar el estado persistente del crédito.
   // LÓGICA ACTUALIZADA: Un cliente solo puede tener un crédito activo a la vez
   async handlePaymentMade(creditoId: string, rutaId: string, clienteId: string, session?: ClientSession) {
+    await this.clienteService.assertClienteOperativo(clienteId, session);
     const creditDetails = await this.getCreditoById(creditoId, rutaId, session);
     const cliente = await this.clienteService.findByIdLean(clienteId, session);
     if (!cliente) {
@@ -1076,7 +1080,8 @@ export class CreditoService {
     return result.map((c) => c._id.toString());
   }
 
-  /** Pretendido / total clientes activos al abrir caja (+ mora por cobrar). */
+  /** Pretendido / total clientes activos al abrir caja (+ mora por cobrar).
+   * Excluye créditos de clientes desactivados (state=false). */
   async getCreditSummaryForRuta(rutaId: string): Promise<{
     pretendido: number;
     totalClientes: number;
@@ -1090,6 +1095,16 @@ export class CreditoService {
           ruta: new mongoose.Types.ObjectId(rutaId),
         },
       },
+      {
+        $lookup: {
+          from: 'clientes',
+          localField: 'cliente',
+          foreignField: '_id',
+          as: 'clienteDetail',
+        },
+      },
+      { $unwind: { path: '$clienteDetail', preserveNullAndEmptyArrays: true } },
+      { $match: { 'clienteDetail.state': { $ne: false } } },
       {
         $group: {
           _id: null,

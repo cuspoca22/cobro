@@ -34,6 +34,8 @@ export class PeticionesUbicacionService {
       // Validate that coordinates are valid [longitude, latitude]
       this.validateCoordinates(new_ubicacion);
 
+      await this.clienteSvc.assertClienteOperativo(id_cliente);
+
       // Check if a pending request already exists for this client
       const existingPending = await this.peticionesUbicacionModel.findOne({
         id_cliente: new Types.ObjectId(id_cliente),

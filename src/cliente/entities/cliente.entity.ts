@@ -36,7 +36,7 @@ export class ClienteEntity {
       nombre: object.nombre,
       alias: object.alias,
       status: object.status,
-      state: object.state,
+      state: object.state !== false,
       dpi: object.dpi,
       ciudad: object.ciudad,
       direccion: object.direccion,

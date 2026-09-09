@@ -3,10 +3,10 @@ import { ClienteController } from './cliente.controller';
 import { ClienteService } from './cliente.service';
 import { CreateClienteDto } from './dto/create-cliente.dto';
 import { UpdateClienteDto } from './dto/update-cliente.dto';
-import { Cliente } from './schema/cliente.schema';
 
-jest.mock('../auth/decorators/auth.decorator', () => ({
+jest.mock('../auth/decorators', () => ({
   Auth: () => jest.fn(),
+  GetUser: () => jest.fn(),
 }));
 jest.mock('../common/decorators', () => ({
   RutaAbierta: () => jest.fn(),
@@ -17,7 +17,6 @@ jest.mock('../common/ownership', () => ({
 
 describe('ClienteController', () => {
   let controller: ClienteController;
-  let clienteService: ClienteService;
 
   const mockClienteService = {
     create: jest.fn(),
@@ -25,6 +24,7 @@ describe('ClienteController', () => {
     findByAdmin: jest.fn(),
     findOne: jest.fn(),
     update: jest.fn(),
+    setState: jest.fn(),
     remove: jest.fn(),
   };
 
@@ -34,7 +34,11 @@ describe('ClienteController', () => {
     dpi: '1234567890101',
     ruta: 'rutaId',
     status: true,
+    state: true,
   };
+
+  const mockSuperAdmin = { rol: 'SUPERADMIN' } as any;
+  const mockAdmin = { rol: 'ADMIN' } as any;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -48,7 +52,6 @@ describe('ClienteController', () => {
     }).compile();
 
     controller = module.get<ClienteController>(ClienteController);
-    clienteService = module.get<ClienteService>(ClienteService);
   });
 
   it('should be defined', () => {
@@ -90,14 +93,24 @@ describe('ClienteController', () => {
   });
 
   describe('findByAdmin', () => {
-    it('should return an array of clients for admin', async () => {
+    it('should hide inactive for non-superadmin', async () => {
       const idRuta = 'rutaId';
       const result = [mockCliente];
 
       mockClienteService.findByAdmin.mockResolvedValue(result);
 
-      expect(await controller.findAllByAdmin(idRuta)).toBe(result);
-      expect(mockClienteService.findByAdmin).toHaveBeenCalledWith(idRuta);
+      expect(await controller.findAllByAdmin(idRuta, 'true', mockAdmin)).toBe(result);
+      expect(mockClienteService.findByAdmin).toHaveBeenCalledWith(idRuta, false);
+    });
+
+    it('should include inactive for superadmin when requested', async () => {
+      const idRuta = 'rutaId';
+      const result = [mockCliente];
+
+      mockClienteService.findByAdmin.mockResolvedValue(result);
+
+      expect(await controller.findAllByAdmin(idRuta, 'true', mockSuperAdmin)).toBe(result);
+      expect(mockClienteService.findByAdmin).toHaveBeenCalledWith(idRuta, true);
     });
   });
 
@@ -108,8 +121,27 @@ describe('ClienteController', () => {
 
       mockClienteService.findOne.mockResolvedValue(result);
 
-      expect(await controller.findOne(term)).toBe(result);
-      expect(mockClienteService.findOne).toHaveBeenCalledWith(term);
+      expect(await controller.findOne(term, mockAdmin)).toBe(result);
+      expect(mockClienteService.findOne).toHaveBeenCalledWith(term, false);
+    });
+
+    it('should pass isSuperAdmin true for SUPERADMIN', async () => {
+      const term = 'someId';
+      mockClienteService.findOne.mockResolvedValue(mockCliente);
+
+      await controller.findOne(term, mockSuperAdmin);
+      expect(mockClienteService.findOne).toHaveBeenCalledWith(term, true);
+    });
+  });
+
+  describe('setState', () => {
+    it('should set client state', async () => {
+      const id = 'someId';
+      const result = { ...mockCliente, state: false };
+      mockClienteService.setState.mockResolvedValue(result);
+
+      expect(await controller.setState(id, { state: false })).toBe(result);
+      expect(mockClienteService.setState).toHaveBeenCalledWith(id, false);
     });
   });
 

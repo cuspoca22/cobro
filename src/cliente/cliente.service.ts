@@ -7,6 +7,9 @@ import { Cliente } from './schema/cliente.schema';
 import { ClienteEntity } from './entities/cliente.entity';
 import { CreditoService } from 'src/credito/credito.service';
 
+/** Filtro Mongo: clientes operativos (state ausente o true). */
+export const CLIENTE_OPERATIVO_FILTER = { state: { $ne: false } } as const;
+
 @Injectable()
 export class ClienteService {
 
@@ -27,6 +30,11 @@ export class ClienteService {
     });
 
     if (verificarSiExisteclientePorDpi) {
+      if (verificarSiExisteclientePorDpi.state === false) {
+        throw new BadRequestException(
+          `El cliente ${verificarSiExisteclientePorDpi.alias} está desactivado. Un superadmin debe reactivarlo.`,
+        );
+      }
       throw new BadRequestException(`Ya existe el cliente ${verificarSiExisteclientePorDpi.alias} en la ruta`);
     }
 
@@ -44,25 +52,31 @@ export class ClienteService {
   async findAll(status: boolean, idRuta: string): Promise<ClienteEntity[]> {
     const clientes = await this.clienteModel.find({
       ruta: idRuta,
-      status
+      status,
+      ...CLIENTE_OPERATIVO_FILTER,
     }).sort({ turno: 1 })
 
     const clientesFromObject: ClienteEntity[] = clientes.map(cliente => ClienteEntity.fromObject(cliente));
     return clientesFromObject;
   }
 
-  async findByAdmin(idRuta: string): Promise<Cliente[]> {
-    return await this.clienteModel.find({
-      ruta: idRuta,
-    })
-
+  async findByAdmin(idRuta: string, includeInactive = false): Promise<Cliente[]> {
+    const filter: Record<string, unknown> = { ruta: idRuta };
+    if (!includeInactive) {
+      Object.assign(filter, CLIENTE_OPERATIVO_FILTER);
+    }
+    return await this.clienteModel.find(filter);
   }
 
-  async findOne(termino: string) {
+  async findOne(termino: string, isSuperAdmin = false) {
 
     const cliente = await this.clienteModel.findById(termino);
 
     if (!cliente) throw new NotFoundException("No existe el cliente");
+
+    if (cliente.state === false && !isSuperAdmin) {
+      throw new NotFoundException("No existe el cliente");
+    }
 
     const credito = await this.creditoService.getActiveCreditoForCliente(
       termino,
@@ -77,17 +91,33 @@ export class ClienteService {
   }
 
   async update(id: string, updateClienteDto: UpdateClienteDto) {
+    const { state: _ignored, ...rest } = updateClienteDto as UpdateClienteDto & { state?: boolean };
 
-    try {
-
-      return await this.clienteModel.findByIdAndUpdate(id, updateClienteDto, { returnDocument: 'after' });
-
-    } catch (error) {
-
-      this.handleExceptions(error)
-
+    const existing = await this.clienteModel.findById(id);
+    if (!existing) {
+      throw new NotFoundException('No existe el cliente');
+    }
+    if (existing.state === false) {
+      throw new BadRequestException('Cliente desactivado');
     }
 
+    try {
+      return await this.clienteModel.findByIdAndUpdate(id, rest, { returnDocument: 'after' });
+    } catch (error) {
+      this.handleExceptions(error)
+    }
+  }
+
+  async setState(id: string, state: boolean): Promise<ClienteEntity> {
+    const cliente = await this.clienteModel.findByIdAndUpdate(
+      id,
+      { $set: { state } },
+      { returnDocument: 'after' },
+    );
+    if (!cliente) {
+      throw new NotFoundException('No existe el cliente');
+    }
+    return ClienteEntity.fromObject(cliente);
   }
 
   async remove(id: string) {
@@ -127,7 +157,7 @@ export class ClienteService {
   }
 
   async countByRuta(rutaId: string | Types.ObjectId, status?: boolean): Promise<number> {
-    const filter: any = { ruta: rutaId };
+    const filter: Record<string, unknown> = { ruta: rutaId, ...CLIENTE_OPERATIVO_FILTER };
     if (status !== undefined) filter.status = status;
     return this.clienteModel.countDocuments(filter);
   }
@@ -141,14 +171,35 @@ export class ClienteService {
   async findByIdLean(
     clienteId: string | Types.ObjectId,
     session?: ClientSession,
-  ): Promise<{ _id: Types.ObjectId; nombre: string; status: boolean } | null> {
+  ): Promise<{ _id: Types.ObjectId; nombre: string; status: boolean; state: boolean } | null> {
     const cliente = await this.clienteModel
       .findById(clienteId)
-      .select('nombre status')
+      .select('nombre status state')
       .session(session || null)
       .lean();
     if (!cliente) return null;
-    return cliente as { _id: Types.ObjectId; nombre: string; status: boolean };
+    return {
+      ...(cliente as { _id: Types.ObjectId; nombre: string; status: boolean }),
+      state: (cliente as { state?: boolean }).state !== false,
+    };
+  }
+
+  /** Rechaza si el cliente no existe o está desactivado (state=false). */
+  async assertClienteOperativo(
+    clienteId: string | Types.ObjectId,
+    session?: ClientSession,
+  ): Promise<void> {
+    const cliente = await this.clienteModel
+      .findById(clienteId)
+      .select('state')
+      .session(session || null)
+      .lean();
+    if (!cliente) {
+      throw new NotFoundException('No existe el cliente');
+    }
+    if ((cliente as { state?: boolean }).state === false) {
+      throw new BadRequestException('Cliente desactivado');
+    }
   }
 
   async setStatus(

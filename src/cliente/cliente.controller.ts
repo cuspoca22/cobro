@@ -2,8 +2,10 @@ import { Controller, Get, Post, Body, Patch, Param, Delete, Query, ParseBoolPipe
 import { ClienteService } from './cliente.service';
 import { CreateClienteDto } from './dto/create-cliente.dto';
 import { UpdateClienteDto } from './dto/update-cliente.dto';
-import { Auth } from '../auth/decorators/auth.decorator';
+import { SetClienteStateDto } from './dto/set-cliente-state.dto';
+import { Auth, GetUser } from '../auth/decorators';
 import { ValidRoles } from '../auth/interfaces';
+import { GetUserDto } from '../auth/dto';
 import { ParseMongoIdPipe } from 'src/common/pipes/parse-mongo-id.pipe';
 import { RutaAbierta } from 'src/common/decorators';
 import { RutaOwnership } from 'src/common/ownership';
@@ -35,9 +37,13 @@ export class ClienteController {
   @RutaOwnership({ rutaId: { in: 'query', key: 'idRuta' } })
   @Get("admin")
   async findAllByAdmin(
-    @Query('idRuta', ParseMongoIdPipe) idRuta: string
+    @Query('idRuta', ParseMongoIdPipe) idRuta: string,
+    @Query('includeInactive') includeInactive: string | undefined,
+    @GetUser() user: GetUserDto,
   ) {
-    return this.clienteService.findByAdmin(idRuta);
+    const allowInactive =
+      user.rol === ValidRoles.superAdmin && includeInactive === 'true';
+    return this.clienteService.findByAdmin(idRuta, allowInactive);
   }
 
   // Obtener informacion del cliente con el historial de sus creditos
@@ -45,8 +51,22 @@ export class ClienteController {
   @Get(':termino')
   async findOne(
     @Param('termino') termino: string,
+    @GetUser() user: GetUserDto,
   ) {
-    return this.clienteService.findOne(termino);
+    return this.clienteService.findOne(
+      termino,
+      user.rol === ValidRoles.superAdmin,
+    );
+  }
+
+  @Auth(ValidRoles.superAdmin)
+  @RutaOwnership({ clienteId: { in: 'params', key: 'id' } })
+  @Patch(':id/state')
+  setState(
+    @Param('id', ParseMongoIdPipe) id: string,
+    @Body() dto: SetClienteStateDto,
+  ) {
+    return this.clienteService.setState(id, dto.state);
   }
 
   @Auth(ValidRoles.admin, ValidRoles.superAdmin, ValidRoles.supervisor, ValidRoles.cobrador)
@@ -59,7 +79,7 @@ export class ClienteController {
     return this.clienteService.update(id, updateClienteDto);
   }
 
-  @Auth(ValidRoles.admin, ValidRoles.superAdmin, ValidRoles.supervisor)
+  @Auth(ValidRoles.superAdmin)
   @RutaOwnership({ clienteId: { in: 'params', key: 'id' } })
   @Delete(':id')
   async remove(@Param('id', ParseMongoIdPipe) id: string) {

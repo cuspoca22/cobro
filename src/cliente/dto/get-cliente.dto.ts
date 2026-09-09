@@ -18,6 +18,9 @@ export class GetClienteDto {
   status: boolean;
 
   @Expose()
+  state: boolean;
+
+  @Expose()
   dpi: string;
 
   @Expose()
@@ -77,7 +80,7 @@ export class GetClienteDto {
     const { 
       _id, // Puede venir como _id desde el DB raw
       id,  // O ya como id si tu $project lo renombró
-      status, dpi, nombre, alias, ciudad, direccion, ubication, 
+      status, state, dpi, nombre, alias, ciudad, direccion, ubication, 
       telefono, img, ruta, document_image, business_image, house_image 
     } = object;
 
@@ -88,6 +91,7 @@ export class GetClienteDto {
     const clienteDto = new GetClienteDto({
       id: clientId,
       status: status ?? null, // Usar ?? null para manejar undefined
+      state: state !== false,
       dpi: dpi ?? null,
       nombre: nombre ?? null,
       alias: alias ?? null,
