@@ -39,14 +39,61 @@ export class ClienteService {
     }
 
     try {
+      const payload = { ...createClienteDto };
+      if (payload.turno === undefined || payload.turno === null) {
+        const maxTurno = await this.clienteModel
+          .findOne({ ruta: createClienteDto.ruta })
+          .sort({ turno: -1 })
+          .select('turno')
+          .lean();
+        payload.turno = ((maxTurno as { turno?: number } | null)?.turno ?? 0) + 1;
+      }
 
-      const cliente = await this.clienteModel.create(createClienteDto);
+      const cliente = await this.clienteModel.create(payload);
       return ClienteEntity.fromObject(cliente);
 
     } catch (error) {
       this.handleExceptions(error)
     }
 
+  }
+
+  async reordenar(
+    rutaId: string,
+    items: { id: string; turno: number }[],
+  ): Promise<{ ok: true; updated: number }> {
+    const ids = items.map((item) => item.id);
+    const uniqueIds = new Set(ids);
+    if (uniqueIds.size !== ids.length) {
+      throw new BadRequestException('Hay clientes duplicados en el orden');
+    }
+
+    const clientes = await this.clienteModel
+      .find({
+        _id: { $in: ids },
+        ruta: rutaId,
+        ...CLIENTE_OPERATIVO_FILTER,
+      })
+      .select('_id')
+      .lean();
+
+    if (clientes.length !== ids.length) {
+      throw new BadRequestException(
+        'Uno o más clientes no pertenecen a la ruta o no están operativos',
+      );
+    }
+
+    const result = await this.clienteModel.bulkWrite(
+      items.map((item) => ({
+        updateOne: {
+          filter: { _id: item.id, ruta: rutaId },
+          update: { $set: { turno: item.turno } },
+        },
+      })),
+      { ordered: false },
+    );
+
+    return { ok: true, updated: result.modifiedCount };
   }
 
   async findAll(status: boolean, idRuta: string): Promise<ClienteEntity[]> {

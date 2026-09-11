@@ -26,6 +26,7 @@ describe('ClienteController', () => {
     update: jest.fn(),
     setState: jest.fn(),
     remove: jest.fn(),
+    reordenar: jest.fn(),
   };
 
   const mockCliente = {
@@ -155,6 +156,23 @@ describe('ClienteController', () => {
 
       expect(await controller.update(id, updateClienteDto)).toBe(result);
       expect(mockClienteService.update).toHaveBeenCalledWith(id, updateClienteDto);
+    });
+  });
+
+  describe('reordenar', () => {
+    it('should reorder clients', async () => {
+      const dto = {
+        rutaId: 'rutaId',
+        items: [
+          { id: 'c1', turno: 1 },
+          { id: 'c2', turno: 2 },
+        ],
+      };
+      const result = { ok: true, updated: 2 };
+      mockClienteService.reordenar.mockResolvedValue(result);
+
+      expect(await controller.reordenar(dto)).toBe(result);
+      expect(mockClienteService.reordenar).toHaveBeenCalledWith(dto.rutaId, dto.items);
     });
   });
 

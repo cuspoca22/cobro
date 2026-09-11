@@ -3,6 +3,7 @@ import { ClienteService } from './cliente.service';
 import { CreateClienteDto } from './dto/create-cliente.dto';
 import { UpdateClienteDto } from './dto/update-cliente.dto';
 import { SetClienteStateDto } from './dto/set-cliente-state.dto';
+import { ReordenarClientesDto } from './dto/reordenar-clientes.dto';
 import { Auth, GetUser } from '../auth/decorators';
 import { ValidRoles } from '../auth/interfaces';
 import { GetUserDto } from '../auth/dto';
@@ -44,6 +45,13 @@ export class ClienteController {
     const allowInactive =
       user.rol === ValidRoles.superAdmin && includeInactive === 'true';
     return this.clienteService.findByAdmin(idRuta, allowInactive);
+  }
+
+  @Auth(ValidRoles.admin, ValidRoles.superAdmin, ValidRoles.supervisor, ValidRoles.cobrador)
+  @RutaOwnership({ rutaId: { in: 'body', key: 'rutaId' } })
+  @Patch('reordenar')
+  reordenar(@Body() dto: ReordenarClientesDto) {
+    return this.clienteService.reordenar(dto.rutaId, dto.items);
   }
 
   // Obtener informacion del cliente con el historial de sus creditos
