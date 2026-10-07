@@ -435,3 +435,60 @@ export class ReporteCajaHistoricoResponseDto {
   @ApiProperty({ type: [ReporteCajaHistoricoRutaDto] })
   rutas: ReporteCajaHistoricoRutaDto[];
 }
+
+export class CarteraClienteItemDto {
+  @ApiProperty({ example: '507f1f77bcf86cd799439011' })
+  creditoId: string;
+
+  @ApiProperty({ example: '507f1f77bcf86cd799439012' })
+  clienteId: string;
+
+  @ApiProperty({ example: 'Juan Pérez' })
+  nombre: string;
+
+  @ApiProperty({ example: 'Juancho', required: false })
+  alias?: string;
+
+  @ApiProperty({ example: '5551234567', required: false })
+  telefono?: string;
+
+  @ApiProperty({ example: '1234567890101', required: false })
+  dpi?: string;
+
+  @ApiProperty({ example: '507f1f77bcf86cd799439013' })
+  rutaId: string;
+
+  @ApiProperty({ example: 'RUTA NORTE' })
+  rutaNombre: string;
+
+  @ApiProperty({ enum: ['BUENO', 'REGULAR', 'MALO'], example: 'MALO' })
+  state: string;
+
+  @ApiProperty({ example: 9 })
+  daysOverdue: number;
+
+  @ApiProperty({ example: 1250.5 })
+  saldo: number;
+
+  @ApiProperty({ example: 150 })
+  valorCuota: number;
+
+  @ApiProperty({ example: 'GTQ' })
+  currency: string;
+}
+
+export class ReporteCarteraClientesResponseDto {
+  @ApiProperty({ type: [CarteraClienteItemDto] })
+  items: CarteraClienteItemDto[];
+
+  @ApiProperty({ example: 12 })
+  total: number;
+
+  @ApiProperty({
+    enum: ['BUENO', 'REGULAR', 'MALO'],
+    nullable: true,
+    example: 'MALO',
+    description: 'Filtro aplicado; null si se listan todas las clasificaciones',
+  })
+  clasificacion: string | null;
+}

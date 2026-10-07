@@ -19,7 +19,11 @@ import { RutaService } from '../ruta/ruta.service';
 import { ClienteService } from '../cliente/cliente.service';
 import { CreditoService } from '../credito/credito.service';
 import { CajaService } from '../caja/caja.service';
-import { ReporteCarteraQueryDto, ReporteRangoQueryDto } from './dto';
+import {
+  ReporteCarteraClientesQueryDto,
+  ReporteCarteraQueryDto,
+  ReporteRangoQueryDto,
+} from './dto';
 import { buildRutaFechaOrConditions } from './helpers/calcular-rango-fechas.helper';
 import {
   EmpresaContext,
@@ -32,6 +36,7 @@ import {
   GrupoMovimientoDto,
   MovimientoDetalleDto,
   ReporteCajaHistoricoResponseDto,
+  ReporteCarteraClientesResponseDto,
   ReporteCarteraResponseDto,
   ReporteFinancieroResponseDto,
   ReporteOficinaResponseDto,
@@ -304,6 +309,37 @@ export class ReportesService {
     };
   }
 
+  async getCarteraClientes(
+    dto: ReporteCarteraClientesQueryDto,
+    empresaId: string,
+  ): Promise<ReporteCarteraClientesResponseDto> {
+    const contexto = await this.resolveContext(empresaId, dto.rutaId);
+
+    if (contexto.rutas.length === 0) {
+      return {
+        items: [],
+        total: 0,
+        clasificacion: dto.clasificacion ?? null,
+      };
+    }
+
+    const items = await this.creditoService.listCarteraClientesByRutas(
+      contexto.rutas.map((r) => ({
+        rutaId: r.rutaId.toString(),
+        nombre: r.nombre,
+        timeZone: r.timeZone,
+        currency: r.currency,
+      })),
+      dto.clasificacion,
+    );
+
+    return {
+      items,
+      total: items.length,
+      clasificacion: dto.clasificacion ?? null,
+    };
+  }
+
   async getReporteCartera(
     dto: ReporteCarteraQueryDto,
     empresaId: string,
@@ -316,36 +352,46 @@ export class ReportesService {
 
     const rutaIds = contexto.rutas.map((r) => r.rutaId);
 
-    const [metricasCreditos, conteosClientes, ultimasCajas] = await Promise.all([
-      this.creditoService.aggregatePipeline<{
-        _id: Types.ObjectId;
-        cartera: number;
-        capitalPrestado: number;
-        interesContractual: number;
-        interesPendiente: number;
-        interesCobradoAcumulado: number;
-        distribucionEstado: DistribucionEstadoDto;
-        clientesMorosos: number;
-        creditosActivos: number;
-      }>(this.pipelineCartera(rutaIds)),
-      this.clienteService.aggregatePipeline<{
-        _id: Types.ObjectId;
-        totalClientes: number;
-        clientesActivos: number;
-      }>([
-        { $match: { ruta: { $in: rutaIds } } },
-        {
-          $group: {
-            _id: '$ruta',
-            totalClientes: { $sum: 1 },
-            clientesActivos: {
-              $sum: { $cond: [{ $eq: ['$status', true] }, 1, 0] },
+    const rutasInput = contexto.rutas.map((r) => ({
+      rutaId: r.rutaId.toString(),
+      nombre: r.nombre,
+      timeZone: r.timeZone,
+      currency: r.currency,
+    }));
+
+    const [metricasCreditos, conteosClientes, ultimasCajas, clientesCartera] =
+      await Promise.all([
+        this.creditoService.aggregatePipeline<{
+          _id: Types.ObjectId;
+          cartera: number;
+          capitalPrestado: number;
+          interesContractual: number;
+          interesPendiente: number;
+          interesCobradoAcumulado: number;
+          distribucionEstado: DistribucionEstadoDto;
+          clientesMorosos: number;
+          creditosActivos: number;
+        }>(this.pipelineCartera(rutaIds)),
+        this.clienteService.aggregatePipeline<{
+          _id: Types.ObjectId;
+          totalClientes: number;
+          clientesActivos: number;
+        }>([
+          { $match: { ruta: { $in: rutaIds } } },
+          {
+            $group: {
+              _id: '$ruta',
+              totalClientes: { $sum: 1 },
+              clientesActivos: {
+                $sum: { $cond: [{ $eq: ['$status', true] }, 1, 0] },
+              },
             },
           },
-        },
-      ]),
-      this.cajaService.findUltimaCajaPorRutas(rutaIds),
-    ]);
+        ]),
+        this.cajaService.findUltimaCajaPorRutas(rutaIds),
+        // Clasificación al día (no el state persistido, que puede quedar obsoleto).
+        this.creditoService.listCarteraClientesByRutas(rutasInput),
+      ]);
 
     const clientesMap = new Map(
       conteosClientes.map((c) => [c._id.toString(), c]),
@@ -354,23 +400,36 @@ export class ReportesService {
       ultimasCajas.map((c) => [c.ruta.toString(), c.caja_final ?? 0]),
     );
 
+    const distribucionPorRuta = new Map<string, DistribucionEstadoDto>();
+    for (const item of clientesCartera) {
+      const current = distribucionPorRuta.get(item.rutaId) ?? {
+        BUENO: 0,
+        REGULAR: 0,
+        MALO: 0,
+      };
+      if (item.state === ClasificacionCliente.BUENO) current.BUENO += 1;
+      else if (item.state === ClasificacionCliente.REGULAR) current.REGULAR += 1;
+      else current.MALO += 1;
+      distribucionPorRuta.set(item.rutaId, current);
+    }
+
     const rutas = contexto.rutas.map((ruta) => {
       const key = ruta.rutaId.toString();
       const metrica = metricasCreditos.find((m) => m._id.toString() === key);
       const clientes = clientesMap.get(key);
 
-      const distribucionEstado = metrica?.distribucionEstado ?? {
+      const distribucionEstado = distribucionPorRuta.get(key) ?? {
         BUENO: 0,
         REGULAR: 0,
         MALO: 0,
       };
       const clientesActivos = clientes?.clientesActivos ?? 0;
-      const clientesMorosos = metrica?.clientesMorosos ?? 0;
       const creditosActivos =
-        metrica?.creditosActivos ??
         distribucionEstado.BUENO +
-          distribucionEstado.REGULAR +
-          distribucionEstado.MALO;
+        distribucionEstado.REGULAR +
+        distribucionEstado.MALO;
+      const clientesMorosos =
+        distribucionEstado.REGULAR + distribucionEstado.MALO;
       const interesContractual = metrica?.interesContractual ?? 0;
       const interesPendiente = metrica?.interesPendiente ?? 0;
       const interesCobradoAcumulado = metrica?.interesCobradoAcumulado ?? 0;

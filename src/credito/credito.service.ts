@@ -10,7 +10,12 @@ import { DateFnsAdapter } from '../common/wrappers/date-fns.adapter';
 import { CreditCalculatorService } from './helpers/credit.calculator.service';
 import { SubTipo, TipoMovimiento } from 'src/movimientoCaja/interfaces';
 import { CreditoEntity } from './entities/credito.entity';
-import { HistorialCredito } from './interfaces';
+import {
+  CarteraClienteListItem,
+  CarteraClienteListRutaInput,
+  ClasificacionCliente,
+  HistorialCredito,
+} from './interfaces';
 import { TransactionHelper } from 'src/common/helpers';
 import { ClienteService } from '../cliente/cliente.service';
 import { RutaService } from '../ruta/ruta.service';
@@ -387,6 +392,174 @@ export class CreditoService {
 
     const credits = this.mapToCreditoEntity(creditsWithDetails, ruta.timeZone);
     return this.enrichCreditsWithMoraConfig(credits, rutaId);
+  }
+
+  /**
+   * Listado lean de créditos activos para drill-down de cartera (reportes admin).
+   * Recalcula daysOverdue + state (misma regla que el cobrador) para que
+   * BUENO/REGULAR/MALO reflejen el atraso real de hoy, no el state desactualizado en DB.
+   */
+  async listCarteraClientesByRutas(
+    rutas: CarteraClienteListRutaInput[],
+    clasificacion?: ClasificacionCliente,
+  ): Promise<CarteraClienteListItem[]> {
+    if (!rutas.length) {
+      return [];
+    }
+
+    const rutaMap = new Map(rutas.map((r) => [r.rutaId, r]));
+    const rutaObjectIds = rutas.map((r) => new Types.ObjectId(r.rutaId));
+
+    const rows = await this.creditoModel.aggregate<{
+      _id: Types.ObjectId;
+      ruta: Types.ObjectId;
+      status: boolean;
+      fecha_inicio: Date;
+      frecuencia_cobro: string;
+      valor_cuota: number;
+      abonos: number;
+      saldo: number;
+      cliente: {
+        _id: Types.ObjectId;
+        nombre?: string;
+        alias?: string;
+        telefono?: string;
+        dpi?: string;
+      };
+    }>([
+      {
+        $match: {
+          status: true,
+          ruta: { $in: rutaObjectIds },
+        },
+      },
+      {
+        $lookup: {
+          from: 'movimientoCaja',
+          localField: '_id',
+          foreignField: 'credito',
+          as: 'allPayments',
+          pipeline: [
+            {
+              $match: {
+                tipoMovimiento: TipoMovimiento.INGRESO,
+                subTipo: SubTipo.PAGOCREDITO,
+              },
+            },
+          ],
+        },
+      },
+      {
+        $addFields: {
+          abonos: {
+            $sum: {
+              $map: {
+                input: '$allPayments',
+                as: 'p',
+                in: {
+                  $ifNull: [
+                    '$$p.montoAbono',
+                    {
+                      $subtract: [
+                        '$$p.monto',
+                        { $ifNull: ['$$p.montoMora', 0] },
+                      ],
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        },
+      },
+      {
+        $addFields: {
+          saldo: { $subtract: ['$total_pagar', '$abonos'] },
+        },
+      },
+      this.getLookupClienteStage(),
+      { $unwind: { path: '$clienteDetail', preserveNullAndEmptyArrays: true } },
+      { $match: { 'clienteDetail.state': { $ne: false } } },
+      {
+        $project: {
+          _id: 1,
+          ruta: 1,
+          status: 1,
+          fecha_inicio: 1,
+          frecuencia_cobro: 1,
+          valor_cuota: 1,
+          abonos: 1,
+          saldo: 1,
+          cliente: {
+            _id: '$clienteDetail._id',
+            nombre: '$clienteDetail.nombre',
+            alias: '$clienteDetail.alias',
+            telefono: '$clienteDetail.telefono',
+            dpi: '$clienteDetail.dpi',
+          },
+        },
+      },
+    ]);
+
+    const items: CarteraClienteListItem[] = [];
+
+    for (const row of rows) {
+      const rutaId = row.ruta?.toString();
+      if (!rutaId) continue;
+
+      const ruta = rutaMap.get(rutaId);
+      if (!ruta) continue;
+
+      const credit = CreditoEntity.fromObject({
+        _id: row._id,
+        status: row.status,
+        fecha_inicio: row.fecha_inicio,
+        frecuencia_cobro: row.frecuencia_cobro,
+        valor_cuota: row.valor_cuota,
+        abonos: row.abonos,
+        saldo: row.saldo,
+        cliente: row.cliente,
+        daysOverdue: 0,
+        state: ClasificacionCliente.BUENO,
+      });
+
+      this.calculateOverdueAndState(credit, ruta.timeZone || 'UTC');
+
+      const state = credit.state as ClasificacionCliente;
+      if (clasificacion && state !== clasificacion) {
+        continue;
+      }
+
+      const clienteId = (credit.cliente?.id || row.cliente?._id)?.toString();
+      if (!clienteId) continue;
+
+      items.push({
+        creditoId: (credit.id || row._id).toString(),
+        clienteId,
+        nombre: credit.cliente?.nombre || row.cliente?.nombre || '',
+        alias: credit.cliente?.alias || row.cliente?.alias,
+        telefono: credit.cliente?.telefono || row.cliente?.telefono,
+        dpi: credit.cliente?.dpi || row.cliente?.dpi,
+        rutaId,
+        rutaNombre: ruta.nombre,
+        state,
+        daysOverdue: credit.daysOverdue ?? 0,
+        saldo: credit.saldo ?? 0,
+        valorCuota: credit.valor_cuota ?? 0,
+        currency: ruta.currency || 'USD',
+      });
+    }
+
+    items.sort((a, b) => {
+      if (b.daysOverdue !== a.daysOverdue) {
+        return b.daysOverdue - a.daysOverdue;
+      }
+      return (a.nombre || '').localeCompare(b.nombre || '', 'es', {
+        sensitivity: 'base',
+      });
+    });
+
+    return items;
   }
 
   /**

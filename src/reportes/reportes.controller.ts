@@ -19,9 +19,14 @@ import { Auth, GetUser } from '../auth/decorators';
 import { GetUserDto } from '../auth/dto';
 import { ValidRoles } from '../auth/interfaces/valid-roles';
 import { ReportesService } from './reportes.service';
-import { ReporteCarteraQueryDto, ReporteRangoQueryDto } from './dto';
+import {
+  ReporteCarteraClientesQueryDto,
+  ReporteCarteraQueryDto,
+  ReporteRangoQueryDto,
+} from './dto';
 import {
   ReporteCajaHistoricoResponseDto,
+  ReporteCarteraClientesResponseDto,
   ReporteCarteraResponseDto,
   ReporteFinancieroResponseDto,
   ReporteOficinaResponseDto,
@@ -86,6 +91,25 @@ export class ReportesController {
     @Query() query: ReporteRangoQueryDto,
   ): Promise<ReporteFinancieroResponseDto> {
     return this.reportesService.getReporteFinanciero(query, user.empresa);
+  }
+
+  @Get('cartera/clientes')
+  @Auth(ValidRoles.admin, ValidRoles.superAdmin)
+  @ApiOperation({
+    summary: 'Listado de clientes de cartera por clasificación',
+    description:
+      'Créditos activos con estado recalculado (BUENO/REGULAR/MALO) para drill-down desde el reporte de cartera. ' +
+      'Filtro opcional por ruta y clasificación.',
+  })
+  @ApiResponse({ status: 200, type: ReporteCarteraClientesResponseDto })
+  @ApiResponse({ status: 400, description: 'Ruta no pertenece a la empresa' })
+  @ApiResponse({ status: 401, description: 'No autenticado' })
+  @ApiResponse({ status: 403, description: 'Solo ADMIN y SUPERADMIN' })
+  getCarteraClientes(
+    @GetUser() user: GetUserDto,
+    @Query() query: ReporteCarteraClientesQueryDto,
+  ): Promise<ReporteCarteraClientesResponseDto> {
+    return this.reportesService.getCarteraClientes(query, user.empresa);
   }
 
   @Get('cartera')
