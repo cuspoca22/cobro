@@ -1,12 +1,14 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, Query, ParseBoolPipe } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, Query, ParseBoolPipe, ForbiddenException } from '@nestjs/common';
 import { ClienteService } from './cliente.service';
 import { CreateClienteDto } from './dto/create-cliente.dto';
 import { UpdateClienteDto } from './dto/update-cliente.dto';
+import { ReplaceImagenesDto } from './dto/replace-imagenes.dto';
 import { SetClienteStateDto } from './dto/set-cliente-state.dto';
 import { ReordenarClientesDto } from './dto/reordenar-clientes.dto';
 import { Auth, GetUser } from '../auth/decorators';
 import { ValidRoles } from '../auth/interfaces';
 import { GetUserDto } from '../auth/dto';
+import { UserEntity } from '../auth/entities/user.entity';
 import { ParseMongoIdPipe } from 'src/common/pipes/parse-mongo-id.pipe';
 import { RutaAbierta } from 'src/common/decorators';
 import { RutaOwnership } from 'src/common/ownership';
@@ -67,6 +69,20 @@ export class ClienteController {
     );
   }
 
+  @Auth(ValidRoles.cobrador)
+  @RutaOwnership({ clienteId: { in: 'params', key: 'id' } })
+  @Patch(':id/imagenes')
+  replaceImagenes(
+    @Param('id', ParseMongoIdPipe) id: string,
+    @Body() dto: ReplaceImagenesDto,
+    @GetUser() user: UserEntity,
+  ) {
+    if (!user.puedeEditarFotosRenovacion) {
+      throw new ForbiddenException('No tienes permiso para cambiar fotos al renovar');
+    }
+    return this.clienteService.replaceImagenes(id, dto);
+  }
+
   @Auth(ValidRoles.superAdmin)
   @RutaOwnership({ clienteId: { in: 'params', key: 'id' } })
   @Patch(':id/state')
@@ -82,9 +98,10 @@ export class ClienteController {
   @Patch(':id')
   update(
     @Param('id', ParseMongoIdPipe) id: string,
-    @Body() updateClienteDto: UpdateClienteDto
+    @Body() updateClienteDto: UpdateClienteDto,
+    @GetUser() user: UserEntity,
   ) {
-    return this.clienteService.update(id, updateClienteDto);
+    return this.clienteService.update(id, updateClienteDto, user.rol);
   }
 
   @Auth(ValidRoles.superAdmin)

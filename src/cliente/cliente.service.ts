@@ -1,11 +1,25 @@
 import { BadRequestException, forwardRef, Inject, Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
 import { CreateClienteDto } from './dto/create-cliente.dto';
 import { UpdateClienteDto } from './dto/update-cliente.dto';
+import { ReplaceImagenesDto } from './dto/replace-imagenes.dto';
 import { InjectModel } from '@nestjs/mongoose';
 import { ClientSession, Model, Types, PipelineStage } from 'mongoose';
 import { Cliente } from './schema/cliente.schema';
 import { ClienteEntity } from './entities/cliente.entity';
 import { CreditoService } from 'src/credito/credito.service';
+import { ValidRoles } from 'src/auth/interfaces';
+import { isHttpsImageUrl } from 'src/common/validators/is-https-image-url.validator';
+
+const CAMPOS_IMAGEN = ['document_image', 'business_image', 'house_image'] as const;
+type CampoImagen = (typeof CAMPOS_IMAGEN)[number];
+
+export interface ImagenesCliente {
+  ruta: string;
+  empresa: string;
+  document_image: string;
+  business_image: string;
+  house_image: string;
+}
 
 /** Filtro Mongo: clientes operativos (state ausente o true). */
 export const CLIENTE_OPERATIVO_FILTER = { state: { $ne: false } } as const;
@@ -137,8 +151,21 @@ export class ClienteService {
 
   }
 
-  async update(id: string, updateClienteDto: UpdateClienteDto) {
-    const { state: _ignored, ...rest } = updateClienteDto as UpdateClienteDto & { state?: boolean };
+  async update(id: string, updateClienteDto: UpdateClienteDto, rol?: string) {
+    const {
+      state: _ignored,
+      document_image,
+      business_image,
+      house_image,
+      ...rest
+    } = updateClienteDto as UpdateClienteDto & { state?: boolean };
+
+    const patch: Record<string, unknown> = { ...rest };
+    if (rol !== ValidRoles.cobrador) {
+      if (document_image !== undefined) patch.document_image = document_image;
+      if (business_image !== undefined) patch.business_image = business_image;
+      if (house_image !== undefined) patch.house_image = house_image;
+    }
 
     const existing = await this.clienteModel.findById(id);
     if (!existing) {
@@ -149,10 +176,81 @@ export class ClienteService {
     }
 
     try {
-      return await this.clienteModel.findByIdAndUpdate(id, rest, { returnDocument: 'after' });
+      return await this.clienteModel.findByIdAndUpdate(id, patch, { returnDocument: 'after' });
     } catch (error) {
       this.handleExceptions(error)
     }
+  }
+
+  async getImagenes(id: string): Promise<ImagenesCliente> {
+    const cliente = await this.clienteModel
+      .findById(id)
+      .select('ruta document_image business_image house_image state')
+      .populate('ruta', 'empresa')
+      .lean();
+
+    if (!cliente) {
+      throw new NotFoundException('No existe el cliente');
+    }
+    if ((cliente as { state?: boolean }).state === false) {
+      throw new BadRequestException('Cliente desactivado');
+    }
+
+    const rutaRaw = (cliente as { ruta?: unknown }).ruta;
+    let ruta = '';
+    let empresa = '';
+    if (rutaRaw && typeof rutaRaw === 'object') {
+      const doc = rutaRaw as { _id?: unknown; empresa?: unknown };
+      ruta = doc._id ? String(doc._id) : '';
+      empresa = doc.empresa ? String(doc.empresa) : '';
+    } else if (rutaRaw) {
+      ruta = String(rutaRaw);
+    }
+
+    return {
+      ruta,
+      empresa,
+      document_image: (cliente as { document_image?: string }).document_image ?? '',
+      business_image: (cliente as { business_image?: string }).business_image ?? '',
+      house_image: (cliente as { house_image?: string }).house_image ?? '',
+    };
+  }
+
+  /** Escribe solo las fotos indicadas. No toca el resto del cliente. */
+  async replaceImagenes(id: string, imagenes: ReplaceImagenesDto) {
+    const $set: Partial<Record<CampoImagen, string>> = {};
+
+    for (const campo of CAMPOS_IMAGEN) {
+      const value = imagenes[campo];
+      if (value === undefined) continue;
+      if (!isHttpsImageUrl(value, false)) {
+        throw new BadRequestException('La imagen debe ser una URL de Firebase Storage');
+      }
+      $set[campo] = value;
+    }
+
+    if (Object.keys($set).length === 0) {
+      throw new BadRequestException('No hay fotos para actualizar');
+    }
+
+    await this.assertClienteOperativo(id);
+
+    const updated = await this.clienteModel.findByIdAndUpdate(
+      id,
+      { $set },
+      { returnDocument: 'after' },
+    );
+
+    if (!updated) {
+      throw new NotFoundException('No existe el cliente');
+    }
+
+    return {
+      id: updated._id.toString(),
+      document_image: updated.document_image ?? '',
+      business_image: updated.business_image ?? '',
+      house_image: updated.house_image ?? '',
+    };
   }
 
   async setState(id: string, state: boolean): Promise<ClienteEntity> {

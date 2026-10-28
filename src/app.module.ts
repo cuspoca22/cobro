@@ -19,6 +19,7 @@ import { MovimientoCajaModule } from './movimientoCaja/movimiento-caja.module';
 import { CurrencyModule } from './currency/currency.module';
 import { RenovacionModule } from './renovacion/renovacion.module';
 import { PeticionesUbicacionModule } from './peticiones-ubicacion/peticiones-ubicacion.module';
+import { PeticionesImagenModule } from './peticiones-imagen/peticiones-imagen.module';
 import { ReportesModule } from './reportes/reportes.module';
 import { TrackingModule } from './tracking/tracking.module';
 import { AnnouncementModule } from './announcement/announcement.module';
@@ -64,6 +65,7 @@ const envFile = `.env.${environment}`;
     MessageModule,
     RenovacionModule,
     PeticionesUbicacionModule,
+    PeticionesImagenModule,
     ReportesModule,
     TrackingModule,
     AnnouncementModule,

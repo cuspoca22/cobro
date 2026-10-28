@@ -11,6 +11,8 @@ export class UserEntity {
    /** Rutas de SUPERVISOR (ids). */
    rutas?: string[];
    puedeActualizarUbicacion?: boolean;
+   /** El cobrador puede reemplazar fotos al renovar, sin pasar por aprobación. */
+   puedeEditarFotosRenovacion?: boolean;
    /** Moneda ISO de la ruta asignada (cobrador). */
    rutaCurrency?: string;
    /** País de la ruta asignada (fallback de moneda). */
@@ -62,6 +64,7 @@ export class UserEntity {
          ruta: rutaRaw ? rutaRaw.toString() : undefined,
          rutas,
          puedeActualizarUbicacion: object.puedeActualizarUbicacion ?? false,
+         puedeEditarFotosRenovacion: object.puedeEditarFotosRenovacion ?? false,
          rutaCurrency: rutaCurrency || undefined,
          rutaPais: rutaPais || undefined,
       });

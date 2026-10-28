@@ -1,3 +1,4 @@
+import { ForbiddenException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { ClienteController } from './cliente.controller';
 import { ClienteService } from './cliente.service';
@@ -27,6 +28,7 @@ describe('ClienteController', () => {
     setState: jest.fn(),
     remove: jest.fn(),
     reordenar: jest.fn(),
+    replaceImagenes: jest.fn(),
   };
 
   const mockCliente = {
@@ -154,8 +156,33 @@ describe('ClienteController', () => {
 
       mockClienteService.update.mockResolvedValue(result);
 
-      expect(await controller.update(id, updateClienteDto)).toBe(result);
-      expect(mockClienteService.update).toHaveBeenCalledWith(id, updateClienteDto);
+      expect(await controller.update(id, updateClienteDto, mockAdmin)).toBe(result);
+      expect(mockClienteService.update).toHaveBeenCalledWith(id, updateClienteDto, 'ADMIN');
+    });
+  });
+
+  describe('replaceImagenes', () => {
+    const dto = { document_image: 'https://example.com/doc.jpg' };
+
+    it('should reject a cobrador without permission', () => {
+      const user = {
+        rol: 'COBRADOR',
+        puedeEditarFotosRenovacion: false,
+      } as any;
+
+      expect(() => controller.replaceImagenes('someId', dto, user)).toThrow(ForbiddenException);
+      expect(mockClienteService.replaceImagenes).not.toHaveBeenCalled();
+    });
+
+    it('should replace images when the cobrador has permission', async () => {
+      const result = { id: 'someId', ...dto };
+      mockClienteService.replaceImagenes.mockResolvedValue(result);
+
+      await expect(controller.replaceImagenes('someId', dto, {
+        rol: 'COBRADOR',
+        puedeEditarFotosRenovacion: true,
+      } as any)).resolves.toBe(result);
+      expect(mockClienteService.replaceImagenes).toHaveBeenCalledWith('someId', dto);
     });
   });
 

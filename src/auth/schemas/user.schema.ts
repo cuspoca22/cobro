@@ -73,6 +73,13 @@ export class User extends Document {
    })
    puedeActualizarUbicacion: boolean;
 
+   /** Si es true, el cobrador puede reemplazar fotos del cliente al renovar. */
+   @Prop({
+      type: Boolean,
+      default: false
+   })
+   puedeEditarFotosRenovacion: boolean;
+
    /** Id de la única sesión activa (JWT claim `sid`). */
    @Prop({
       type: String,

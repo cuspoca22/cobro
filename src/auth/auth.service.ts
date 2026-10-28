@@ -54,6 +54,9 @@ export class AuthService {
 
       try {
          const payload = this.normalizeRoleAssignment({ ...createUserDto });
+         if (payload.rol !== ValidRoles.cobrador) {
+            payload.puedeEditarFotosRenovacion = false;
+         }
 
          const user = new this.userModel(payload);
          user.password = bcrypt.hashSync(createUserDto.password, 10);
@@ -631,12 +634,22 @@ export class AuthService {
       }
    }
 
-   async update(id: string, updateUserDto: UpdateUserDto, actor?: { rol?: string }) {
+   async update(id: string, updateUserDto: UpdateUserDto, actor?: { rol?: string; empresa?: string }) {
 
       const user = await this.userModel.findById(id)
 
       if (!user) {
          throw new NotFoundException(`No existe un usuario con el id ${id}`)
+      }
+
+      if (actor?.rol && actor.rol !== ValidRoles.superAdmin) {
+         const actorEmpresa = actor.empresa ? String(actor.empresa) : '';
+         const targetEmpresa = user.empresa
+            ? String((user.empresa as { _id?: unknown })._id ?? user.empresa)
+            : '';
+         if (!actorEmpresa || actorEmpresa !== targetEmpresa) {
+            throw new ForbiddenException('No puedes modificar un usuario de otra empresa');
+         }
       }
 
       if (
@@ -686,6 +699,11 @@ export class AuthService {
       }
       if (updateUserDto.puedeActualizarUbicacion !== undefined) {
          patch.puedeActualizarUbicacion = updateUserDto.puedeActualizarUbicacion;
+      }
+      if (effectiveRol !== ValidRoles.cobrador) {
+         patch.puedeEditarFotosRenovacion = false;
+      } else if (updateUserDto.puedeEditarFotosRenovacion !== undefined) {
+         patch.puedeEditarFotosRenovacion = updateUserDto.puedeEditarFotosRenovacion;
       }
 
       const shouldRevokeSession =

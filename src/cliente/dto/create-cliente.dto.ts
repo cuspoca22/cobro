@@ -1,4 +1,5 @@
 import { IsArray, IsBoolean, IsMongoId, IsNumber, IsOptional, IsString, MinLength } from "class-validator";
+import { IsHttpsImageUrl } from "src/common/validators/is-https-image-url.validator";
 
 export class CreateClienteDto {
 
@@ -51,16 +52,16 @@ export class CreateClienteDto {
    @IsOptional()
    creditos?: string[];
 
-   @IsString()
    @IsOptional()
+   @IsHttpsImageUrl()
    document_image?: string;
 
-   @IsString()
    @IsOptional()
+   @IsHttpsImageUrl()
    business_image?: string;
 
-   @IsString()
    @IsOptional()
+   @IsHttpsImageUrl()
    house_image?: string;
 
    @IsNumber()

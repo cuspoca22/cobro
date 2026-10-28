@@ -50,6 +50,10 @@ export class GetUserDto {
   @Transform(({ obj }) => obj.puedeActualizarUbicacion ?? false)
   puedeActualizarUbicacion: boolean;
 
+  @Expose()
+  @Transform(({ obj }) => obj.puedeEditarFotosRenovacion ?? false)
+  puedeEditarFotosRenovacion: boolean;
+
   @Exclude()
   password: string;
 

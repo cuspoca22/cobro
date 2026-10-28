@@ -38,4 +38,8 @@ export class CreateUserDto {
    @IsBoolean()
    @IsOptional()
    puedeActualizarUbicacion?: boolean;
+
+   @IsBoolean()
+   @IsOptional()
+   puedeEditarFotosRenovacion?: boolean;
 }
