@@ -157,6 +157,24 @@ export class RutaService {
     };
   }
 
+  /** Nombres y zona para armar la lista de agendados. */
+  async findAgendaContextByIds(
+    rutaIds: string[],
+  ): Promise<Array<{ id: string; nombre: string; timeZone: string; empresaId: string | null }>> {
+    const ids = rutaIds.filter((id) => Types.ObjectId.isValid(id));
+    if (!ids.length) return [];
+    const rutas = await this.rutaModel
+      .find({ _id: { $in: ids } })
+      .select('nombre timeZone empresa')
+      .lean();
+    return rutas.map((ruta) => ({
+      id: ruta._id.toString(),
+      nombre: ruta.nombre,
+      timeZone: ruta.timeZone || 'America/Mexico_City',
+      empresaId: ruta.empresa ? ruta.empresa.toString() : null,
+    }));
+  }
+
   /** Ownership: empresa dueña de la ruta. */
   async getEmpresaIdByRutaId(
     rutaId: string,

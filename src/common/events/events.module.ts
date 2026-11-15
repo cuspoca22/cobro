@@ -15,6 +15,28 @@ export type SubscriptionPaymentClearedPayload = {
   empresaId: string;
 };
 
+export const RENOVACION_CREADA = 'renovacion.creada';
+export const CREDITO_ELIMINADO = 'credito.eliminado';
+
+export type RenovacionCreadaPayload = {
+  clienteId: string;
+  creditoId: string;
+  movimientoId: string;
+  rutaId: string;
+  empresaId: string | null;
+  /** ISO del createdAt del movimiento, no de movimiento.fecha. */
+  createdAt: string;
+};
+
+export type CreditoEliminadoPayload = {
+  clienteId: string;
+  creditoId: string;
+  movimientoId: string;
+  rutaId: string;
+  empresaId: string | null;
+  subTipo: string;
+};
+
 /**
  * Bus de eventos in-process (sin paquete extra).
  * Sirve para desacoplar Empresa ↔ Announcement sin ciclos Nest.

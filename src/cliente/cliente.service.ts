@@ -24,6 +24,35 @@ export interface ImagenesCliente {
 /** Filtro Mongo: clientes operativos (state ausente o true). */
 export const CLIENTE_OPERATIVO_FILTER = { state: { $ne: false } } as const;
 
+type ClienteCrudo = {
+  _id: Types.ObjectId;
+  nombre: string;
+  alias?: string;
+  status?: boolean;
+  state?: boolean;
+  ruta?: Types.ObjectId | string | null;
+};
+
+export type ClienteResumen = {
+  _id: Types.ObjectId;
+  nombre: string;
+  alias: string;
+  status: boolean;
+  state: boolean;
+  ruta: string | null;
+};
+
+function resumenCliente(raw: ClienteCrudo): ClienteResumen {
+  return {
+    _id: raw._id,
+    nombre: raw.nombre,
+    alias: raw.alias ?? '',
+    status: !!raw.status,
+    state: raw.state !== false,
+    ruta: raw.ruta ? raw.ruta.toString() : null,
+  };
+}
+
 @Injectable()
 export class ClienteService {
 
@@ -316,17 +345,24 @@ export class ClienteService {
   async findByIdLean(
     clienteId: string | Types.ObjectId,
     session?: ClientSession,
-  ): Promise<{ _id: Types.ObjectId; nombre: string; status: boolean; state: boolean } | null> {
+  ): Promise<ClienteResumen | null> {
     const cliente = await this.clienteModel
       .findById(clienteId)
-      .select('nombre status state')
+      .select('nombre alias status state ruta')
       .session(session || null)
       .lean();
     if (!cliente) return null;
-    return {
-      ...(cliente as { _id: Types.ObjectId; nombre: string; status: boolean }),
-      state: (cliente as { state?: boolean }).state !== false,
-    };
+    return resumenCliente(cliente as ClienteCrudo);
+  }
+
+  async findByIdsLean(ids: string[]): Promise<ClienteResumen[]> {
+    const unicos = [...new Set(ids.filter((id) => Types.ObjectId.isValid(id)))];
+    if (!unicos.length) return [];
+    const clientes = await this.clienteModel
+      .find({ _id: { $in: unicos } })
+      .select('nombre alias status state ruta')
+      .lean();
+    return clientes.map((cliente) => resumenCliente(cliente as ClienteCrudo));
   }
 
   /** Rechaza si el cliente no existe o está desactivado (state=false). */

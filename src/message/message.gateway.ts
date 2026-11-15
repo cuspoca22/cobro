@@ -465,6 +465,24 @@ export class MessageGateway
     }
   }
 
+  emitAgendadoChanged(payload: {
+    id: string;
+    rutaId: string;
+    empresaId?: string | null;
+    estado: string;
+  }): void {
+    if (!this.wss || !payload?.id || !payload.rutaId) return;
+    const body = {
+      id: payload.id,
+      rutaId: payload.rutaId,
+      estado: payload.estado,
+    };
+    if (payload.empresaId) {
+      this.wss.to(empresaRoom(payload.empresaId)).emit('agendado:changed', body);
+    }
+    this.wss.to(rutaRoom(payload.rutaId)).emit('agendado:changed', body);
+  }
+
   emitMoraActualizada(payload: MoraActualizadaPayload): void {
     if (!payload.empresa) {
       this.logger.warn(

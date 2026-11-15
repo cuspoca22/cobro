@@ -13,6 +13,7 @@ import { CajaService } from 'src/caja/caja.service';
 import { SubTipo, TipoMovimiento } from './interfaces';
 import { CreateMovimientoCajaDto } from './dto';
 import { FrecuenciaCobro } from 'src/credito/interfaces/frecuencia-cobro.enum';
+import { AppEventBus, RENOVACION_CREADA } from 'src/common/events/events.module';
 
 const createMockSession = (): Partial<ClientSession> => ({
   startTransaction: jest.fn(),
@@ -30,6 +31,7 @@ describe('MovimientoCajaService', () => {
   let cajaService: any;
   let creditoService: any;
   let creditCalculatorSvc: any;
+  let events: { emit: jest.Mock };
   let mockSession: Partial<ClientSession>;
 
   const rutaId = new Types.ObjectId().toString();
@@ -58,10 +60,16 @@ describe('MovimientoCajaService', () => {
   beforeEach(async () => {
     mockSession = createMockSession();
 
-    const mockMovimientoModel: any = jest.fn().mockImplementation((data) => ({
-      ...data,
-      save: jest.fn().mockResolvedValue({ ...data, _id: new Types.ObjectId() }),
-    }));
+    const mockMovimientoModel: any = jest.fn().mockImplementation((data) => {
+      const _id = new Types.ObjectId();
+      const doc = {
+        ...data,
+        _id,
+        createdAt: new Date('2026-06-15T16:00:00.000Z'),
+        save: jest.fn().mockImplementation(async () => doc),
+      };
+      return doc;
+    });
     Object.assign(mockMovimientoModel, {
       findOne: jest.fn().mockReturnValue({
         session: jest.fn().mockResolvedValue(null),
@@ -82,7 +90,12 @@ describe('MovimientoCajaService', () => {
         _id: rutaId,
         timeZone: 'America/Mexico_City',
       }),
+      getEmpresaIdByRutaId: jest.fn().mockResolvedValue({
+        exists: true,
+        empresaId: new Types.ObjectId().toString(),
+      }),
     };
+    events = { emit: jest.fn() };
 
     cajaService = {
       findByIdLean: jest.fn().mockResolvedValue({ _id: cajaId, ruta: rutaId }),
@@ -149,6 +162,7 @@ describe('MovimientoCajaService', () => {
             startSession: jest.fn().mockResolvedValue(mockSession),
           },
         },
+        { provide: AppEventBus, useValue: events },
       ],
     }).compile();
 
@@ -418,6 +432,14 @@ describe('MovimientoCajaService', () => {
       );
       expect(result?.ok).toBe(true);
       expect(mockSession.commitTransaction).toHaveBeenCalled();
+      expect(events.emit).toHaveBeenCalledWith(
+        RENOVACION_CREADA,
+        expect.objectContaining({
+          clienteId,
+          rutaId,
+          createdAt: '2026-06-15T16:00:00.000Z',
+        }),
+      );
     });
   });
 });

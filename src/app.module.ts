@@ -27,6 +27,7 @@ import { AppConfigModule } from './app-config/app-config.module';
 import { EventsModule } from './common/events/events.module';
 import { LeadsModule } from './leads/leads.module';
 import { WsAuthEventModule } from './ws-auth-event/ws-auth-event.module';
+import { AgendadoModule } from './agendado/agendado.module';
 import { ThrottlerModule } from '@nestjs/throttler';
 
 
@@ -72,6 +73,7 @@ const envFile = `.env.${environment}`;
     AppConfigModule,
     LeadsModule,
     WsAuthEventModule,
+    AgendadoModule,
   ],
   controllers: [],
   providers: [],

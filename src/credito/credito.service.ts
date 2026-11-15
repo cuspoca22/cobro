@@ -1425,6 +1425,7 @@ export class CreditoService {
           ubication: "$clienteDetail.ubication",
           dpi: "$clienteDetail.dpi",
           turno: "$clienteDetail.turno",
+          ruta: "$clienteDetail.ruta",
         },
         interes: 1,
         fecha_inicio: 1,

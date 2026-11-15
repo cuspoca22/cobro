@@ -14,6 +14,11 @@ import { CajaMovimientoEntity } from "./entities/caja-movimiento.entity";
 import { TransactionHelper } from '../common/helpers';
 import { RutaService } from "src/ruta/ruta.service";
 import { CajaService } from "src/caja/caja.service";
+import {
+  AppEventBus,
+  CREDITO_ELIMINADO,
+  RENOVACION_CREADA,
+} from "src/common/events/events.module";
 
 @Injectable()
 export class MovimientoCajaService {
@@ -35,6 +40,7 @@ export class MovimientoCajaService {
     private readonly dateFnsAdapter: DateFnsAdapter,
     private readonly creditoService: CreditoService,
     private readonly creditCalculatorSvc: CreditCalculatorService,
+    private readonly events: AppEventBus,
     // Ledger-first: durante el día NO se reescribe Caja; el snapshot se congela al cerrar.
     @InjectConnection() private readonly connection: Connection
   ) {
@@ -320,7 +326,7 @@ export class MovimientoCajaService {
     movimientoId: string,
     opts: { bypassDayCheck?: boolean } = {},
   ) {
-    return this.transactionHelper.withTransaction(async (session) => {
+    const outcome = await this.transactionHelper.withTransaction(async (session) => {
       const movimiento = await this.cajaMovimientoModel
         .findById(movimientoId)
         .session(session);
@@ -353,8 +359,20 @@ export class MovimientoCajaService {
 
       await this.creditoService.deleteCredito(creditoId, session);
 
-      return true;
+      return {
+        clienteId: movimiento.cliente?.toString() ?? '',
+        creditoId,
+        movimientoId,
+        subTipo: movimiento.subTipo,
+        rutaId,
+      };
     }, 'MovimientoCajaService.deleteCredito');
+
+    if (outcome.subTipo === SubTipo.PRESTAMO && outcome.clienteId) {
+      await this.notifyCreditoEliminado(outcome);
+    }
+
+    return true;
   }
 
   async deleteCreditoAsSuperAdmin(creditoId: string) {
@@ -581,6 +599,8 @@ export class MovimientoCajaService {
       await movimiento.save({ session });
 
       await session.commitTransaction();
+
+      await this.notifyRenovacionCreada(rutaId, credito, movimiento);
 
       return {
         ok: true,
@@ -1058,6 +1078,41 @@ export class MovimientoCajaService {
     await this.cajaMovimientoModel.deleteMany({ ruta: rutaId }).session(session);
   }
 
+  /**
+   * Préstamos de esos clientes, con el instante real de alta (`createdAt`).
+   * Sirve para cumplir o reabrir agendados sin usar `fecha` (inicio del día).
+   */
+  async findPrestamosPorClientes(clienteIds: string[]): Promise<Array<{
+    clienteId: string;
+    creditoId: string;
+    movimientoId: string;
+    createdAt: Date;
+  }>> {
+    const ids = [...new Set(clienteIds.filter((id) => Types.ObjectId.isValid(id)))];
+    if (!ids.length) return [];
+
+    const rows = await this.cajaMovimientoModel
+      .find({
+        cliente: { $in: ids.map((id) => new Types.ObjectId(id)) },
+        subTipo: SubTipo.PRESTAMO,
+      })
+      .select('cliente credito createdAt')
+      .lean();
+
+    return rows.flatMap((row) => {
+      const clienteId = row.cliente?.toString() ?? '';
+      const creditoId = row.credito?.toString() ?? '';
+      const createdAt = (row as { createdAt?: Date }).createdAt;
+      if (!clienteId || !creditoId || !(createdAt instanceof Date)) return [];
+      return [{
+        clienteId,
+        creditoId,
+        movimientoId: row._id.toString(),
+        createdAt,
+      }];
+    });
+  }
+
   /** Ownership: resolver ruta a partir de un movimiento. */
   async getRutaByMovimientoId(
     movimientoId: string,
@@ -1089,6 +1144,53 @@ export class MovimientoCajaService {
     if (options?.select) query = query.select(options.select);
     if (options?.sort) query = query.sort(options.sort);
     return query.lean();
+  }
+
+  private async notifyRenovacionCreada(
+    rutaId: string,
+    credito: { _id: unknown; cliente: unknown },
+    movimiento: { _id?: unknown; createdAt?: Date },
+  ): Promise<void> {
+    try {
+      const movimientoId = movimiento._id ? String(movimiento._id) : '';
+      const creditoId = credito._id ? String(credito._id) : '';
+      const clienteRaw = credito.cliente as { _id?: unknown } | string | undefined;
+      const clienteId = clienteRaw && typeof clienteRaw === 'object' && clienteRaw._id
+        ? String(clienteRaw._id)
+        : clienteRaw ? String(clienteRaw) : '';
+      if (!movimientoId || !creditoId || !clienteId) return;
+
+      const empresa = await this.rutaService.getEmpresaIdByRutaId(rutaId);
+      const createdAt = movimiento.createdAt instanceof Date ? movimiento.createdAt : new Date();
+      this.events.emit(RENOVACION_CREADA, {
+        clienteId,
+        creditoId,
+        movimientoId,
+        rutaId,
+        empresaId: empresa.exists ? empresa.empresaId : null,
+        createdAt: createdAt.toISOString(),
+      });
+    } catch (error) {
+      this.logger.error(`No se pudo emitir renovacion.creada: ${error?.message ?? error}`);
+    }
+  }
+
+  private async notifyCreditoEliminado(outcome: {
+    clienteId: string;
+    creditoId: string;
+    movimientoId: string;
+    subTipo: string;
+    rutaId: string;
+  }): Promise<void> {
+    try {
+      const empresa = await this.rutaService.getEmpresaIdByRutaId(outcome.rutaId);
+      this.events.emit(CREDITO_ELIMINADO, {
+        ...outcome,
+        empresaId: empresa.exists ? empresa.empresaId : null,
+      });
+    } catch (error) {
+      this.logger.error(`No se pudo emitir credito.eliminado: ${error?.message ?? error}`);
+    }
   }
 
   private handleExceptions(error: any) {

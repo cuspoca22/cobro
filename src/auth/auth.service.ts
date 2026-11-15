@@ -1197,6 +1197,33 @@ export class AuthService {
    /**
     * Expone hasActiveSession / activeSessionExpiresAt y oculta activeSessionId.
     */
+   async findNombresByIds(ids: string[]): Promise<Array<{ id: string; nombre: string }>> {
+      const valid = [...new Set(ids.filter((id) => isValidObjectId(id)))];
+      if (!valid.length) return [];
+      const users = await this.userModel
+        .find({ _id: { $in: valid } })
+        .select('nombre')
+        .lean();
+      return users.map((user) => ({
+        id: user._id.toString(),
+        nombre: user.nombre,
+      }));
+   }
+
+   /** Cobrador activo de la ruta. El push lo resuelve al despachar, no al agendar. */
+   async findCobradorActivoPorRuta(rutaId: string): Promise<string | null> {
+      if (!isValidObjectId(rutaId)) return null;
+      const user = await this.userModel
+        .findOne({
+          rol: ValidRoles.cobrador,
+          ruta: new Types.ObjectId(rutaId),
+          estado: true,
+        })
+        .select('_id')
+        .lean();
+      return user ? user._id.toString() : null;
+   }
+
    private withSessionMeta(userDoc: any) {
       const obj = typeof userDoc.toObject === 'function'
          ? userDoc.toObject()
